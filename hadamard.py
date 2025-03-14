@@ -53,7 +53,7 @@ array_to_string = (lambda M: tuple(
 # cyclically rotate a tuple
 def rot(i,a):
     #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
-    return a[k:nn]+a[:k]+a[nn+k:2*nn]+a[nn:nn+k]+a[2*nn+k:3*nn]+a[2*nn:2*nn+k]+a[3*nn+k:]+a[3*nn:3*nn+k]
+    return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
 
 ########### MAIN-DEFINITIONS ###########
 
