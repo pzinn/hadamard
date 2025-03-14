@@ -8,6 +8,7 @@ import torch
 import heapq
 from itertools import islice
 # debugging stuff
+import sys
 from collections import Counter
 from timeit import default_timer as timer # to measure exec time
 import logging
@@ -168,6 +169,7 @@ def batch_improve(arrays_items): # using simple_search2
     scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
     # step 1: this is the analogue of my old "simple_search2"
     for i in range(n):
+        print(f"1-{i} ",end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
         # Compute new scores for all batch elements in parallel
         new_scores = score_torch(arrays_tensor)
@@ -177,7 +179,8 @@ def batch_improve(arrays_items): # using simple_search2
         arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
         scores[mask] = new_scores[mask]  # Update scores accordingly
     # step 2: this is the analogue of my old "simple_search3" except it doesn't stop at first success
-    for _ in range(n_attempts):
+    for i in range(n_attempts):
+        print(f"2-{i} ",end=''); sys.stdout.flush()
         # Choose k unique bits to flip, same for entire batch
         k = random.randint(2,max_k)
         flip_indices = torch.randperm(n, device=device)[:k]
@@ -228,6 +231,8 @@ else:
 arrays_dict = subbatch_score(k,arrays)
 record_stats(arrays_dict)
 
+test_set_size = 1+1000//nn
+
 ########### MAIN-LOOP ###########
 
 while k<max_iterations:
@@ -245,10 +250,16 @@ while k<max_iterations:
         write_arrays(work_dir + f'/GEN-{k}.txt',arrays)
     # run makemore on GEN-k
     print(f"\n***Training***\nTraining makemore on GEN-{k}...")
-    strings = [array_to_string(rot(i,a)) for i in range(nn) for a in arrays] # added: rotation to increase training size
+    arrays=list(arrays)
+    random.shuffle(arrays)
+    test_arrays=arrays[:test_set_size]
+    train_arrays=arrays[test_set_size:]
+    train_words = [array_to_string(rot(i,a)) for i in range(nn) for a in train_arrays] # added: rotation to increase training size
+    test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
+    print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
     coeff = max(1,6-k)
     start=timer()
-    mm.train(strings,resume=k>0 or resume,max_steps=max_steps*coeff,eval_freq=100*coeff)
+    mm.train(train_words,test_words,resume=k>0 or resume,max_steps=max_steps*coeff,eval_freq=100*coeff)
     logging.debug(f"took: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k}.txt")

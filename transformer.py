@@ -211,20 +211,6 @@ class CharDataset(Dataset):
         y[len(ix)+1:] = -1 # index -1 will mask the loss at the inactive locations
         return x, y
 
-def create_datasets(words,block_size):
-    # partition the input data into a training and the test set
-    test_set_size = min(1000, int(len(words) * 0.1)) # 10% of the training set, or up to 1000 examples
-    random.shuffle(words)
-    test_words=words[:test_set_size]
-    train_words=words[test_set_size:]
-    print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
-
-    # wrap in dataset objects
-    train_dataset = CharDataset(train_words, block_size)
-    test_dataset = CharDataset(test_words, block_size)
-
-    return train_dataset, test_dataset
-
 class InfiniteDataLoader:
     """
     this is really hacky and I'm not proud of it, but there doesn't seem to be
@@ -243,7 +229,7 @@ class InfiniteDataLoader:
         return batch
 
 # -----------------------------------------------------------------------------
-def train(data,**kwargs):
+def train(train_data,test_data,**kwargs):
     resume = kwargs.get("resume",False)
     num_workers = kwargs.get("num_workers",4)
     max_steps = kwargs.get("max_steps",-1)
@@ -277,8 +263,9 @@ def train(data,**kwargs):
     print(f"max word length+1: {block_size}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
         
-    # init datasets
-    train_dataset, test_dataset = create_datasets(data,block_size)
+    # wrap in dataset objects
+    train_dataset = CharDataset(train_data, block_size)
+    test_dataset = CharDataset(test_data, block_size)
 
     # init optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99), eps=1e-8)
