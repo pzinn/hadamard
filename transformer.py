@@ -256,10 +256,12 @@ def train(train_data,test_data,**kwargs):
     model.to(device)
     #print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     if resume:
-        print("resuming from existing model in the workdir")
-        model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
-
-    print(f"number of examples in the dataset: {len(data)}")
+        try:
+            model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
+            print("resuming from existing model in the workdir")
+        except FileNotFoundError:
+            pass
+    print(f"number of examples in the dataset: {len(train_data)+len(test_data)}")
     print(f"max word length+1: {block_size}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
         
