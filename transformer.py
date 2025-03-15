@@ -12,13 +12,9 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from params import config, work_dir, learning_rate, training_batch_size, weight_decay
+from params import config, work_dir, learning_rate, training_batch_size, weight_decay, device
 
 # -----------------------------------------------------------------------------
-
-
-# global parameters
-device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 
 # -----------------------------------------------------------------------------

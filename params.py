@@ -11,15 +11,15 @@ n = 4 * nn
 stacking = 4 # preferably a divisor of nn
 
 # training parameters
-sample_size = 100000
+sample_size = 50000
 training_size = sample_size//2
-max_steps = 100000 # first few steps have more
+max_steps = 20000 # first few steps have more
 learning_rate = 1e-3
-sample_batch_size=10000 # for sampling. preferably a divisor of sample_size
-score_batch_size=20000 # for scoring/improving. one should have sample_batch_size < score_batch_size
+sample_batch_size=sample_size//5 # for sampling. preferably a divisor of sample_size
+score_batch_size=sample_size//4 # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size=32 # for training. much smaller, obviously
 weight_decay=0.01
-max_iterations = 1000
+max_iterations = 100
 
 # transformer parameters
 @dataclass
@@ -28,8 +28,7 @@ class ModelConfig:
     vocab_size: int = None # the input integers are in range [0 .. vocab_size -1]
     # parameters below control the sizes of each model slightly differently
     n_layer: int = 4
-    n_embd: int = 64
-    #n_embd2: int = 64 # not used by transformer, ignore
+    n_embd: int = 32
     n_head: int = 4
 
 nchars = 1<<stacking
@@ -45,7 +44,7 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/48/4/2025-03-13-23-28-58_100000_256/"
+    work_dir = "./training/140/5/2025-03-15-08-58-09_150000_256/"
     k = 0
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
@@ -65,3 +64,6 @@ os.symlink(work_dir,"latest")
 stats_file = work_dir + 'stats.txt'
 with open(stats_file, 'a') as file:
   file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{max_steps=}\n{training_batch_size=}\n')
+
+device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
+

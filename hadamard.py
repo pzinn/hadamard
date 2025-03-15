@@ -23,7 +23,7 @@ logging.basicConfig(
 
 #
 import transformer as mm
-from params import nn, n, sample_size, training_size, stacking, sample_batch_size, score_batch_size, max_iterations, max_steps, string_length, work_dir, resume, k
+from params import nn, n, sample_size, training_size, stacking, sample_batch_size, score_batch_size, max_iterations, max_steps, string_length, work_dir, resume, k, device
 
 eps = 1e-6
 
@@ -108,8 +108,6 @@ def record_stats(arrays_dict,prefix=""):
     write_arrays(hada_file, hada_dict.keys())
 
 # torch functions
-device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
-
 torch.cuda.set_device(0)  # Use GPU 0
 torch.cuda.empty_cache()  # Free memory before large computation
 
