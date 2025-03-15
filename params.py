@@ -11,15 +11,16 @@ n = 4 * nn
 stacking = 4 # preferably a divisor of nn
 
 # training parameters
-sample_size = 50000
+sample_size = 10000
 training_size = sample_size//2
-max_steps = 20000 # first few steps have more
 learning_rate = 1e-3
-sample_batch_size=sample_size//5 # for sampling. preferably a divisor of sample_size
-score_batch_size=sample_size//4 # for scoring/improving. one should have sample_batch_size < score_batch_size
+sample_batch_size=sample_size//2 # for sampling. preferably a divisor of sample_size
+score_batch_size=sample_size//2 # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size=32 # for training. much smaller, obviously
 weight_decay=0.01
 max_iterations = 100
+max_steps = 20000 # first few steps have more
+#max_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 # transformer parameters
 @dataclass
@@ -28,7 +29,7 @@ class ModelConfig:
     vocab_size: int = None # the input integers are in range [0 .. vocab_size -1]
     # parameters below control the sizes of each model slightly differently
     n_layer: int = 4
-    n_embd: int = 32
+    n_embd: int = 64
     n_head: int = 4
 
 nchars = 1<<stacking
@@ -44,16 +45,18 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/140/5/2025-03-15-08-58-09_150000_256/"
-    k = 0
+    work_dir = "./training/140/7/2025-03-15-12-27-09_150000_256/"
+    k = 5
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
+    skip_first_training=True # start by sampling from existing model rather than training
 else:
     # make directory
     date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
     work_dir = f'./training/{n}/{stacking}/{date}_{sample_size}_{config.n_embd}/'
     os.makedirs(work_dir, exist_ok=True)
     k = 0
+    skip_first_training=False
 try:
     os.unlink("latest")
 except FileNotFoundError:
