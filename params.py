@@ -63,6 +63,8 @@ except FileNotFoundError:
     pass
 os.symlink(work_dir,"latest")
 
+resume_training = True # whether to use previous model (not just previous data). True is a lot faster, False a bit more accurate
+
 # header of stats file
 stats_file = work_dir + 'stats.txt'
 with open(stats_file, 'a') as file:

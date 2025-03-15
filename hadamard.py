@@ -25,7 +25,7 @@ logging.basicConfig(
 import transformer as mm
 from params import *
 
-eps = 1e-6
+eps = 1e-6 # is that too big? need to think
 
 def generate_random_array():
     return tuple(random.choices([-1,1],k=n))
@@ -251,7 +251,7 @@ while k<max_iterations:
     if skip_first_training:
         skip_first_training=False
     else:
-        # run makemore on GEN-k
+        # train on GEN-k
         print(f"\n***Training***\nTraining makemore on GEN-{k}...")
         start=timer()
         arrays=list(arrays)
@@ -262,9 +262,9 @@ while k<max_iterations:
         test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
         print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
         logging.debug(f"splitting: {timer() - start}")
-        coeff = max(1,6-k)
+        coeff = 6 if k==0 or not resume_training else 1
         start=timer()
-        mm.train(train_words,test_words,resume=k>0 or resume,max_steps=max_steps*coeff,eval_freq=100*coeff)
+        mm.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps*coeff,eval_freq=100*coeff)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k}.txt")
