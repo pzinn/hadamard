@@ -244,7 +244,7 @@ def train(train_data,test_data,**kwargs):
     # system inits
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    os.makedirs(work_dir, exist_ok=True)
+    #os.makedirs(work_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=work_dir)
     layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]]}}
     writer.add_custom_scalars(layout)
@@ -304,6 +304,7 @@ def train(train_data,test_data,**kwargs):
             test_loss  = evaluate(model, test_dataset,  batch_size=100, max_batches=10)
             writer.add_scalar("Loss/train", train_loss, step)
             writer.add_scalar("Loss/test", test_loss, step)
+            #writer.add_scalars("",{"Loss/train": train_loss,"Loss/test": test_loss}, step) #spams too much. see custom_scalars alternative
             writer.flush()
             print(f"step {step} train loss: {train_loss} test loss: {test_loss}")
             # save the model to disk if it has improved
@@ -315,7 +316,7 @@ def train(train_data,test_data,**kwargs):
                 if step == max_steps:
                     max_steps += eval_freq # don't quit on a winning streak
             # termination conditions
-            elif test_loss > 1.2*best_loss:
+            elif test_loss > best_loss+.2:
                 break # we've probably massively overfitted
             if step == max_steps:
                 break
@@ -331,10 +332,7 @@ def sample(**kwargs):
     # system inits
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    os.makedirs(work_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=work_dir)
-    layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]]}}
-    writer.add_custom_scalars(layout)
+    #os.makedirs(work_dir, exist_ok=True)
 
     block_size = config.block_size
 

@@ -241,7 +241,7 @@ while k<max_iterations:
         start=timer()
         print(f"\n***Improving***")
         arrays_dict = subbatch_improve(arrays_dict.items())
-        logging.debug(f"took: {timer() - start}")
+        logging.debug(f"improving: {timer() - start}")
         record_stats(arrays_dict)
         print(f"\n***Selecting***")
         arrays_dict = best_from(arrays_dict)
@@ -250,6 +250,7 @@ while k<max_iterations:
         write_arrays(work_dir + f'/GEN-{k}.txt',arrays)
     # run makemore on GEN-k
     print(f"\n***Training***\nTraining makemore on GEN-{k}...")
+    start=timer()
     arrays=list(arrays)
     random.shuffle(arrays)
     test_arrays=arrays[:test_set_size]
@@ -257,10 +258,11 @@ while k<max_iterations:
     train_words = [array_to_string(rot(i,a)) for i in range(nn) for a in train_arrays] # added: rotation to increase training size
     test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
     print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
+    logging.debug(f"splitting: {timer() - start}")
     coeff = max(1,6-k)
     start=timer()
     mm.train(train_words,test_words,resume=k>0 or resume,max_steps=max_steps*coeff,eval_freq=100*coeff)
-    logging.debug(f"took: {timer() - start}")
+    logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k}.txt")
     k+=1
@@ -273,7 +275,7 @@ while k<max_iterations:
         arrays1_dict = batch_score(k,arrays1)
         record_stats(arrays1_dict,prefix="sample") # not needed, for testing purposes (do we produce similar scores as training data?)
         arrays_dict.update(arrays1_dict)
-    logging.debug(f"took: {timer() - start}")
+    logging.debug(f"sampling: {timer() - start}")
     resume=False
 
 
