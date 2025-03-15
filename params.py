@@ -2,6 +2,8 @@ from dataclasses import dataclass
 import datetime
 import os
 
+version=0.5
+
 ###########INITIAL-PARAMETERS###########
 
 # hadamard matrix parameters
@@ -29,8 +31,8 @@ class ModelConfig:
     vocab_size: int = None # the input integers are in range [0 .. vocab_size -1]
     # parameters below control the sizes of each model slightly differently
     n_layer: int = 4
-    n_embd: int = 64
-    n_head: int = 4
+    n_embd: int = 256
+    n_head: int = 8
 
 nchars = 1<<stacking
 #string_length = n//stacking # only works if stacking | n
@@ -49,7 +51,7 @@ if resume:
     k = 5
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
-    skip_first_training=True # start by sampling from existing model rather than training
+    skip_first_training=False # start by sampling from existing model rather than training
 else:
     # make directory
     date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
@@ -63,12 +65,12 @@ except FileNotFoundError:
     pass
 os.symlink(work_dir,"latest")
 
-resume_training = True # whether to use previous model (not just previous data). True is a lot faster, False a bit more accurate
+resume_training = True # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
 # header of stats file
 stats_file = work_dir + 'stats.txt'
 with open(stats_file, 'a') as file:
-  file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{max_steps=}\n{training_batch_size=}\n')
+  file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{max_steps=}\n{training_batch_size=}\n{version=}\n')
 
 device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
 
