@@ -70,7 +70,7 @@ resume_training = True # whether to use previous model (not just previous data).
 # header of stats file
 stats_file = work_dir + 'stats.txt'
 with open(stats_file, 'a') as file:
-  file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{max_steps=}\n{training_batch_size=}\n{version=}\n')
+  file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
 
 device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
 

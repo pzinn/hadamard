@@ -268,9 +268,9 @@ while k<max_iterations:
         test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
         print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
         logging.debug(f"splitting: {timer() - start}")
-        coeff = 6 if k==0 or not resume_training else 1
+        max_steps = training_steps if k==0 or not resume_training else training_steps//5
         start=timer()
-        mm.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps*coeff,eval_freq=100*coeff)
+        mm.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k:02d}.txt")
