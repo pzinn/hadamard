@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 import datetime
 import os
-
-version=0.5
+import subprocess
+version=subprocess.check_output(["git", "describe", "--always"]).strip().decode()
 
 ###########INITIAL-PARAMETERS###########
 
@@ -16,13 +16,13 @@ stacking = 4 # preferably a divisor of nn
 sample_size = 10000
 training_size = sample_size//2
 learning_rate = 1e-3
-sample_batch_size=sample_size//2 # for sampling. preferably a divisor of sample_size
-score_batch_size=sample_size//2 # for scoring/improving. one should have sample_batch_size < score_batch_size
-training_batch_size=32 # for training. much smaller, obviously
+sample_batch_size=sample_size # for sampling. preferably a divisor of sample_size
+score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
+training_batch_size=128 # for training. much smaller, obviously
 weight_decay=0.01
-max_iterations = 100
-max_steps = 20000 # first few steps have more
-#max_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
+max_iterations = 6
+training_steps = 100000 # if resuming, get divided by 5
+#training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 # transformer parameters
 @dataclass
@@ -31,8 +31,8 @@ class ModelConfig:
     vocab_size: int = None # the input integers are in range [0 .. vocab_size -1]
     # parameters below control the sizes of each model slightly differently
     n_layer: int = 4
-    n_embd: int = 256
-    n_head: int = 8
+    n_embd: int = 64
+    n_head: int = 4
 
 nchars = 1<<stacking
 #string_length = n//stacking # only works if stacking | n
@@ -47,11 +47,11 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/140/7/2025-03-15-12-27-09_150000_256/"
-    k = 5
+    work_dir = "./training/140/7/2025-03-15-12-27-09_150000_256b/" # don't forget the trailing /
+    k = 0
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
-    skip_first_training=False # start by sampling from existing model rather than training
+    skip_first_training=True # start by sampling from existing model rather than training. leave False if unsure
 else:
     # make directory
     date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
