@@ -59,7 +59,11 @@ def rot(i,a):
 ########### MAIN-DEFINITIONS ###########
 
 def best_from(arrays_dict):
-    return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
+    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
+    #the above is slightly more efficient but buggy (?)
+    arrays_items = list(arrays_dict.items())
+    arrays_items.sort(key=lambda item: item[1][0])
+    return dict(arrays_items[:training_size])
 
 def write_arrays(file_path,arrays):
     with open(file_path, 'w') as file:
@@ -217,7 +221,7 @@ hada_file = work_dir + 'hada.txt'
 
 if resume:
     # use existing sample
-    init_sample = work_dir + f'/GEN-{k}.txt'
+    init_sample = work_dir + f'/GEN-{k:02d}.txt'
     print(f'***Loading initial sample from {init_sample}***')
     arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
     arrays = list(map(lambda x: tuple(1 if c=="+" else -1 for c in x),arrays))
@@ -247,12 +251,12 @@ while k<max_iterations:
         arrays_dict = best_from(arrays_dict)
         record_stats(arrays_dict)
         arrays=arrays_dict.keys()
-        write_arrays(work_dir + f'/GEN-{k}.txt',arrays)
+        write_arrays(work_dir + f'/GEN-{k:02d}.txt',arrays)
     if skip_first_training:
         skip_first_training=False
     else:
         # train on GEN-k
-        print(f"\n***Training***\nTraining makemore on GEN-{k}...")
+        print(f"\n***Training***\nTraining makemore on GEN-{k:02d}...")
         start=timer()
         arrays=list(arrays)
         random.shuffle(arrays)
@@ -267,7 +271,7 @@ while k<max_iterations:
         mm.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps*coeff,eval_freq=100*coeff)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
-    print(f"\n***Sampling from transformer trained on GEN-{k}.txt")
+    print(f"\n***Sampling from transformer trained on GEN-{k:02d}.txt")
     k+=1
     #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?    
     start=timer()
