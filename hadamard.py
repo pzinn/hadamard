@@ -59,11 +59,13 @@ def rot(i,a):
 ########### MAIN-DEFINITIONS ###########
 
 def best_from(arrays_dict):
-    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
-    #the above is slightly more efficient but buggy (?)
+    return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
+    #the above is slightly more efficient but requires no nan
+    """
     arrays_items = list(arrays_dict.items())
     arrays_items.sort(key=lambda item: item[1][0])
     return dict(arrays_items[:training_size])
+    """
 
 def write_arrays(file_path,arrays):
     with open(file_path, 'w') as file:
@@ -200,7 +202,7 @@ def batch_improve(arrays_items): # using simple_search2
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
     # Convert back to dict
-    return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens)}
+    return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
 
 def subbatch_improve(arrays_items): # using simple_search2. same but with subbatches
     total_size = len(arrays_items)
