@@ -125,7 +125,7 @@ def record_stats(arrays_dict,prefix=""):
 
     if prefix:
         writer.add_scalar("Score/"+prefix, mean_score, k)
-        writer.add_scalar("Ratio/"+prefix, nh, k)
+        writer.add_scalar("Zero_score/"+prefix, nh, k)
 
 # torch functions
 torch.cuda.set_device(0)  # Use GPU 0

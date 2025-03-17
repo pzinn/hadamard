@@ -81,7 +81,7 @@ device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
 writer = SummaryWriter(log_dir=work_dir)
 layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
                           "score": [ "Multline", ["Score/sample","Score/improved","Score/selected"]],
-                          "ratio":[ "Multline", ["Ratio/sample","Ratio/improved","Ratio/selected"]],
+                          "zero_score":[ "Multline", ["Zero_score/sample","Zero_score/improved","Zero_score/selected"]],
                          }
           }
 writer.add_custom_scalars(layout)
