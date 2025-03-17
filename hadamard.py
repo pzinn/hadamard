@@ -104,13 +104,15 @@ def record_stats(arrays_dict,prefix=""):
     max_score = np.max(scores)
     print(f"Max score: {max_score}")
 
-    tally=Counter([val[1] for val in vals])
+    #tally=Counter([val[1] for val in vals])
+    tally=dict(Counter([val[1] for val in vals]).most_common())
     print(f"Gen tally: {tally}")
 
     hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] < eps }
     nh = len(hada_dict) / len(arrays_dict)
     print(f"Hadamard ratio: {nh}")
-    hada_tally = Counter(hada_dict.values())
+    #hada_tally = Counter(hada_dict.values())
+    hada_tally = dict(Counter(hada_dict.values()).most_common())
     print(f"Hadamard gen tally: {hada_tally}")
     
     with open(stats_file, 'a') as file:
