@@ -78,9 +78,7 @@ def write_arrays(file_path,arrays):
             file.write("".join(map(lambda x:"+" if x==1 else "-", s))+"\n")
 
 # for keeping track of stats
-first_time_stats = True
 def record_stats(arrays_dict,prefix=""):
-    global first_time_stats
     # compute autocorrelation by MC
     arrays = list(arrays_dict.keys())
     mc_size = 1000
@@ -116,8 +114,8 @@ def record_stats(arrays_dict,prefix=""):
     print(f"Hadamard gen tally: {hada_tally}")
     
     with open(stats_file, 'a') as file:
-        if first_time_stats:
-            first_time_stats=False
+        if not hasattr(record_stats, "has_run"):
+            record_stats.has_run = True
             file.write(f"{'gen':<3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} tally / H-tally\n")
         file.write(f"{k:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {tally} {hada_tally}\n")
 

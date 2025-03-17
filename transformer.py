@@ -228,6 +228,7 @@ class InfiniteDataLoader:
 
 model = Transformer(config)
 model.to(device)
+model.need_reload = True
 
 def get_loss(model,dataset,step,name):
     loss = evaluate(model, dataset, batch_size=100, max_batches=10)
@@ -307,18 +308,17 @@ def train(train_data,test_data,**kwargs):
             get_loss(model,train_dataset,step,"train")
             test_loss=get_loss(model,test_dataset,step,"test")
             # save the model to disk if it has improved
-            if best_loss is None or test_loss < best_loss:
+            if test_loss < best_loss:
                 out_path = os.path.join(work_dir, "model.pt")
                 print(f"best so far, saving model to {out_path}")
                 torch.save(model.state_dict(), out_path)
+                model.need_reload=True
                 best_loss = test_loss
                 if step == max_steps:
                     max_steps += eval_freq # don't quit on a winning streak
-            # termination conditions
-            elif test_loss > best_loss+.2:
-                break # we've probably massively overfitted
-            if step == max_steps:
+            elif test_loss > best_loss+.2 or step == max_steps: # termination conditions: done, or we've probably massively overfitted
                 break
+
 
 def crop(row):
     return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
@@ -335,9 +335,11 @@ def sample(**kwargs):
 
     block_size = config.block_size
 
-    print(f"model #params: {sum(p.numel() for p in model.parameters())}")
-    print("resuming from existing model in the workdir")
-    model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
+    if model.need_reload:
+        print("resuming from existing model in the workdir")
+        model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
+        model.need_reload=False
+
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
     X_samp = generate(model, X_init, block_size-1, top_k=top_k, do_sample=True).to('cpu')
