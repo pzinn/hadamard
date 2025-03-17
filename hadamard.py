@@ -73,7 +73,9 @@ def write_arrays(file_path,arrays):
             file.write("".join(map(lambda x:"+" if x==1 else "-", s))+"\n")
 
 # for keeping track of stats
+first_time_stats = True
 def record_stats(arrays_dict,prefix=""):
+    global first_time_stats
     # compute autocorrelation by MC
     arrays = list(arrays_dict.keys())
     mc_size = 1000
@@ -109,7 +111,10 @@ def record_stats(arrays_dict,prefix=""):
     print(f"Hadamard gen tally: {hada_tally}")
     
     with open(stats_file, 'a') as file:
-        file.write(f"{k} {prefix}: {min_score} {mean_score} {max_score} {s} {tally} {nh} {hada_tally} \n")
+        if first_time_stats:
+            first_time_stats=False
+            file.write(f"{'gen':<3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} tally / H-tally\n")
+        file.write(f"{k:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {tally} {hada_tally}\n")
 
     write_arrays(hada_file, hada_dict.keys())
 
@@ -248,10 +253,10 @@ while k<max_iterations:
         print(f"\n***Improving***")
         arrays_dict = subbatch_improve(arrays_dict.items())
         logging.debug(f"improving: {timer() - start}")
-        record_stats(arrays_dict)
+        record_stats(arrays_dict,"improved")
         print(f"\n***Selecting***")
         arrays_dict = best_from(arrays_dict)
-        record_stats(arrays_dict)
+        record_stats(arrays_dict,"selected")
         arrays=arrays_dict.keys()
         write_arrays(work_dir + f'/GEN-{k:02d}.txt',arrays)
     if skip_first_training:
