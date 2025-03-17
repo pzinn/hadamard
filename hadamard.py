@@ -22,7 +22,7 @@ logging.basicConfig(
 )
 
 #
-import transformer as mm
+import transformer
 from params import *
 
 eps = 1e-6 # is that too big? need to think
@@ -284,7 +284,7 @@ while k<max_iterations:
         logging.debug(f"splitting: {timer() - start}")
         max_steps = training_steps if k==0 or not resume_training else training_steps//5
         start=timer()
-        mm.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps,eval_freq=500)
+        transformer.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k:02d}.txt")
@@ -294,13 +294,14 @@ while k<max_iterations:
     new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_strings = mm.sample(num_samples=b,seed=start*11407)
+        new_strings = transformer.sample(num_samples=b,seed=start*11407)
         new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
         new_arrays_dict.update(batch_score(k,new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
     new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
     arrays_dict=new_arrays_dict
     logging.debug(f"sampling: {timer() - start}")
+    writer.flush()
 
 
 

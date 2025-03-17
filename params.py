@@ -1,3 +1,6 @@
+if __name__ == "__main__":
+    raise SystemExit("please run hadamard.py")
+
 from dataclasses import dataclass
 import datetime
 import os

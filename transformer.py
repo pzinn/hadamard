@@ -1,3 +1,6 @@
+if __name__ == "__main__":
+    raise SystemExit("please run hadamard.py")
+
 # based on makemore.py
 import os
 import sys
@@ -223,6 +226,9 @@ class InfiniteDataLoader:
 
 # -----------------------------------------------------------------------------
 
+model = Transformer(config)
+model.to(device)
+
 def get_loss(model,dataset,step,name):
     loss = evaluate(model, dataset, batch_size=100, max_batches=10)
     writer.add_scalar("Loss/"+name, loss, step)
@@ -251,8 +257,6 @@ def train(train_data,test_data,**kwargs):
     block_size = config.block_size
     vocab_size = config.vocab_size # should one check that this is correct?
 
-    model = Transformer(config)
-    model.to(device)
     #print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     if resume:
         try:
@@ -331,8 +335,6 @@ def sample(**kwargs):
 
     block_size = config.block_size
 
-    model = Transformer(config)
-    model.to(device)
     print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     print("resuming from existing model in the workdir")
     model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
