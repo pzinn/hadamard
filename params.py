@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import datetime
 import os
+from torch.utils.tensorboard import SummaryWriter
 import subprocess
 version=subprocess.check_output(["git", "describe", "--always"]).strip().decode()
 
@@ -73,4 +74,12 @@ with open(stats_file, 'a') as file:
   file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
 
 device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
+
+writer = SummaryWriter(log_dir=work_dir)
+layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
+                          "score": [ "Multline", ["Score/sample","Score/improved","Score/selected"]],
+                          "ratio":[ "Multline", ["Ratio/sample","Ratio/improved","Ratio/selected"]],
+                         }
+          }
+writer.add_custom_scalars(layout)
 

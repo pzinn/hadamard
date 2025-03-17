@@ -1,9 +1,7 @@
 # based on makemore.py
 import os
-#import sys
-#import time
+import sys
 import math
-#from typing import List
 import random
 
 import torch
@@ -11,8 +9,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from torch.utils.tensorboard import SummaryWriter
-from params import config, work_dir, learning_rate, training_batch_size, weight_decay, device
+from params import config, work_dir, learning_rate, training_batch_size, weight_decay, device, writer
 
 # -----------------------------------------------------------------------------
 
@@ -225,6 +222,15 @@ class InfiniteDataLoader:
         return batch
 
 # -----------------------------------------------------------------------------
+
+def get_loss(model,dataset,step,name):
+    loss = evaluate(model, dataset, batch_size=100, max_batches=10)
+    writer.add_scalar("Loss/"+name, loss, step)
+    writer.flush()
+    if name == 'test':
+        print(f"{step=} {name} {loss=} ",end=''); sys.stdout.flush()
+    return loss
+
 def train(train_data,test_data,**kwargs):
     resume = kwargs.get("resume",False)
     num_workers = kwargs.get("num_workers",4)
@@ -241,9 +247,6 @@ def train(train_data,test_data,**kwargs):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     #os.makedirs(work_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=work_dir)
-    layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]]}}
-    writer.add_custom_scalars(layout)
 
     block_size = config.block_size
     vocab_size = config.vocab_size # should one check that this is correct?
@@ -272,8 +275,9 @@ def train(train_data,test_data,**kwargs):
     batch_loader = InfiniteDataLoader(train_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
 
     # training loop
-    best_loss = None
     step = 0
+    get_loss(model,train_dataset,step,"train")
+    best_loss=get_loss(model,test_dataset,step,"test")
     while True:
         #t0 = time.time()
         # get the next batch, ship to device, and unpack it to input and target
@@ -296,17 +300,12 @@ def train(train_data,test_data,**kwargs):
         # evaluate the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            train_loss = evaluate(model, train_dataset, batch_size=100, max_batches=10)
-            test_loss  = evaluate(model, test_dataset,  batch_size=100, max_batches=10)
-            writer.add_scalar("Loss/train", train_loss, step)
-            writer.add_scalar("Loss/test", test_loss, step)
-            #writer.add_scalars("",{"Loss/train": train_loss,"Loss/test": test_loss}, step) #spams too much. see custom_scalars alternative
-            writer.flush()
-            print(f"step {step} train loss: {train_loss} test loss: {test_loss}")
+            get_loss(model,train_dataset,step,"train")
+            test_loss=get_loss(model,test_dataset,step,"test")
             # save the model to disk if it has improved
             if best_loss is None or test_loss < best_loss:
                 out_path = os.path.join(work_dir, "model.pt")
-                print(f"test loss {test_loss} is the best so far, saving model to {out_path}")
+                print(f"best so far, saving model to {out_path}")
                 torch.save(model.state_dict(), out_path)
                 best_loss = test_loss
                 if step == max_steps:

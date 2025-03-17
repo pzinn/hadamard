@@ -123,6 +123,10 @@ def record_stats(arrays_dict,prefix=""):
 
     write_arrays(hada_file, hada_dict.keys())
 
+    if prefix:
+        writer.add_scalar("Score/"+prefix, mean_score, k)
+        writer.add_scalar("Ratio/"+prefix, nh, k)
+
 # torch functions
 torch.cuda.set_device(0)  # Use GPU 0
 torch.cuda.empty_cache()  # Free memory before large computation
@@ -243,7 +247,7 @@ else:
     arrays = list(generate_random_array() for _ in range(sample_size))
 
 arrays_dict = subbatch_score(k,arrays)
-record_stats(arrays_dict)
+record_stats(arrays_dict,prefix="sample")
 
 test_set_size = 1+1000//nn
 
