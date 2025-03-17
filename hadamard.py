@@ -59,8 +59,13 @@ def rot(i,a):
 ########### MAIN-DEFINITIONS ###########
 
 def best_from(arrays_dict):
-    return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
-    #the above is slightly more efficient but requires no nan
+    #heapq is slightly more efficient but requires no nan
+    # preserves ordering
+    items = arrays_dict.items()
+    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items , key=lambda item: item[1])}
+    return {k: v for k, v in items if k in smallest_keys}
+    #doesn't
+    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
     """
     arrays_items = list(arrays_dict.items())
     arrays_items.sort(key=lambda item: item[1][0])
@@ -289,7 +294,7 @@ while k<max_iterations:
         new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
         new_arrays_dict.update(batch_score(k,new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
-    new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen
+    new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
     arrays_dict=new_arrays_dict
     logging.debug(f"sampling: {timer() - start}")
 
