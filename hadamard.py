@@ -164,7 +164,7 @@ def subbatch_score(k,arrays): # same but in batches of score_batch_size
 # parameters of step 2 (can be adjusted)
 max_k = int(math.sqrt(n))
 n_attempts = n
-def batch_improve(arrays_items): # using simple_search2
+def batch_improve(arrays_items):
     arrays, values = zip(*arrays_items)  # Keys are tuples, values are scores
     scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
@@ -204,7 +204,7 @@ def batch_improve(arrays_items): # using simple_search2
     # Convert back to dict
     return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
 
-def subbatch_improve(arrays_items): # using simple_search2. same but with subbatches
+def subbatch_improve(arrays_items):
     total_size = len(arrays_items)
     updated_dict = {}
     it = iter(arrays_items)  # Convert dictionary to iterator
@@ -277,13 +277,15 @@ while k<max_iterations:
     k+=1
     #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?    
     start=timer()
+    new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        strings1 = mm.sample(num_samples=b,seed=start*11407)
-        arrays1 = [x for x in ( string_to_array(str) for str in strings1 if len(str) == string_length ) if x not in arrays_dict] #throw out strings of incorrect length and duplicates
-        arrays1_dict = batch_score(k,arrays1)
-        record_stats(arrays1_dict,prefix="sample") # not needed, for testing purposes (do we produce similar scores as training data?)
-        arrays_dict.update(arrays1_dict)
+        new_strings = mm.sample(num_samples=b,seed=start*11407)
+        new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
+        new_arrays_dict.update(batch_score(k,new_arrays))
+    record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
+    new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen
+    arrays_dict=new_arrays_dict
     logging.debug(f"sampling: {timer() - start}")
 
 
