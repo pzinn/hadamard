@@ -230,7 +230,20 @@ model = Transformer(config)
 model.to(device)
 model.need_reload = True
 
-def get_loss(model,dataset,step,name):
+out_path = os.path.join(work_dir, "model.pt")
+
+def load_model():
+    if model.need_reload:
+        print("resuming from existing model in the workdir")
+        model.load_state_dict(torch.load(out_path))
+        model.need_reload=False
+
+def save_model():
+    print(f"saving model to workdir")
+    torch.save(model.state_dict(), out_path)
+    model.need_reload=True
+
+def get_loss(dataset,step,name):
     loss = evaluate(model, dataset, batch_size=100, max_batches=10)
     writer.add_scalar("Loss/"+name, loss, step)
     writer.flush()
@@ -261,8 +274,7 @@ def train(train_data,test_data,**kwargs):
     #print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     if resume:
         try:
-            model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
-            print("resuming from existing model in the workdir")
+            load_model()
         except FileNotFoundError:
             pass
     print(f"number of examples in the dataset: {len(train_data)+len(test_data)}")
@@ -281,8 +293,8 @@ def train(train_data,test_data,**kwargs):
 
     # training loop
     step = 0
-    get_loss(model,train_dataset,step,"train")
-    best_loss=get_loss(model,test_dataset,step,"test")
+    get_loss(train_dataset,step,"train")
+    best_loss=get_loss(test_dataset,step,"test")
     while True:
         #t0 = time.time()
         # get the next batch, ship to device, and unpack it to input and target
@@ -305,14 +317,11 @@ def train(train_data,test_data,**kwargs):
         # evaluate the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            get_loss(model,train_dataset,step,"train")
-            test_loss=get_loss(model,test_dataset,step,"test")
+            get_loss(train_dataset,step,"train")
+            test_loss=get_loss(test_dataset,step,"test")
             # save the model to disk if it has improved
             if test_loss < best_loss:
-                out_path = os.path.join(work_dir, "model.pt")
-                print(f"best so far, saving model to {out_path}")
-                torch.save(model.state_dict(), out_path)
-                model.need_reload=True
+                save_model()
                 best_loss = test_loss
                 if step == max_steps:
                     max_steps += eval_freq # don't quit on a winning streak
@@ -335,10 +344,7 @@ def sample(**kwargs):
 
     block_size = config.block_size
 
-    if model.need_reload:
-        print("resuming from existing model in the workdir")
-        model.load_state_dict(torch.load(os.path.join(work_dir, 'model.pt')))
-        model.need_reload=False
+    load_model()
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
