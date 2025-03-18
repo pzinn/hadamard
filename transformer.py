@@ -248,7 +248,7 @@ def get_loss(dataset,step,name):
     writer.add_scalar("Loss/"+name, loss, step)
     writer.flush()
     if name == 'test':
-        print(f"{step=} {name} {loss=}",end='\t'); sys.stdout.flush()
+        print(f"{step=} {name} {loss=:.6f}",end='\t'); sys.stdout.flush()
     return loss
 
 def train(train_data,test_data,**kwargs):
