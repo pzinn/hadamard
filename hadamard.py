@@ -124,8 +124,8 @@ def record_stats(arrays_dict,prefix=""):
     with open(stats_file, 'a') as file:
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
-            file.write(f"{'gen':<3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{gen:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):<10} {tally} {hada_tally}\n")
+            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
+        file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):>10} {tally} {hada_tally}\n")
 
     write_arrays(hada_file, total_hada_dict.keys())
 
@@ -253,7 +253,7 @@ else:
     arrays = list(generate_random_array() for _ in range(sample_size))
 
 arrays_dict = subbatch_score(arrays)
-record_stats(arrays_dict,prefix="sample")
+record_stats(arrays_dict,prefix="sample" if not resume else "") # who knows where the data come from if resuming
 
 test_set_size = 1+1000//nn
 
@@ -288,7 +288,9 @@ while gen<max_iterations:
         test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
         print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
         logging.debug(f"splitting: {timer() - start}")
-        max_steps = training_steps if gen==0 or not resume_training else training_steps//5
+        coeff = 1 if gen==0 or not resume_training else .01+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
+        logging.debug(f"{coeff=}")
+        max_steps = int(training_steps*coeff)
         start=timer()
         transformer.train(train_words,test_words,resume=resume_training,max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
