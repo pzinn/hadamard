@@ -127,7 +127,7 @@ def record_stats(arrays_dict,prefix=""):
             file.write(f"{'gen':<3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{k:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):<10} {tally} {hada_tally}\n")
 
-    write_arrays(hada_file, hada_dict.keys())
+    write_arrays(hada_file, total_hada_dict.keys())
 
     if prefix:
         writer.add_scalar("Score/"+prefix, mean_score, k)
