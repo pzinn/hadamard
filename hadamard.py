@@ -290,7 +290,7 @@ while k<max_iterations:
         logging.debug(f"splitting: {timer() - start}")
         max_steps = training_steps if k==0 or not resume_training else training_steps//5
         start=timer()
-        transformer.train(train_words,test_words,resume=resume_training and (k>0 or resume),max_steps=max_steps,eval_freq=500)
+        transformer.train(train_words,test_words,resume=resume_training,max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(k+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{k:02d}.txt")
