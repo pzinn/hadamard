@@ -34,22 +34,33 @@ def generate_random_array():
 def char_to_sign(c, i):
     return 2 * ((c >> i) & 1) - 1
 
-def string_to_array(s): # really, tuple to tuple by now!
-    return tuple(char_to_sign(s[i // stacking] - 1, i % stacking) for i in range(n))
-
-# really, tuple to tuple by now!
-quarter_string_length = string_length//4
-array_to_string = (lambda M: tuple(
-    1 + sum((1 if M[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
-    #1 + sum((1 if M[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
+if nn % stacking == 0: # do separately cause simpler
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[i // stacking] - 1, i % stacking)
+            for i in range(n)
+        )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
+            #1 + sum((1 if a[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
             for i in range(string_length)
-)) if nn % stacking == 0 else (lambda M: tuple( # or do I want n % stacking == 0 ? would be kind of OK
-    #1 + sum((1 if M[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking if i<string_length-1 else n%stacking)) # encoding 1
-    1 + sum((1 if M[j * nn + i * stacking + bit] == 1 else 0) << bit
-            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1, more padding
-    for j in range(4)
-    for i in range(quarter_string_length)
-))
+        )
+else:
+    quarter_string_length = string_length//4
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[j * quarter_string_length + i // stacking]-1,i % stacking)
+            for j in range(4)
+            for i in range(nn)
+            )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
+            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
+            for j in range(4)
+            for i in range(quarter_string_length)
+        )
 
 # cyclically rotate a tuple
 def rot(i,a):
