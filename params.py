@@ -7,6 +7,8 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 import subprocess
 version=subprocess.check_output(["git", "describe", "--always"]).strip().decode()
+import glob
+import re
 
 ###########INITIAL-PARAMETERS###########
 
@@ -52,7 +54,7 @@ resume=False # whether to resume a previous run
 if resume:
     # provide work_dir manually
     work_dir = "./training/80/5/2025-03-18-15-24-03_100000_64/" # don't forget the trailing /
-    gen = 0 # generation
+    # gen = 0 # generation to pick up from. leave commented out for lastest gen
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
     skip_first_training=False # start by sampling from existing model rather than training. leave False if unsure
@@ -71,10 +73,11 @@ os.symlink(work_dir,"latest")
 
 resume_training = True # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
+stats_file = work_dir + 'stats.txt' # where to save logs
 # header of stats file
-stats_file = work_dir + 'stats.txt'
 with open(stats_file, 'a') as file:
   file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
+hada_file = work_dir + 'hada.txt' # where to save Hadamard matrices
 
 device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
 
@@ -85,4 +88,12 @@ layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
                          }
           }
 writer.add_custom_scalars(layout)
+
+#helper function
+def find_latest_gen():
+    # Get all filenames matching the pattern
+    files = glob.glob(work_dir+"GEN-*.txt")
+    # Extract the numerical part using regex
+    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
+    return max(indices) if indices else None  # Return max index, or None if no files found
 

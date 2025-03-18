@@ -249,11 +249,10 @@ def subbatch_improve(arrays_items):
 # #### STEP 0
 
 # initial info
-stats_file = work_dir + 'stats.txt'
-hada_file = work_dir + 'hada.txt'
-
 if resume:
     # use existing sample
+    if not "gens" in globals(): # by default, use latest generation
+        gen = find_latest_gen()
     init_sample = work_dir + f'/GEN-{gen:02d}.txt'
     print(f'***Loading initial sample from {init_sample}***')
     arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
