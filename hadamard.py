@@ -125,13 +125,13 @@ def record_stats(arrays_dict,prefix=""):
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
             file.write(f"{'gen':<3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{k:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):<10} {tally} {hada_tally}\n")
+        file.write(f"{gen:<3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):<10} {tally} {hada_tally}\n")
 
     write_arrays(hada_file, total_hada_dict.keys())
 
     if prefix:
-        writer.add_scalar("Score/"+prefix, mean_score, k)
-        writer.add_scalar("Zero_score/"+prefix, nh, k)
+        writer.add_scalar("Score/"+prefix, mean_score, gen)
+        writer.add_scalar("Zero_score/"+prefix, nh, gen)
 
 # torch functions
 torch.cuda.set_device(0)  # Use GPU 0
@@ -167,18 +167,18 @@ def score_torch(m):
     _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
     return cst-logdet  # Negate to match original function
 
-def batch_score(k,arrays):
+def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor
     scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    return {x: (s.item(),k) for x, s in zip(arrays, scores)}  # Convert back to dict
+    return {x: (s.item(),gen) for x, s in zip(arrays, scores)}  # Convert back to dict
 
-def subbatch_score(k,arrays): # same but in batches of score_batch_size
+def subbatch_score(arrays): # same but in batches of score_batch_size
     total_size = len(arrays)
     updated_dict = {}
     for start in range(0, total_size, score_batch_size):
         end = min(start + score_batch_size, total_size)
-        updated_dict.update(batch_score(k,arrays[start:end]))
+        updated_dict.update(batch_score(arrays[start:end]))
     return updated_dict
 
 # parameters of step 2 (can be adjusted)
@@ -243,7 +243,7 @@ hada_file = work_dir + 'hada.txt'
 
 if resume:
     # use existing sample
-    init_sample = work_dir + f'/GEN-{k:02d}.txt'
+    init_sample = work_dir + f'/GEN-{gen:02d}.txt'
     print(f'***Loading initial sample from {init_sample}***')
     arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
     arrays = list(map(lambda x: tuple(1 if c=="+" else -1 for c in x),arrays))
@@ -252,18 +252,18 @@ else:
     print(f'***Generating initial sample***')
     arrays = list(generate_random_array() for _ in range(sample_size))
 
-arrays_dict = subbatch_score(k,arrays)
+arrays_dict = subbatch_score(arrays)
 record_stats(arrays_dict,prefix="sample")
 
 test_set_size = 1+1000//nn
 
 ########### MAIN-LOOP ###########
 
-while k<max_iterations:
+while gen<max_iterations:
     if resume:
         resume=False
     else:
-        # compute GEN-(k)
+        # compute GEN-(gen)
         start=timer()
         print(f"\n***Improving***")
         arrays_dict = subbatch_improve(arrays_dict.items())
@@ -273,12 +273,12 @@ while k<max_iterations:
         arrays_dict = best_from(arrays_dict)
         record_stats(arrays_dict,"selected")
         arrays=arrays_dict.keys()
-        write_arrays(work_dir + f'/GEN-{k:02d}.txt',arrays)
+        write_arrays(work_dir + f'/GEN-{gen:02d}.txt',arrays)
     if skip_first_training:
         skip_first_training=False
     else:
-        # train on GEN-k
-        print(f"\n***Training***\nTraining makemore on GEN-{k:02d}...")
+        # train on GEN-gen
+        print(f"\n***Training on GEN-{gen:02d}***")
         start=timer()
         arrays=list(arrays)
         random.shuffle(arrays)
@@ -288,13 +288,13 @@ while k<max_iterations:
         test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
         print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
         logging.debug(f"splitting: {timer() - start}")
-        max_steps = training_steps if k==0 or not resume_training else training_steps//5
+        max_steps = training_steps if gen==0 or not resume_training else training_steps//5
         start=timer()
         transformer.train(train_words,test_words,resume=resume_training,max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
-    # sample from model to get GEN-(k+1)-a
-    print(f"\n***Sampling from transformer trained on GEN-{k:02d}.txt")
-    k+=1
+    # sample from model to get GEN-(gen+1)-a
+    print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
+    gen+=1
     #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
     start=timer()
     new_arrays_dict={}
@@ -302,7 +302,7 @@ while k<max_iterations:
         b = min(sample_batch_size, sample_size-start)
         new_strings = transformer.sample(num_samples=b,seed=start*11407)
         new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
-        new_arrays_dict.update(batch_score(k,new_arrays))
+        new_arrays_dict.update(batch_score(new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
     new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
     arrays_dict=new_arrays_dict

@@ -11,21 +11,21 @@ version=subprocess.check_output(["git", "describe", "--always"]).strip().decode(
 ###########INITIAL-PARAMETERS###########
 
 # hadamard matrix parameters
-nn = 12 # size of matrix = 4*nn
+nn = 20 # size of matrix = 4*nn
 n = 4 * nn
 # encoding
-stacking = 4 # preferably a divisor of nn
+stacking = 5 # preferably a divisor of nn
 
 # training parameters
-sample_size = 10000
+sample_size = 100000
 training_size = sample_size//2
-learning_rate = 1e-3
-sample_batch_size=sample_size # for sampling. preferably a divisor of sample_size
+learning_rate = 1e-4
+sample_batch_size=sample_size//2 # for sampling. preferably a divisor of sample_size
 score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size=128 # for training. much smaller, obviously
 weight_decay=0.01
-max_iterations = 6
-training_steps = 100000 # if resuming, get divided by 5
+max_iterations = 100
+training_steps = 300000 # if resuming, get divided by 5
 #training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 # transformer parameters
@@ -51,17 +51,17 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/140/7/2025-03-15-12-27-09_150000_256b/" # don't forget the trailing /
-    k = 0
+    work_dir = "./training/80/5/2025-03-18-15-24-03_100000_64/" # don't forget the trailing /
+    gen = 0 # generation
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
-    skip_first_training=True # start by sampling from existing model rather than training. leave False if unsure
+    skip_first_training=False # start by sampling from existing model rather than training. leave False if unsure
 else:
     # make directory
     date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
     work_dir = f'./training/{n}/{stacking}/{date}_{sample_size}_{config.n_embd}/'
     os.makedirs(work_dir, exist_ok=True)
-    k = 0
+    gen = 0
     skip_first_training=False
 try:
     os.unlink("latest")
