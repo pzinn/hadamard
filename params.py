@@ -19,7 +19,7 @@ stacking = 5 # preferably a divisor of nn
 # training parameters
 sample_size = 100000
 training_size = sample_size//2
-learning_rate = 1e-4
+learning_rate = 5e-4
 sample_batch_size=sample_size//2 # for sampling. preferably a divisor of sample_size
 score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size=128 # for training. much smaller, obviously
