@@ -162,7 +162,7 @@ def batch_improve(arrays_items):
     arrays, values = zip(*arrays_items)  # Keys are tuples, values are scores
     scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
-    arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor
+    arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor and float32 (score needs float)
     #scores = score_torch(arrays_tensor)  # Compute scores in parallel
     scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
     # step 1: this is the analogue of my old "simple_search2"
@@ -197,7 +197,9 @@ def batch_improve(arrays_items):
         scores[mask] = new_scores[mask]
     # Convert back to dict
     #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
-    return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
+    #return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
+    #return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
+    return {tuple(x): (s,g) for x, s, g in zip(torch.where(arrays_tensor>0,1,-1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
 
 def subbatch_improve(arrays_items):
     total_size = len(arrays_items)
