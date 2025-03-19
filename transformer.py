@@ -8,11 +8,11 @@ import math
 import random
 
 import torch
-import torch.nn as nn
+import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from params import config, work_dir, learning_rate, training_batch_size, weight_decay, device, writer
+from params import *
 
 # -----------------------------------------------------------------------------
 
@@ -20,7 +20,7 @@ from params import config, work_dir, learning_rate, training_batch_size, weight_
 # -----------------------------------------------------------------------------
 # Transformer Language Model (*exactly* as used in GPT-2)
 
-class NewGELU(nn.Module):
+class NewGELU(torch.nn.Module):
     """
     Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
     Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
@@ -28,7 +28,7 @@ class NewGELU(nn.Module):
     def forward(self, x):
         return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
-class CausalSelfAttention(nn.Module):
+class CausalSelfAttention(torch.nn.Module):
     """
     A vanilla multi-head masked self-attention layer with a projection at the end.
     It is possible to use torch.nn.MultiheadAttention here but I am including an
@@ -39,9 +39,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        self.c_attn = torch.nn.Linear(config.n_embd, 3 * config.n_embd)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj = torch.nn.Linear(config.n_embd, config.n_embd)
         # causal mask to ensure that attention is only applied to the left in the input sequence
         self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
@@ -68,17 +68,17 @@ class CausalSelfAttention(nn.Module):
         y = self.c_proj(y)
         return y
 
-class Block(nn.Module):
+class Block(torch.nn.Module):
     """ an unassuming Transformer block """
 
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embd)
+        self.ln_1 = torch.nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = nn.LayerNorm(config.n_embd)
-        self.mlp = nn.ModuleDict(dict(
-            c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd),
-            c_proj  = nn.Linear(4 * config.n_embd, config.n_embd),
+        self.ln_2 = torch.nn.LayerNorm(config.n_embd)
+        self.mlp = torch.nn.ModuleDict(dict(
+            c_fc    = torch.nn.Linear(config.n_embd, 4 * config.n_embd),
+            c_proj  = torch.nn.Linear(4 * config.n_embd, config.n_embd),
             act     = NewGELU(),
         ))
         m = self.mlp
@@ -89,20 +89,20 @@ class Block(nn.Module):
         x = x + self.mlpf(self.ln_2(x))
         return x
 
-class Transformer(nn.Module):
+class Transformer(torch.nn.Module):
     """ Transformer Language Model, exactly as seen in GPT-2 """
 
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
 
-        self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
-            h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embd),
+        self.transformer = torch.nn.ModuleDict(dict(
+            wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = torch.nn.Embedding(config.block_size, config.n_embd),
+            h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
+            ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # report number of parameters (note we don't count the decoder parameters in lm_head)
         n_params = sum(p.numel() for p in self.transformer.parameters())
@@ -187,6 +187,11 @@ def evaluate(model, dataset, batch_size=50, max_batches=None):
     model.train() # reset model back to training mode
     return mean_loss
 
+# cyclically rotate a tuple
+def rot(i,a):
+    #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
+    return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
+
 # -----------------------------------------------------------------------------
 # helper functions for creating the training and test Datasets that emit words
 
@@ -199,7 +204,8 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = torch.tensor(self.words[idx], dtype=torch.long)
+        s=array_to_string(rot(random.randrange(nn),self.words[idx]))
+        ix = torch.tensor(s, dtype=torch.long)
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix
@@ -253,7 +259,7 @@ def get_loss(dataset,step,name):
 
 def train(train_data,test_data,**kwargs):
     resume = kwargs.get("resume",False)
-    num_workers = kwargs.get("num_workers",4)
+    num_workers = kwargs.get("num_workers",8) # should be parameterisable TODO
     max_steps = kwargs.get("max_steps",-1)
     seed = kwargs.get("seed",3407)
     # optimization -> slowly being moved to params.py

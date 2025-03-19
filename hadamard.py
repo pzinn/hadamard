@@ -30,43 +30,6 @@ eps = 1e-6 # is that too big? need to think
 def generate_random_array():
     return tuple(random.choices([-1,1],k=n))
 
-# conversion string <-> matrix
-def char_to_sign(c, i):
-    return 2 * ((c >> i) & 1) - 1
-
-if nn % stacking == 0: # do separately cause simpler
-    def string_to_array(s): # really, tuple to tuple by now!
-        return tuple(
-            char_to_sign(s[i // stacking] - 1, i % stacking)
-            for i in range(n)
-        )
-    def array_to_string(a):
-        return tuple(
-            1 + sum((1 if a[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
-            #1 + sum((1 if a[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
-            for i in range(string_length)
-        )
-else:
-    quarter_string_length = string_length//4
-    def string_to_array(s): # really, tuple to tuple by now!
-        return tuple(
-            char_to_sign(s[j * quarter_string_length + i // stacking]-1,i % stacking)
-            for j in range(4)
-            for i in range(nn)
-            )
-    def array_to_string(a):
-        return tuple(
-            1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
-            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
-            for j in range(4)
-            for i in range(quarter_string_length)
-        )
-
-# cyclically rotate a tuple
-def rot(i,a):
-    #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
-    return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
-
 ########### MAIN-DEFINITIONS ###########
 
 def best_from(arrays_dict):
@@ -291,19 +254,19 @@ while gen<max_iterations:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
         start=timer()
-        arrays=list(arrays)
+        arrays=list(arrays) # this could be done in transformer.py
         random.shuffle(arrays)
         test_arrays=arrays[:test_set_size]
         train_arrays=arrays[test_set_size:]
-        train_words = [array_to_string(rot(i,a)) for i in range(nn) for a in train_arrays] # added: rotation to increase training size
-        test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
-        print(f"split up the dataset into {len(train_words)} training examples and {len(test_words)} test examples")
+        #train_words = [array_to_string(rot(i,a)) for i in range(nn) for a in train_arrays] # added: rotation to increase training size
+        #test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
+        print(f"split up the dataset into {len(train_arrays)} training examples and {len(test_arrays)} test examples")
         logging.debug(f"splitting: {timer() - start}")
         coeff = 1 if gen==0 or not resume_training else .01+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
         logging.debug(f"{coeff=}")
         max_steps = int(training_steps*coeff)
         start=timer()
-        transformer.train(train_words,test_words,resume=resume_training,max_steps=max_steps,eval_freq=500)
+        transformer.train(train_arrays,test_arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start}")
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
@@ -313,7 +276,7 @@ while gen<max_iterations:
     new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_strings = transformer.sample(num_samples=b,seed=start*11407)
+        new_strings = transformer.sample(num_samples=b,seed=start*11407) # should string_to_array be moved to transformer?
         new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
         new_arrays_dict.update(batch_score(new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?

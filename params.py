@@ -13,21 +13,21 @@ import re
 ###########INITIAL-PARAMETERS###########
 
 # hadamard matrix parameters
-nn = 20 # size of matrix = 4*nn
+nn = 12 # size of matrix = 4*nn
 n = 4 * nn
 # encoding
-stacking = 5 # preferably a divisor of nn
+stacking = 4 # preferably a divisor of nn
 
 # training parameters
-sample_size = 100000
+sample_size = 10000
 training_size = sample_size//2
-learning_rate = 5e-4
-sample_batch_size=sample_size//2 # for sampling. preferably a divisor of sample_size
+learning_rate = 1e-3
+sample_batch_size=sample_size # for sampling. preferably a divisor of sample_size
 score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
-training_batch_size=128 # for training. much smaller, obviously
+training_batch_size=64 # for training. much smaller, obviously
 weight_decay=0.01
-max_iterations = 100
-training_steps = 300000 # if resuming, get divided by 5
+max_iterations = 6
+training_steps = 100000 # will be adjusted dynamically (to be less than that)
 #training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 # transformer parameters
@@ -89,11 +89,43 @@ layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
           }
 writer.add_custom_scalars(layout)
 
-#helper function
+#helper functions
 def find_latest_gen():
     # Get all filenames matching the pattern
     files = glob.glob(work_dir+"GEN-*.txt")
     # Extract the numerical part using regex
     indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
     return max(indices) if indices else None  # Return max index, or None if no files found
+
+# conversion string <-> matrix
+def char_to_sign(c, i):
+    return 2 * ((c >> i) & 1) - 1
+
+if nn % stacking == 0: # do separately cause simpler
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[i // stacking] - 1, i % stacking)
+            for i in range(n)
+        )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
+            #1 + sum((1 if a[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
+            for i in range(string_length)
+        )
+else:
+    quarter_string_length = string_length//4
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[j * quarter_string_length + i // stacking]-1,i % stacking)
+            for j in range(4)
+            for i in range(nn)
+            )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
+            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
+            for j in range(4)
+            for i in range(quarter_string_length)
+        )
 
