@@ -265,8 +265,8 @@ while gen<max_iterations:
     new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_strings = transformer.sample(num_samples=b,seed=start*11407) # should string_to_array be moved to transformer?
-        new_arrays = [x for x in ( string_to_array(str) for str in new_strings if len(str) == string_length ) if x not in arrays_dict and x not in new_arrays_dict] #throw out strings of incorrect length
+        new_arrays = transformer.sample(num_samples=b,seed=start*11407)
+        new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict] # remove duplicates
         new_arrays_dict.update(batch_score(new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
     new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving

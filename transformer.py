@@ -192,6 +192,38 @@ def rot(i,a):
     #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
     return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
 
+# conversion string <-> matrix
+def char_to_sign(c, i):
+    return 2 * ((c >> i) & 1) - 1
+
+if nn % stacking == 0: # do separately cause simpler
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[i // stacking] - 1, i % stacking)
+            for i in range(n)
+        )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
+            #1 + sum((1 if a[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
+            for i in range(string_length)
+        )
+else:
+    quarter_string_length = string_length//4
+    def string_to_array(s): # really, tuple to tuple by now!
+        return tuple(
+            char_to_sign(s[j * quarter_string_length + i // stacking]-1,i % stacking)
+            for j in range(4)
+            for i in range(nn)
+            )
+    def array_to_string(a):
+        return tuple(
+            1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
+            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
+            for j in range(4)
+            for i in range(quarter_string_length)
+        )
+
 # -----------------------------------------------------------------------------
 # helper functions for creating the training and test Datasets that emit words
 
@@ -348,9 +380,9 @@ def train(data,**kwargs):
                 break
 
 
-def crop(row):
-    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
-        
+#def crop(row):
+#    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
+
 def sample(**kwargs):
     num_samples = kwargs.get("num_samples",1000)
     seed = kwargs.get("seed",3407)
@@ -367,7 +399,9 @@ def sample(**kwargs):
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
-    X_samp = generate(model, X_init, block_size-1, top_k=top_k, do_sample=True).to('cpu')
-    samples = [ crop(row[1:].tolist()) for row in X_samp ]
+    X_samp = generate(model, X_init, block_size-1, top_k=top_k, do_sample=True).cpu()
+    #samples = [ crop(row[1:].tolist()) for row in X_samp ]
+    #here we assume that the length is entirely fixed -> no need for crop. revert if encoding has variable length
+    samples = [ string_to_array(row[1:string_length+1].tolist()) for row in X_samp if len(row)>=string_length+1 ]
     return samples
 
