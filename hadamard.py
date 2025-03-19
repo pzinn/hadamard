@@ -182,7 +182,7 @@ def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor
     scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    return {x: (s.item(),gen) for x, s in zip(arrays, scores)}  # Convert back to dict
+    return {x: (s.item(),gen) for x, s in zip(arrays, scores.cpu())}  # Convert back to dict
 
 def subbatch_score(arrays): # same but in batches of score_batch_size
     total_size = len(arrays)
@@ -233,7 +233,8 @@ def batch_improve(arrays_items):
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
     # Convert back to dict
-    return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
+    #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
+    return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
 
 def subbatch_improve(arrays_items):
     total_size = len(arrays_items)
