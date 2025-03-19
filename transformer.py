@@ -290,6 +290,8 @@ def get_loss(dataset,step,name):
     return loss
 
 test_set_size = 1000
+if training_size <= test_set_size:
+    raise SystemExit("{training_size=} must be greater than {test_set_size=}")
 
 def train(data,**kwargs):
     resume = kwargs.get("resume",False)
