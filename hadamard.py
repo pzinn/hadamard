@@ -69,7 +69,10 @@ def record_stats(arrays_dict,prefix=""):
     # now scores
     vals = arrays_dict.values()
     scores = np.array([val[0] for val in vals], dtype=float)
-    scores = scores[scores < np.inf] # get rid of infinities
+
+    # normalise scores
+    scores = scores / (2*math.sqrt(n)) - n/2 # with quartic score
+    #scores = scores - n/2 * math.log(n) # with log det score
 
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
@@ -134,12 +137,18 @@ def upblock_torch(x):
         torch.cat((-D, -C, B, A), dim=2)
     ], dim=1)
 
-cst = n/2 * math.log(n)
-def score_torch(m):
+#cst = n/2 * math.log(n) # will be subtracted later
+def score1_torch(m):
     """Compute -log determinant of circulant matrix using PyTorch."""
     C = upblock_torch(m)  # Generate circulant matrix on GPU
     _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
-    return cst-logdet  # Negate to match original function
+    return -logdet
+
+#cst2 = -n**1.5 # will be subtracted later
+def score_torch(m):
+    """Compute -log determinant of circulant matrix using PyTorch."""
+    C = upblock_torch(m)  # Generate circulant matrix on GPU
+    return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
 
 def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
@@ -165,6 +174,7 @@ def batch_improve(arrays_items):
     arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor and float32 (score needs float)
     #scores = score_torch(arrays_tensor)  # Compute scores in parallel
     scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
+    #scores = score_torch(arrays_tensor) # or recompute?
     # step 1: this is the analogue of my old "simple_search2"
     for i in range(n):
         print(f"1-{i} ",end=''); sys.stdout.flush()
