@@ -257,7 +257,9 @@ def get_loss(dataset,step,name):
         print(f"{step=} {name} {loss=:.6f}",end='\t'); sys.stdout.flush()
     return loss
 
-def train(train_data,test_data,**kwargs):
+test_set_size = 1000
+
+def train(data,**kwargs):
     resume = kwargs.get("resume",False)
     num_workers = kwargs.get("num_workers",8) # should be parameterisable TODO
     max_steps = kwargs.get("max_steps",-1)
@@ -283,10 +285,21 @@ def train(train_data,test_data,**kwargs):
             load_model()
         except FileNotFoundError:
             pass
-    print(f"number of examples in the dataset: {len(train_data)+len(test_data)}")
+    l=len(data)
+    print(f"number of examples in the dataset: {l}")
     print(f"max word length+1: {block_size}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
-        
+
+    data=list(data)
+    #random.shuffle(data) # suboptimal
+    for i in range(test_set_size):
+        j = random.randrange(i+1,l)
+        data[i], data[j] = data[j], data[i]
+    test_data=data[:test_set_size] # suboptimal: why copy?
+    train_data=data[test_set_size:]
+    print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
+
+
     # wrap in dataset objects
     train_dataset = CharDataset(train_data, block_size)
     test_dataset = CharDataset(test_data, block_size)

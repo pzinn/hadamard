@@ -229,8 +229,6 @@ else:
 arrays_dict = subbatch_score(arrays)
 record_stats(arrays_dict,prefix="sample" if not resume else "") # who knows where the data come from if resuming
 
-test_set_size = 1+1000//nn
-
 ########### MAIN-LOOP ###########
 
 while gen<max_iterations:
@@ -238,10 +236,10 @@ while gen<max_iterations:
         resume=False
     else:
         # compute GEN-(gen)
-        start=timer()
+        start_timer=timer()
         print(f"\n***Improving***")
         arrays_dict = subbatch_improve(arrays_dict.items())
-        logging.debug(f"improving: {timer() - start}")
+        logging.debug(f"improving: {timer() - start_timer}")
         record_stats(arrays_dict,"improved")
         print(f"\n***Selecting***")
         arrays_dict = best_from(arrays_dict)
@@ -253,26 +251,17 @@ while gen<max_iterations:
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        start=timer()
-        arrays=list(arrays) # this could be done in transformer.py
-        random.shuffle(arrays)
-        test_arrays=arrays[:test_set_size]
-        train_arrays=arrays[test_set_size:]
-        #train_words = [array_to_string(rot(i,a)) for i in range(nn) for a in train_arrays] # added: rotation to increase training size
-        #test_words = [array_to_string(rot(i,a)) for i in range(nn) for a in test_arrays] # added: rotation to increase training size
-        print(f"split up the dataset into {len(train_arrays)} training examples and {len(test_arrays)} test examples")
-        logging.debug(f"splitting: {timer() - start}")
         coeff = 1 if gen==0 or not resume_training else .01+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
         logging.debug(f"{coeff=}")
         max_steps = int(training_steps*coeff)
-        start=timer()
-        transformer.train(train_arrays,test_arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
-        logging.debug(f"training: {timer() - start}")
+        start_timer=timer()
+        transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
+        logging.debug(f"training: {timer() - start_timer}")
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen+=1
     #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
-    start=timer()
+    start_timer=timer()
     new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
@@ -282,7 +271,7 @@ while gen<max_iterations:
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
     new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
     arrays_dict=new_arrays_dict
-    logging.debug(f"sampling: {timer() - start}")
+    logging.debug(f"sampling: {timer() - start_timer}")
     writer.flush()
 
 
