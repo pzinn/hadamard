@@ -70,8 +70,8 @@ def record_stats(arrays_dict,prefix=""):
     vals = arrays_dict.values()
     scores = np.array([val[0] for val in vals], dtype=float)
 
-    # normalise scores
-    scores = scores - n/2 * math.log(n) # with log det score (score)
+    # normalise scores TODO move elsewhere
+    scores = scores + n/2 * math.log(n) # with log det score (score)
     #scores = scores / (2*math.sqrt(n)) - n/2 # with quartic score (score2)
 
     min_score = np.min(scores)
@@ -87,7 +87,7 @@ def record_stats(arrays_dict,prefix=""):
     tally=dict(Counter([val[1] for val in vals]).most_common())
     print(f"Gen tally: {tally}")
 
-    hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] < eps }
+    hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] + n/2 * math.log(n) < eps }
     nh = len(hada_dict) / len(arrays_dict)
     print(f"Hadamard ratio: {nh}")
     #hada_tally = Counter(hada_dict.values())
