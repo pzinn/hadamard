@@ -207,6 +207,8 @@ if nn % stacking == 0: # do separately cause simpler
     def array_to_string(a): # tuple to tensor TODO move the rotation here too
         # Convert input tuple (+1/-1) directly to tensor on GPU or CPU
         tensor = torch.tensor(a, dtype=torch.long)
+        # added: random rotation
+        tensor = torch.roll(tensor.reshape(4,nn), shifts=random.randrange(nn),dims=1) # TODO use pytorch random instead
         # Direct arithmetic conversion: -1 → 0, +1 → 1
         bits = ((tensor + 1) // 2).reshape(string_length, stacking)        # Map (+1/-1) to (1/0) efficiently
         # Compute integer encoding using vectorized matrix multiplication
@@ -240,7 +242,8 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(rot(random.randrange(nn),self.words[idx]))
+        ix = array_to_string(self.words[idx])
+        #ix = array_to_string(rot(random.randrange(nn),self.words[idx]))
         #ix = array_to_string(rot(idx%nn,self.words[idx])) # cheap trick FAIL, figure out why?
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
@@ -256,7 +259,8 @@ class InfiniteDataLoader:
     """
     def __init__(self, dataset, **kwargs):
         train_sampler = torch.utils.data.RandomSampler(dataset, replacement=True, num_samples=int(1e10))
-        self.train_loader = DataLoader(dataset, sampler=train_sampler, **kwargs)
+        #    batch_loader = InfiniteDataLoader(train_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
+        self.train_loader = DataLoader(dataset, sampler=train_sampler, **kwargs) # shuffle=False, batch_sampler=none, collate_fn=None
         self.data_iter = iter(self.train_loader)
     def next(self):
         try:
@@ -355,7 +359,7 @@ def train(data,**kwargs):
     while True:
         # get the next batch, ship to device, and unpack it to input and target
         batch = batch_loader.next()
-        batch = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training
+        batch = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training # weird, why not send batch.to(device)? need custom batch or collate
 
         # Train on the current batch
         X, Y = batch
