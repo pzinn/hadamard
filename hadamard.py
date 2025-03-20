@@ -70,10 +70,6 @@ def record_stats(arrays_dict,prefix=""):
     vals = arrays_dict.values()
     scores = np.array([val[0] for val in vals], dtype=float)
 
-    # normalise scores TODO move elsewhere
-    scores = scores + n/2 * math.log(n) # with log det score (score)
-    #scores = scores / (2*math.sqrt(n)) - n/2 # with quartic score (score2)
-
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
 
@@ -87,7 +83,7 @@ def record_stats(arrays_dict,prefix=""):
     tally=dict(Counter([val[1] for val in vals]).most_common())
     print(f"Gen tally: {tally}")
 
-    hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] + n/2 * math.log(n) < eps }
+    hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] < eps }
     nh = len(hada_dict) / len(arrays_dict)
     print(f"Hadamard ratio: {nh}")
     #hada_tally = Counter(hada_dict.values())
@@ -137,24 +133,30 @@ def upblock_torch(x):
         torch.cat((-D, -C, B, A), dim=2)
     ], dim=1)
 
-#cst = n/2 * math.log(n) # will be subtracted later
+cst = n/2 * math.log(n) # will be subtracted later
 def score_torch(m):
     """Compute -log determinant of circulant matrix using PyTorch."""
     C = upblock_torch(m)  # Generate circulant matrix on GPU
     _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
     return -logdet
+def normalise(sc):
+    return sc+cst
 
-#cst2 = -n**1.5 # will be subtracted later
+cst2 = 2*math.sqrt(n)
 def score2_torch(m):
     """Compute -log determinant of circulant matrix using PyTorch."""
     C = upblock_torch(m)  # Generate circulant matrix on GPU
     return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
+def normalise2(sc):
+    return sc / cst2 - n/2
 
+# scoring. technically we don't need this since the scores are recomputed when improving;
+# but useful for logging/stats
 def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor
-    scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    return {x: (s.item(),gen) for x, s in zip(arrays, scores.cpu())}  # Convert back to dict
+    scores = normalise(score_torch(arrays_tensor))  # Compute scores in parallel
+    return {x: (s,gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
 def subbatch_score(arrays): # same but in batches of score_batch_size
     total_size = len(arrays)
@@ -169,12 +171,11 @@ max_k = int(math.sqrt(n))
 n_attempts = n
 def batch_improve(arrays_items):
     arrays, values = zip(*arrays_items)  # Keys are tuples, values are scores
-    scores, gens = zip(*values)
+    _, gens = zip(*values) # ignore scores, we recompute them
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor and float32 (score needs float)
-    #scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
-    #scores = score_torch(arrays_tensor) # or recompute?
+    scores = score_torch(arrays_tensor)  # Compute scores in parallel
+    #scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
     # step 1: this is the analogue of my old "simple_search2"
     for i in range(n):
         print(f"1-{i} ",end=''); sys.stdout.flush()
@@ -206,6 +207,7 @@ def batch_improve(arrays_items):
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
     # Convert back to dict
+    scores=normalise(scores)
     #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     #return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
     #return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
