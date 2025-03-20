@@ -194,20 +194,23 @@ def rot(i,a):
 
 # conversion string <-> matrix
 def char_to_sign(c, i):
-    return 2 * ((c >> i) & 1) - 1
+    return int(2 * ((c >> i) & 1) - 1)
 
 if nn % stacking == 0: # do separately cause simpler
-    def string_to_array(s): # really, tuple to tuple by now!
+    def string_to_array(s): # really, tensor to tuple by now!
         return tuple(
             char_to_sign(s[i // stacking] - 1, i % stacking)
             for i in range(n)
         )
-    def array_to_string(a):
-        return tuple(
-            1 + sum((1 if a[i * stacking + bit] == 1 else 0) << bit for bit in range(stacking)) # encoding 1
-            #1 + sum((1 if a[i + bit * string_length] == 1 else 0) << bit for bit in range(stacking)) # encoding 2
-            for i in range(string_length)
-        )
+    # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
+    def array_to_string(a): # tuple to tensor TODO move the rotation here too
+        # Convert input tuple (+1/-1) directly to tensor on GPU or CPU
+        tensor = torch.tensor(a, dtype=torch.long)
+        # Direct arithmetic conversion: -1 → 0, +1 → 1
+        bits = ((tensor + 1) // 2).reshape(string_length, stacking)        # Map (+1/-1) to (1/0) efficiently
+        # Compute integer encoding using vectorized matrix multiplication
+        return 1 + bits.matmul(powers_of_two)
 else:
     quarter_string_length = string_length//4
     def string_to_array(s): # really, tuple to tuple by now!
@@ -216,12 +219,13 @@ else:
             for j in range(4)
             for i in range(nn)
             )
-    def array_to_string(a):
-        return tuple(
+    def array_to_string(a): # TODO rewrite
+        return torch.tensor([
             1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
             for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
             for j in range(4)
-            for i in range(quarter_string_length)
+            for i in range(quarter_string_length)],
+            dtype=torch.long
         )
 
 # -----------------------------------------------------------------------------
@@ -236,8 +240,8 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        s=array_to_string(rot(random.randrange(nn),self.words[idx]))
-        ix = torch.tensor(s, dtype=torch.long)
+        ix = array_to_string(rot(random.randrange(nn),self.words[idx]))
+        #ix = array_to_string(rot(idx%nn,self.words[idx])) # cheap trick FAIL, figure out why?
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix
@@ -349,10 +353,11 @@ def train(data,**kwargs):
     get_loss(train_dataset,step,"train")
     best_loss=get_loss(test_dataset,step,"test")
     while True:
-        #t0 = time.time()
         # get the next batch, ship to device, and unpack it to input and target
         batch = batch_loader.next()
-        batch = [t.to(device) for t in batch]
+        batch = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training
+
+        # Train on the current batch
         X, Y = batch
         # feed into the model
         logits, loss = model(X, Y)
@@ -362,14 +367,11 @@ def train(data,**kwargs):
         loss.backward()
         optimizer.step()
 
-        # wait for all CUDA work on the GPU to finish then calculate iteration time taken
-        if device.startswith('cuda'):
-            torch.cuda.synchronize()
-        #t1 = time.time()
-
         # evaluate the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
+            if device.startswith('cuda'):
+                torch.cuda.synchronize()
             get_loss(train_dataset,step,"train")
             test_loss=get_loss(test_dataset,step,"test")
             # save the model to disk if it has improved
@@ -380,7 +382,6 @@ def train(data,**kwargs):
                     max_steps += eval_freq # don't quit on a winning streak
             elif test_loss > best_loss+.2 or step == max_steps: # termination conditions: done, or we've probably massively overfitted
                 break
-
 
 #def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
