@@ -71,8 +71,8 @@ def record_stats(arrays_dict,prefix=""):
     scores = np.array([val[0] for val in vals], dtype=float)
 
     # normalise scores
-    scores = scores / (2*math.sqrt(n)) - n/2 # with quartic score
-    #scores = scores - n/2 * math.log(n) # with log det score
+    scores = scores - n/2 * math.log(n) # with log det score (score)
+    #scores = scores / (2*math.sqrt(n)) - n/2 # with quartic score (score2)
 
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
@@ -138,14 +138,14 @@ def upblock_torch(x):
     ], dim=1)
 
 #cst = n/2 * math.log(n) # will be subtracted later
-def score1_torch(m):
+def score_torch(m):
     """Compute -log determinant of circulant matrix using PyTorch."""
     C = upblock_torch(m)  # Generate circulant matrix on GPU
     _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
     return -logdet
 
 #cst2 = -n**1.5 # will be subtracted later
-def score_torch(m):
+def score2_torch(m):
     """Compute -log determinant of circulant matrix using PyTorch."""
     C = upblock_torch(m)  # Generate circulant matrix on GPU
     return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
