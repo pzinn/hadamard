@@ -273,12 +273,10 @@ def load_model():
     if model.need_reload:
         print("resuming from existing model in the workdir")
         model.load_state_dict(torch.load(out_path, weights_only=True))
-        model.need_reload=False
 
 def save_model():
     print(f"saving model to workdir")
     torch.save(model.state_dict(), out_path)
-    model.need_reload=True
 
 def get_loss(dataset,step,name):
     loss = evaluate(model, dataset, batch_size=100, max_batches=10)
@@ -318,6 +316,7 @@ def train(data,**kwargs):
             load_model()
         except FileNotFoundError:
             pass
+    model.need_reload=True # we will change the model no matter what
     l=len(data)
     print(f"number of examples in the dataset: {l}")
     print(f"max word length+1: {block_size}")
@@ -394,6 +393,7 @@ def sample(**kwargs):
     block_size = config.block_size
 
     load_model()
+    model.need_reload=False
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
