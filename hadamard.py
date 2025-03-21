@@ -98,7 +98,7 @@ def record_stats(arrays_dict,prefix=""):
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
             # header of stats file
-            file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
+            file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{score_function=}\n{version=}\n')
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):>10} {tally} {hada_tally}\n")
 
@@ -135,22 +135,23 @@ def upblock_torch(x):
         torch.cat((-D, -C, B, A), dim=2)
     ], dim=1)
 
-cst = n/2 * math.log(n) # will be subtracted later
-def score_torch(m):
-    """Compute -log determinant of circulant matrix using PyTorch."""
-    C = upblock_torch(m)  # Generate circulant matrix on GPU
-    _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
-    return -logdet
-def normalise(sc):
-    return sc+cst
-
-cst2 = 2*math.sqrt(n)
-def score2_torch(m):
-    """Compute -log determinant of circulant matrix using PyTorch."""
-    C = upblock_torch(m)  # Generate circulant matrix on GPU
-    return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
-def normalise2(sc):
-    return sc / cst2 - n/2
+if score_function == 'log determinant':
+    cst = n/2 * math.log(n)
+    def score_torch(m):
+        """Compute -log determinant of circulant matrix using PyTorch."""
+        C = upblock_torch(m)  # Generate circulant matrix on GPU
+        _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
+        return -logdet
+    def normalise(sc):
+        return sc+cst
+else:
+    cst2 = 2*math.sqrt(n)
+    def score_torch(m):
+        """Compute -log determinant of circulant matrix using PyTorch."""
+        C = upblock_torch(m)  # Generate circulant matrix on GPU
+        return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
+    def normalise(sc):
+        return sc / cst2 - n/2
 
 # scoring. technically we don't need this since the scores are recomputed when improving;
 # but useful for logging/stats

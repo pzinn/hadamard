@@ -15,8 +15,13 @@ import re
 # hadamard matrix parameters
 nn = 20 # size of matrix = 4*nn
 n = 4 * nn
+
 # encoding
-stacking = 6 # preferably a divisor of nn
+stacking = 5 # preferably a divisor of nn
+
+# scoring
+#score_function = 'log determinant'
+score_function = 'quartic'
 
 # training parameters
 sample_size = 100000

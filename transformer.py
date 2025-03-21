@@ -349,7 +349,7 @@ def train(data,**kwargs):
     while True:
         # get the next batch, ship to device, and unpack it to input and target
         batch = batch_loader.next()
-        X, Y = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training. note this is a list of length 2
+        X, Y = (t.to(device, non_blocking=True) for t in batch)  # Move to GPU before training. note this is a tuple of length 2
 
         # Train on the current batch
         # feed into the model
