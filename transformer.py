@@ -271,8 +271,8 @@ out_path = os.path.join(work_dir, "model.pt")
 
 def load_model():
     if model.need_reload:
-        print("resuming from existing model in the workdir")
         model.load_state_dict(torch.load(out_path, weights_only=True))
+        print("resuming from existing model in the workdir")
 
 def save_model():
     print(f"saving model to workdir")

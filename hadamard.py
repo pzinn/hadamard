@@ -113,27 +113,47 @@ torch.cuda.set_device(0)  # Use GPU 0
 torch.cuda.empty_cache()  # Free memory before large computation
 
 # Generate row indices for circulant
-indices = torch.arange(nn).repeat(nn, 1)  # Shape: (nn, nn)
-shifts = torch.arange(nn).unsqueeze(1)  # Shape: (nn, 1)
+indices = torch.arange(nn,device=device).repeat(nn, 1)  # Shape: (nn, nn)
+shifts = torch.arange(nn,device=device).unsqueeze(1)  # Shape: (nn, 1)
 rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
+V = torch.arange(2*n,device=device).reshape(8,nn) # Shape: (8,nn) -- the original array and its negation, for convenience
+X = V[:,rolled_indices]
+X[2]=torch.flip(X[2], dims=[1])
+X[6]=torch.flip(X[6], dims=[1])
+full_indices = torch.cat([
+        torch.cat((X[0], X[1], X[2], X[3]), dim=1),
+        torch.cat((X[5], X[0], X[7], X[2]), dim=1),
+        torch.cat((X[6], X[3], X[0], X[5]), dim=1),
+        torch.cat((X[7], X[6], X[1], X[0]), dim=1)
+    ], dim=0)
+
+"""
 def circulant_torch(m):
     return m[..., rolled_indices]
 
 def upblock_torch(x):
     batch_size = x.shape[0]
-    _aa, _bb, _cc, _dd = x.reshape(batch_size,4,nn).unbind(dim=1)
-    
-    A = circulant_torch(_aa)
-    B = circulant_torch(_bb)
-    C = torch.flip(circulant_torch(_cc), dims=[2])
-    D = circulant_torch(_dd)
-    
-    return torch.cat([
-        torch.cat((A, B, C, D), dim=2),
-        torch.cat((-B, A, -D, C), dim=2),
-        torch.cat((-C, D, A, -B), dim=2),
-        torch.cat((-D, -C, B, A), dim=2)
-    ], dim=1)
+    X = circulant_torch(x.reshape(batch_size,4,nn))
+
+    Y = torch.empty(batch_size, n, n, dtype=torch.float32, device=device)
+
+    # Efficiently assign blocks
+    # X[:,0] assignments
+    Y[:, 0:nn, 0:nn] = Y[:, nn:2*nn, nn:2*nn] = Y[:, 2*nn:3*nn, 2*nn:3*nn] = Y[:, 3*nn:4*nn, 3*nn:4*nn] = X[:,0]
+    # X[:,1] assignments
+    Y[:, 0:nn, nn:2*nn] = X[:,1] = Y[:, 3*nn:4*nn, 2*nn:3*nn] = X[:,1]
+    Y[:, nn:2*nn, 0:nn] = Y[:, 2*nn:3*nn, 3*nn:4*nn] = -X[:,1]
+    # X[:,2] assignments
+    Y[:, 0:nn, 2*nn:3*nn] = Y[:, nn:2*nn, 3*nn:4*nn] = X[:,2]
+    Y[:, 2*nn:3*nn, 0:nn] = Y[:, 3*nn:4*nn, nn:2*nn] = -X[:,2]
+    # X[:,3] assignments
+    Y[:, 0:nn, 3*nn:4*nn] = Y[:, 2*nn:3*nn, nn:2*nn] = X[:,3]
+    Y[:, nn:2*nn, 2*nn:3*nn] = Y[:, 3*nn:4*nn, 0:nn] = -X[:,3]
+
+    return Y
+"""
+def upblock_torch(x):
+    return torch.cat((x,-x), dim=1)[...,full_indices]
 
 if score_function == 'log determinant':
     cst = n/2 * math.log(n)
