@@ -196,37 +196,28 @@ def rot(i,a):
 def char_to_sign(c, i):
     return int(2 * ((c >> i) & 1) - 1)
 
-if nn % stacking == 0: # do separately cause simpler
-    def string_to_array(s): # really, tensor to tuple by now!
-        return tuple(
-            char_to_sign(s[i // stacking] - 1, i % stacking)
-            for i in range(n)
-        )
-    # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
-    def array_to_string(a): # tuple to tensor
-        # Convert input tuple (+1/-1) directly to tensor on GPU or CPU, -1 → 0, +1 → 1
-        tensor = 1+torch.tensor(a, dtype=torch.long)>>1
-        # added: random rotation
-        tensor = torch.roll(tensor.reshape(4,nn), shifts=random.randrange(nn),dims=1) # TODO use pytorch random instead
-        # Compute integer encoding using vectorized matrix multiplication
-        return 1 + tensor.reshape(string_length, stacking).matmul(powers_of_two)
-else: # TODO redo by just padding with zeroes or whatnot
-    quarter_string_length = string_length//4
-    def string_to_array(s):
-        return tuple(
-            char_to_sign(s[j * quarter_string_length + i // stacking]-1,i % stacking)
-            for j in range(4)
-            for i in range(nn)
-            )
-    def array_to_string(a): # TODO and add rotation
-        return torch.tensor([
-            1 + sum((1 if a[j * nn + i * stacking + bit] == 1 else 0) << bit
-            for bit in range(stacking if i<quarter_string_length-1 else nn%stacking)) # encoding 1
-            for j in range(4)
-            for i in range(quarter_string_length)],
-            dtype=torch.long
-        )
+# effectively do nn % stacking == 0 first because simpler
+nice = nn % stacking == 0
+quarter_string_length = string_length//4
+my_range = range(n) if nice else list(i for j in range(4) for i in range(j * quarter_string_length*stacking, j * quarter_string_length*stacking + nn)) # list for reusability
+def string_to_array(s): # really, tensor to tuple by now!
+    return tuple(
+        char_to_sign(s[i // stacking] - 1, i % stacking)
+        for i in my_range
+    )
+# Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
+def array_to_string(a): # tuple to tensor
+    # Convert input tuple (+1/-1) directly to tensor on GPU or CPU, -1 → 0, +1 → 1
+    tensor = (1+torch.tensor(a, dtype=torch.long)>>1).reshape(4,nn)
+    # added: random rotation
+    tensor = torch.roll(tensor, shifts=random.randrange(nn),dims=1) # TODO use pytorch random instead
+    # added: second rotation
+    tensor[2] = torch.roll(tensor[2],shifts=random.randrange(nn),dims=0)
+    if not nice:
+        tensor = F.pad(tensor,(0,quarter_string_length*stacking-nn),mode='constant',value=0) # pad
+    # Compute integer encoding using vectorized matrix multiplication
+    return 1 + tensor.reshape(string_length, stacking).matmul(powers_of_two)
 
 # -----------------------------------------------------------------------------
 # helper functions for creating the training and test Datasets that emit words
