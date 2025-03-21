@@ -187,10 +187,12 @@ def evaluate(model, dataset, batch_size=50, max_batches=None):
     model.train() # reset model back to training mode
     return mean_loss
 
+"""
 # cyclically rotate a tuple
 def rot(i,a):
     #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
     return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
+"""
 
 # conversion string <-> matrix
 def char_to_sign(c, i):
@@ -348,10 +350,9 @@ def train(data,**kwargs):
     while True:
         # get the next batch, ship to device, and unpack it to input and target
         batch = batch_loader.next()
-        batch = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training # weird, why not send batch.to(device)? need custom batch or collate
+        X, Y = [t.to(device, non_blocking=True) for t in batch]  # Move to GPU before training. note this is a list of length 2
 
         # Train on the current batch
-        X, Y = batch
         # feed into the model
         logits, loss = model(X, Y)
 
@@ -375,6 +376,7 @@ def train(data,**kwargs):
                     max_steps += eval_freq # don't quit on a winning streak
             elif test_loss > best_loss+.2 or step == max_steps: # termination conditions: done, or we've probably massively overfitted
                 break
+    print("")
 
 #def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])

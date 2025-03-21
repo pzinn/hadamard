@@ -97,6 +97,8 @@ def record_stats(arrays_dict,prefix=""):
     with open(stats_file, 'a') as file:
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
+            # header of stats file
+            file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):>10} {tally} {hada_tally}\n")
 
@@ -206,6 +208,7 @@ def batch_improve(arrays_items):
         #arrays_tensor[~mask, flip_indices] *= -1 # that doesn't work, left to remember: can't mix masks and tensors of indices
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
+    print("")
     # Convert back to dict
     scores=normalise(scores)
     #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
@@ -272,12 +275,12 @@ while gen<max_iterations:
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen+=1
-    #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
+    #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent? confused about what seed does
     start_timer=timer()
     new_arrays_dict={}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_arrays = transformer.sample(num_samples=b,seed=start*11407)
+        new_arrays = transformer.sample(num_samples=b,seed=start+gen*11407)
         new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict] # remove duplicates
         new_arrays_dict.update(batch_score(new_arrays))
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?

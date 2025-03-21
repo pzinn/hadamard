@@ -13,21 +13,21 @@ import re
 ###########INITIAL-PARAMETERS###########
 
 # hadamard matrix parameters
-nn = 12 # size of matrix = 4*nn
+nn = 20 # size of matrix = 4*nn
 n = 4 * nn
 # encoding
-stacking = 4 # preferably a divisor of nn
+stacking = 6 # preferably a divisor of nn
 
 # training parameters
-sample_size = 10000
+sample_size = 100000
 training_size = sample_size//2 # must be > test_set_size
-learning_rate = 1e-3
-sample_batch_size=sample_size # for sampling. preferably a divisor of sample_size
-score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
-training_batch_size=64 # for training. much smaller, obviously
+learning_rate = 5e-4
+sample_batch_size=sample_size//4 # for sampling. preferably a divisor of sample_size
+score_batch_size=sample_size//2 # for scoring/improving. one should have sample_batch_size < score_batch_size
+training_batch_size=128 # for training. much smaller, obviously
 weight_decay=0.01
-max_iterations = 6
-training_steps = 100000 # will be adjusted dynamically (to be less than that)
+max_iterations = 100
+training_steps = 300000 # will be adjusted dynamically (to be less than that)
 #training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 # transformer parameters
@@ -61,7 +61,7 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/80/5/2025-03-18-15-24-03_100000_64/" # don't forget the trailing /
+    work_dir = "./training/80/5/2025-03-20-22-14-54_100000_64/" # don't forget the trailing /
     gen = find_latest_gen() # generation to pick up from. leave as is for latest, otherwise specify explicitly
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
@@ -82,9 +82,6 @@ os.symlink(work_dir,"latest")
 resume_training = True # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
 stats_file = work_dir + 'stats.txt' # where to save logs
-# header of stats file
-with open(stats_file, 'a') as file:
-  file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{version=}\n')
 hada_file = work_dir + 'hada.txt' # where to save Hadamard matrices
 
 device='cuda' #device to use for compute, examples: cpu|cuda|cuda:2|mps
