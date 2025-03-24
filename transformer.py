@@ -344,6 +344,7 @@ def train(data,**kwargs):
 
     # training loop
     step = 0
+    save_step = None
     get_loss(train_dataset,step,"train")
     best_loss=get_loss(test_dataset,step,"test")
     while True:
@@ -371,11 +372,13 @@ def train(data,**kwargs):
             if test_loss < best_loss:
                 save_model()
                 best_loss = test_loss
+                save_step = step
                 if step == max_steps:
                     max_steps += eval_freq # don't quit on a winning streak
             elif test_loss > best_loss+.2 or step == max_steps: # termination conditions: done, or we've probably massively overfitted
                 break
     print("")
+    return save_step
 
 #def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])

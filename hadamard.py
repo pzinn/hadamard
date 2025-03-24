@@ -289,8 +289,10 @@ while gen<max_iterations:
         logging.debug(f"{coeff=}")
         max_steps = int(training_steps*coeff)
         start_timer=timer()
-        transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
+        save_step = transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
         logging.debug(f"training: {timer() - start_timer}")
+        with open(stats_file, 'a') as file:
+            file.write(f'training {save_step=}\n')
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen+=1

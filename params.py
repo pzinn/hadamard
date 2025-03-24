@@ -107,5 +107,5 @@ with open(stats_file, 'a') as file:
 hparam_list.remove('config') # need to treat separately <sigh>
 hparam_dict = {name: globals().get(name) for name in hparam_list}
 hparam_dict.update(asdict(config))
-print(hparam_dict)
+#print(hparam_dict)
 writer.add_hparams(hparam_dict,{},run_name='./')
