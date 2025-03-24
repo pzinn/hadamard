@@ -1,9 +1,10 @@
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import datetime
 import os
+import torch
 from torch.utils.tensorboard import SummaryWriter
 import subprocess
 version=subprocess.check_output(["git", "describe", "--always"]).strip().decode()
@@ -20,8 +21,8 @@ n = 4 * nn
 stacking = 5 # preferably a divisor of nn
 
 # scoring
-#score_function = 'log determinant'
-score_function = 'quartic'
+score_function = 'log determinant'
+#score_function = 'quartic'
 
 # training parameters
 sample_size = 100000
@@ -66,7 +67,7 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/80/5/2025-03-20-22-14-54_100000_64/" # don't forget the trailing /
+    work_dir = "./training/80/5/2025-03-21-17-03-14_100000_64/" # don't forget the trailing /
     gen = find_latest_gen() # generation to pick up from. leave as is for latest, otherwise specify explicitly
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
@@ -99,3 +100,12 @@ layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
           }
 writer.add_custom_scalars(layout)
 
+# header of stats file + hparams
+hparam_list = ['n','sample_size','learning_rate','config','max_iterations','stacking','training_steps','training_batch_size','score_function','version']
+with open(stats_file, 'a') as file:
+    file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
+hparam_list.remove('config') # need to treat separately <sigh>
+hparam_dict = {name: globals().get(name) for name in hparam_list}
+hparam_dict.update(asdict(config))
+print(hparam_dict)
+writer.add_hparams(hparam_dict,{},run_name='./')

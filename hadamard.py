@@ -97,8 +97,6 @@ def record_stats(arrays_dict,prefix=""):
     with open(stats_file, 'a') as file:
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
-            # header of stats file
-            file.write(f'n={n}\n{sample_size=}\n{training_size=}\n{learning_rate=}\n{config=}\n{max_iterations=}\n{stacking=}\n{training_steps=}\n{training_batch_size=}\n{score_function=}\n{version=}\n')
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):>10} {tally} {hada_tally}\n")
 
