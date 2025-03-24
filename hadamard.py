@@ -7,21 +7,15 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-# debugging stuff
+# logging/debugging
 import sys
 from collections import Counter
 from timeit import default_timer as timer # to measure exec time
-import logging
 import argparse
 parser = argparse.ArgumentParser(description="Script with logging levels")
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
-logging.basicConfig(
-    level=logging.DEBUG if args.debug else logging.INFO,
-    format="%(levelname)s: %(message)s"
-)
-
-#
+debugging = args.debug # for convenience
 import transformer
 from params import *
 
@@ -198,6 +192,8 @@ def batch_improve(arrays_items):
     scores = score_torch(arrays_tensor)  # Compute scores in parallel
     #scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
     # step 1: this is the analogue of my old "simple_search2"
+    if debugging:
+        cnt1 = torch.tensor(0, device=device)
     for i in range(n):
         print(f"1-{i} ",end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
@@ -205,10 +201,14 @@ def batch_improve(arrays_items):
         new_scores = score_torch(arrays_tensor)
         # Identify which flips improved the score
         mask = new_scores < scores  # True where improvement happens
+        if debugging:
+            cnt1+=torch.sum(mask)
         # Apply successful bit flips
         arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
         scores[mask] = new_scores[mask]  # Update scores accordingly
     # step 2: this is the analogue of my old "simple_search3" except it doesn't stop at first success
+    if debugging:
+        cnt2 = torch.tensor(0, device=device)
     for i in range(n_attempts):
         print(f"2-{i} ",end=''); sys.stdout.flush()
         # Choose k unique bits to flip, same for entire batch
@@ -220,6 +220,8 @@ def batch_improve(arrays_items):
         new_scores = score_torch(arrays_tensor)
         # Identify improvements
         mask = new_scores < scores
+        if debugging:
+            cnt2+=torch.sum(mask)
         # Revert changes for arrays where score did not improve
         # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1 # ugly... especially cause most of the mask will be False
         arrays_tensor[:, flip_indices] *= -1
@@ -228,6 +230,8 @@ def batch_improve(arrays_items):
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
     print("")
+    if debugging:
+        print(f'improve success rate: {cnt1/n/len(arrays_items)} {cnt2/n_attempts/len(arrays_items)}')
     # Convert back to dict
     scores=normalise(scores)
     #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
@@ -273,7 +277,8 @@ while gen<max_iterations:
         start_timer=timer()
         print(f"\n***Improving***")
         arrays_dict = subbatch_improve(arrays_dict.items())
-        logging.debug(f"improving: {timer() - start_timer}")
+        if debugging:
+            print(f"improving: {timer() - start_timer}")
         record_stats(arrays_dict,"improved")
         print(f"\n***Selecting***")
         arrays_dict = best_from(arrays_dict)
@@ -286,11 +291,13 @@ while gen<max_iterations:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
         coeff = 1 if gen==0 or not resume_training else .01+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
-        logging.debug(f"{coeff=}")
+        if debugging:
+            print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
         start_timer=timer()
         save_step = transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
-        logging.debug(f"training: {timer() - start_timer}")
+        if debugging:
+            print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:
             file.write(f'training {save_step=}\n')
     # sample from model to get GEN-(gen+1)-a
@@ -307,7 +314,8 @@ while gen<max_iterations:
     record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
     new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
     arrays_dict=new_arrays_dict
-    logging.debug(f"sampling: {timer() - start_timer}")
+    if debugging:
+        print(f"sampling: {timer() - start_timer}")
     writer.flush()
 
 
