@@ -29,7 +29,7 @@ sample_size = 100000
 training_size = sample_size//2 # must be > test_set_size
 learning_rate = 5e-4
 sample_batch_size=sample_size//4 # for sampling. preferably a divisor of sample_size
-score_batch_size=sample_size//2 # for scoring/improving. one should have sample_batch_size < score_batch_size
+score_batch_size=sample_size # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size=128 # for training. much smaller, obviously
 weight_decay=0.01
 max_iterations = 100
@@ -61,13 +61,13 @@ def find_latest_gen():
     files = glob.glob(work_dir+"GEN-*.txt")
     # Extract the numerical part using regex
     indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
-    return max(indices) if indices else None  # Return max index, or None if no files found
+    return max(indices) if indices else 0  # Return max index, or 0 if no files found
 
 resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/80/5/2025-03-21-17-03-14_100000_64/" # don't forget the trailing /
+    work_dir = "./training/80/5/testing/" # don't forget the trailing /
     gen = find_latest_gen() # generation to pick up from. leave as is for latest, otherwise specify explicitly
     # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
     # training parameters can be different though
@@ -104,8 +104,10 @@ writer.add_custom_scalars(layout)
 hparam_list = ['n','sample_size','learning_rate','config','max_iterations','stacking','training_steps','training_batch_size','score_function','version']
 with open(stats_file, 'a') as file:
     file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
+"""
 hparam_list.remove('config') # need to treat separately <sigh>
 hparam_dict = {name: globals().get(name) for name in hparam_list}
 hparam_dict.update(asdict(config))
 #print(hparam_dict)
 writer.add_hparams(hparam_dict,{},run_name='./')
+"""

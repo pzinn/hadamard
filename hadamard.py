@@ -49,6 +49,8 @@ def write_arrays(file_path,arrays):
 total_hada_dict={}
 def record_stats(arrays_dict,prefix=""):
     global total_hada_dict
+    if len(arrays_dict)==0:
+        return
     # compute autocorrelation by MC
     arrays = list(arrays_dict.keys())
     mc_size = 1000
@@ -184,6 +186,7 @@ def subbatch_score(arrays): # same but in batches of score_batch_size
 # parameters of step 2 (can be adjusted)
 max_k = int(math.sqrt(n))
 n_attempts = n
+p = .3/math.sqrt(n)
 def batch_improve(arrays_items):
     arrays, values = zip(*arrays_items)  # Keys are tuples, values are scores
     _, gens = zip(*values) # ignore scores, we recompute them
@@ -212,8 +215,10 @@ def batch_improve(arrays_items):
     for i in range(n_attempts):
         print(f"2-{i} ",end=''); sys.stdout.flush()
         # Choose k unique bits to flip, same for entire batch
-        k = random.randint(2,max_k)
-        flip_indices = torch.randperm(n, device=device)[:k]
+        #flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
+        # variation
+        flip_indices = torch.rand(n, device=device) < p
+        flip_indices[i%n] = True # just because
         # Flip selected bits for all arrays in batch
         arrays_tensor[:, flip_indices] *= -1
         # Compute new scores after flipping k bits
@@ -255,10 +260,13 @@ def subbatch_improve(arrays_items):
 # initial info
 if resume:
     # use existing sample
-    init_sample = work_dir + f'/GEN-{gen:02d}.txt'
-    print(f'***Loading initial sample from {init_sample}***')
-    arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
-    arrays = list(map(lambda x: tuple(1 if c=="+" else -1 for c in x),arrays))
+    init_sample = work_dir + f'GEN-{gen:02d}.txt'
+    try:
+        arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
+        arrays = list(map(lambda x: tuple(1 if c=="+" else -1 for c in x),arrays))
+        print(f'***Loading initial sample from {init_sample}***')
+    except FileNotFoundError:
+        arrays = []
 else:
     # generate initial sample
     print(f'***Generating initial sample***')
@@ -284,7 +292,7 @@ while gen<max_iterations:
         arrays_dict = best_from(arrays_dict)
         record_stats(arrays_dict,"selected")
         arrays=arrays_dict.keys()
-        write_arrays(work_dir + f'/GEN-{gen:02d}.txt',arrays)
+        write_arrays(work_dir + f'GEN-{gen:02d}.txt',arrays)
     if skip_first_training:
         skip_first_training=False
     else:
