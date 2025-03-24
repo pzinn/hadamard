@@ -1,8 +1,7 @@
 import sys
-import numpy as np, numpy.random as nr, numpy.linalg as nl
-import scipy.optimize as so, scipy.linalg as sl, scipy.sparse as sp
+import numpy as np, numpy.linalg as nl
+import scipy.linalg as sl
 import math
-import random
 
 np.set_printoptions(threshold=sys.maxsize)
 
@@ -22,28 +21,6 @@ def score(a):
     return np.sum(mm**2)
     #cst = n/2 * math.log(n)
     #return cst-nl.slogdet(m)[1]
-
-def random_rotate(x):
-    arr = x.reshape(4,-1)
-    n = arr.shape[1]
-    k = random.randrange(n)
-    rotated = np.roll(arr, k, axis=1)
-    return rotated.ravel()  # Flatten back into 1D array
-
-def random_rotate2(x): #NO
-    arr = x.reshape(4,-1)
-    n = arr.shape[1]
-    k = random.randrange(n)
-    rotated = np.array([np.roll(arr[i], random.randrange(n)) for i in range(4)])  # Rotate each subarray
-    return rotated.ravel()  # Flatten back into 1D array
-
-def random_rotate3(x):
-    arr = x.reshape(4,-1)
-    n = arr.shape[1]
-    k = random.randrange(n)
-    kk = random.randrange(n)
-    rotated = np.array([np.roll(arr[i], k if i!=2 else kk) for i in range(4)])  # Rotate each subarray
-    return rotated.ravel()  # Flatten back into 1D array
 
 def convert(s):
     return np.array([1 if c=="+" else -1 for c in s],dtype=np.int64)
