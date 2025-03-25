@@ -30,7 +30,7 @@ def best_from(arrays_dict):
     #heapq is slightly more efficient but requires no nan
     # preserves ordering
     items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items , key=lambda item: item[1])}
+    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1][0])}
     return {k: v for k, v in items if k in smallest_keys}
     #doesn't
     #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
@@ -158,7 +158,7 @@ if score_function == 'log determinant':
         return -logdet
     def normalise(sc):
         return sc+cst
-else:
+elif score_function == 'quartic':
     cst2 = 2*math.sqrt(n)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
@@ -166,6 +166,17 @@ else:
         return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
     def normalise(sc):
         return sc / cst2 - n/2
+elif score_function == 'one':
+    I = n * torch.eye(n, device=device)
+    def score_torch(m):
+        """Compute -log determinant of circulant matrix using PyTorch."""
+        C = upblock_torch(m)  # Generate circulant matrix on GPU
+        M = torch.matmul(C,torch.transpose(C,1,2))-I
+        return torch.linalg.matrix_norm(M,ord=1)
+    def normalise(sc):
+        return sc/n
+else:
+    raise Exception('unknown score_function')
 
 # scoring. technically we don't need this since the scores are recomputed when improving;
 # but useful for logging/stats
@@ -298,7 +309,7 @@ while gen<max_iterations:
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen==0 or not resume_training else .01+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
+        coeff = 1 if gen==0 or not resume_training else .03+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
