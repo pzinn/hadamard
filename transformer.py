@@ -243,24 +243,6 @@ class CharDataset(Dataset):
         y[len(ix)+1:] = -1 # index -1 will mask the loss at the inactive locations
         return x, y
 
-class InfiniteDataLoader:
-    """
-    this is really hacky and I'm not proud of it, but there doesn't seem to be
-    a better way in PyTorch to just create an infinite dataloader?
-    """
-    def __init__(self, dataset, **kwargs):
-        train_sampler = torch.utils.data.RandomSampler(dataset, replacement=True, num_samples=int(1e10))
-        #    batch_loader = InfiniteDataLoader(train_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
-        self.train_loader = DataLoader(dataset, sampler=train_sampler, **kwargs) # shuffle=False, batch_sampler=none, collate_fn=None
-        self.data_iter = iter(self.train_loader)
-    def next(self):
-        try:
-            batch = next(self.data_iter)
-        except StopIteration: # this will technically only happen after 1e10 samples... (i.e. basically never)
-            self.data_iter = iter(self.train_loader)
-            batch = next(self.data_iter)
-        return batch
-
 # -----------------------------------------------------------------------------
 
 model = Transformer(config)
@@ -292,7 +274,7 @@ if training_size <= test_set_size:
 
 def train(data,**kwargs):
     resume = kwargs.get("resume",False)
-    num_workers = kwargs.get("num_workers",8) # should be parameterisable TODO
+    num_workers = kwargs.get("num_workers",2) # should be parameterisable TODO
     max_steps = kwargs.get("max_steps",-1)
     seed = kwargs.get("seed",3407)
     # optimization -> slowly being moved to params.py
@@ -339,22 +321,31 @@ def train(data,**kwargs):
     # init optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99), eps=1e-8)
 
-    # init dataloader
-    batch_loader = InfiniteDataLoader(train_dataset, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
+    # init sampler, dataloader
+    train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
+    batch_iter = iter(train_loader) # wrap loader in an iterator explicitly
 
     # training loop
     step = 0
     save_step = None
     get_loss(train_dataset,step,"train")
     best_loss=get_loss(test_dataset,step,"test")
+    gpu_batch=(t.to(device, non_blocking=True) for t in next(batch_iter)) # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
-        batch = batch_loader.next()
-        X, Y = (t.to(device, non_blocking=True) for t in batch)  # Move to GPU before training. note this is a tuple of length 2
+        try:
+            next_batch = next(batch_iter)
+        except StopIteration:
+            # Restart iterator if at end of epoch
+            batch_iter = iter(train_loader)
+            next_batch = next(batch_iter)
+        gpu_next_batch=(t.to(device, non_blocking=True) for t in next_batch)
+        #gpu_batch=(t.to(device, non_blocking=True) for t in next_batch)
 
         # Train on the current batch
         # feed into the model
-        logits, loss = model(X, Y)
+        logits, loss = model(*gpu_batch)
 
         # calculate the gradient, update the weights
         model.zero_grad(set_to_none=True)
@@ -377,6 +368,9 @@ def train(data,**kwargs):
                     max_steps += eval_freq # don't quit on a winning streak
             elif test_loss > best_loss+.2 or step == max_steps: # termination conditions: done, or we've probably massively overfitted
                 break
+
+        gpu_batch = gpu_next_batch
+
     print("")
     return save_step
 
