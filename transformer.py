@@ -209,9 +209,9 @@ def string_to_array(s): # really, tensor to tuple by now!
     )
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
-def array_to_string(a): # tuple to tensor
+def array_to_string(tensor): # tensor to tensor
     # Convert input tuple (+1/-1) directly to tensor on GPU or CPU, -1 → 0, +1 → 1
-    tensor = (1+torch.tensor(a, dtype=torch.long)>>1).reshape(4,nn)
+    tensor = (1+tensor>>1).reshape(4,nn)
     # added: random rotation
     tensor = torch.roll(tensor, shifts=random.randrange(nn),dims=1) # TODO use pytorch random instead
     # added: second rotation
@@ -279,8 +279,8 @@ def train(data,**kwargs):
     seed = kwargs.get("seed",3407)
     # optimization -> slowly being moved to params.py
     #batch_size = kwargs.get("batch_size",32)
-    #learning_rate = kwargs.get("learning_rate",5e-4)
     #weight_decay = kwargs.get("weight_decay",0.01)
+    learning_rate = kwargs.get("learning_rate",5e-4)
     batch_size = training_batch_size
     eval_freq = kwargs.get("eval_freq",500)
 
@@ -304,15 +304,14 @@ def train(data,**kwargs):
     print(f"max word length+1: {block_size}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
 
-    data=list(data)
-    #random.shuffle(data) # suboptimal
+    # convert to torch tensors
+    data = torch.tensor(list(data), dtype=torch.long).share_memory_()
     for i in range(test_set_size):
         j = random.randrange(i+1,l)
         data[i], data[j] = data[j], data[i]
-    test_data=data[:test_set_size] # suboptimal: why copy?
+    test_data=data[:test_set_size]
     train_data=data[test_set_size:]
     print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
-
 
     # wrap in dataset objects
     train_dataset = CharDataset(train_data, block_size)

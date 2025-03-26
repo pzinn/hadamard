@@ -30,13 +30,13 @@ def best_from(arrays_dict):
     #heapq is slightly more efficient but requires no nan
     # preserves ordering
     items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1][0])}
+    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1])}
     return {k: v for k, v in items if k in smallest_keys}
     #doesn't
-    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1][0]))
+    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
     """
     arrays_items = list(arrays_dict.items())
-    arrays_items.sort(key=lambda item: item[1][0])
+    arrays_items.sort(key=lambda item: item[1])
     return dict(arrays_items[:training_size])
     """
 
@@ -51,8 +51,11 @@ def record_stats(arrays_dict,prefix=""):
     global total_hada_dict
     if len(arrays_dict)==0:
         return
+    arrays_items = arrays_dict.items()
+    arrays, values = zip(*arrays_items)
+    scores, gens = zip(*values)
+
     # compute autocorrelation by MC
-    arrays = list(arrays_dict.keys())
     mc_size = 1000
     s = 0
     for _ in range(mc_size):
@@ -61,10 +64,9 @@ def record_stats(arrays_dict,prefix=""):
       s += sum(x*y for x,y in zip(a1,a2))
     s/=(mc_size*n)
     print(f"Correlation: {s}")
-    
+
     # now scores
-    vals = arrays_dict.values()
-    scores = np.array([val[0] for val in vals], dtype=float)
+    scores = normalise(np.array(scores, dtype=float))
 
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
@@ -76,10 +78,10 @@ def record_stats(arrays_dict,prefix=""):
     print(f"Max score: {max_score}")
 
     #tally=Counter([val[1] for val in vals])
-    tally=dict(Counter([val[1] for val in vals]).most_common())
+    tally=dict(Counter(gens).most_common())
     print(f"Gen tally: {tally}")
 
-    hada_dict = { k: v[1] for k, v in arrays_dict.items() if v[0] < eps }
+    hada_dict = { arrays[i]: gens[i] for i in range(len(arrays_dict)) if scores[i] < eps }
     nh = len(hada_dict) / len(arrays_dict)
     print(f"Hadamard ratio: {nh}")
     #hada_tally = Counter(hada_dict.values())
@@ -149,6 +151,9 @@ def upblock_torch(x):
 def upblock_torch(x):
     return torch.cat((x,-x), dim=1)[...,full_indices]
 
+# for device=='cuda', float is pretty much compulsory
+# float16 is faster but may lead to accuracy issues
+score_type = torch.float32
 if score_function == 'log determinant':
     cst = n/2 * math.log(n)
     def score_torch(m):
@@ -167,7 +172,7 @@ elif score_function == 'quartic':
     def normalise(sc):
         return sc / cst2 - n/2
 elif score_function == 'one':
-    I = n * torch.eye(n, device=device)
+    I = n * torch.eye(n, device=device,dtype=score_type)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
@@ -178,12 +183,12 @@ elif score_function == 'one':
 else:
     raise Exception('unknown score_function')
 
-# scoring. technically we don't need this since the scores are recomputed when improving;
+# scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats
 def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
-    arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor
-    scores = normalise(score_torch(arrays_tensor))  # Compute scores in parallel
+    arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
+    scores = score_torch(arrays_tensor)  # Compute scores in parallel
     return {x: (s,gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
 def subbatch_score(arrays): # same but in batches of score_batch_size
@@ -199,12 +204,12 @@ max_k = int(math.sqrt(n))
 n_attempts = n
 p = .3/math.sqrt(n)
 def batch_improve(arrays_items):
-    arrays, values = zip(*arrays_items)  # Keys are tuples, values are scores
-    _, gens = zip(*values) # ignore scores, we recompute them
+    arrays, values = zip(*arrays_items)
+    scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
-    arrays_tensor = torch.tensor(arrays, dtype=torch.float32, device=device)  # Convert to tensor and float32 (score needs float)
-    scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    #scores = torch.tensor(scores, dtype=torch.float32, device=device)  # Convert to tensor
+    arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
+    #scores = score_torch(arrays_tensor)  # Recompute scores in parallel
+    scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
     if debugging:
         cnt1 = torch.tensor(0, device=device)
@@ -249,7 +254,6 @@ def batch_improve(arrays_items):
     if debugging:
         print(f'improve success rate: {cnt1/n/len(arrays_items)} {cnt2/n_attempts/len(arrays_items)}')
     # Convert back to dict
-    scores=normalise(scores)
     #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     #return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
     #return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
@@ -273,8 +277,8 @@ if resume:
     # use existing sample
     init_sample = work_dir + f'GEN-{gen:02d}.txt'
     try:
-        arrays = list(map(lambda x: x.strip(),open(init_sample, 'r').read().splitlines()))
-        arrays = list(map(lambda x: tuple(1 if c=="+" else -1 for c in x),arrays))
+        with open(init_sample, 'r') as f:
+            arrays = [tuple(1 if c=="+" else -1 for c in line.strip()) for line in f]
         print(f'***Loading initial sample from {init_sample}***')
     except FileNotFoundError:
         arrays = []
@@ -309,12 +313,12 @@ while gen<max_iterations:
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen==0 or not resume_training else .03+sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
+        coeff = 1 if gen==0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
         start_timer=timer()
-        save_step = transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500)
+        save_step = transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500,learning_rate=learning_rate*math.sqrt(coeff))
         if debugging:
             print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:
