@@ -23,6 +23,7 @@ stacking = 5 # preferably a divisor of nn
 # scoring
 score_function = 'log determinant'
 #score_function = 'quartic'
+#score_function = 'one'
 
 # training parameters
 sample_size = 100000
@@ -67,9 +68,10 @@ resume=False # whether to resume a previous run
 #resume=True
 if resume:
     # provide work_dir manually
-    work_dir = "./training/80/5/testing/" # don't forget the trailing /
+    work_dir = "./training/80/5/2025-03-26-16-20-44_100000_64/" # don't forget the trailing /
     gen = find_latest_gen() # generation to pick up from. leave as is for latest, otherwise specify explicitly
-    # obviously, transformer parameters must be the same (and Hadamard parameters including stacking)
+    # obviously, Hadamard parameters must be the same
+    # as well as transformer parameters (including stacking) unless resume_training = False
     # training parameters can be different though
     skip_first_training=False # start by sampling from existing model rather than training. leave False if unsure
 else:
@@ -101,7 +103,7 @@ layout = { "combined" : { "loss" : [ "Multiline", ["Loss/train","Loss/test"]],
 writer.add_custom_scalars(layout)
 
 # header of stats file + hparams
-hparam_list = ['n','sample_size','learning_rate','config','max_iterations','stacking','training_steps','training_batch_size','score_function','version']
+hparam_list = ['n','sample_size','training_size','learning_rate','config','max_iterations','stacking','training_steps','training_batch_size','score_function','version']
 with open(stats_file, 'a') as file:
     file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
 """

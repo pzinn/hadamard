@@ -274,7 +274,7 @@ if training_size <= test_set_size:
 
 def train(data,**kwargs):
     resume = kwargs.get("resume",False)
-    num_workers = kwargs.get("num_workers",2) # should be parameterisable TODO
+    num_workers = kwargs.get("num_workers",3) # should be parameterisable TODO
     max_steps = kwargs.get("max_steps",-1)
     seed = kwargs.get("seed",3407)
     # optimization -> slowly being moved to params.py
