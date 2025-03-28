@@ -12,7 +12,7 @@ import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from params import config, n, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking
+from params import config, n, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size
 
 # -----------------------------------------------------------------------------
 
@@ -254,7 +254,6 @@ def record_loss(loss, step, name):
         print(f"{step=} {name} {loss=:.6f}", end='\t'); sys.stdout.flush()
 
 
-test_set_size = 1000
 if training_size <= test_set_size:
     raise SystemExit("{training_size=} must be greater than {test_set_size=}")
 

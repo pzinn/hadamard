@@ -339,7 +339,7 @@ while gen < max_iterations:
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen == 0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1] == gen)/training_size  # decrease training steps depending on how much new stuff added
+        coeff = 1 if gen == 0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1] == gen)/len(arrays_dict)  # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
