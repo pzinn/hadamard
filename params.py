@@ -19,20 +19,20 @@ n = 4 * nn
 stacking = 5  # preferably a divisor of nn
 
 # scoring
-# score_function = 'log determinant'
+score_function = 'log determinant'
 # score_function = 'quartic'
-score_function = 'one'
+# score_function = 'one'
 
 # training parameters
 sample_size = 100000
 training_size = sample_size//2  # must be > test_set_size
-learning_rate = 4e-3
+learning_rate = 2e-3
 sample_batch_size = sample_size//4  # for sampling. preferably a divisor of sample_size
 score_batch_size = sample_size  # for scoring/improving. one should have sample_batch_size < score_batch_size
-training_batch_size = 512  # for training. much smaller, obviously
+training_batch_size = 256  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 100
-training_steps = 200000  # will be adjusted dynamically (to be less than that)
+training_steps = 150000  # will be adjusted dynamically (to be less than that)
 # training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 
 
@@ -70,7 +70,7 @@ resume = False  # whether to resume a previous run
 # resume = True
 if resume:
     # provide work_dir manually
-    work_dir = "latest/"  # don't forget the trailing /
+    work_dir = "latest/"
     gen = find_latest_gen()  # generation to pick up from. leave as is for latest, otherwise specify explicitly
     # obviously, Hadamard parameters must be the same
     # as well as transformer parameters (including stacking) unless resume_training = False
@@ -83,6 +83,8 @@ else:
     os.makedirs(work_dir, exist_ok=True)
     gen = 0
     skip_first_training = False
+if not work_dir.endswith('/'):
+    work_dir += '/'  # add trailing /
 if not work_dir.endswith('latest/'):
     try:
         os.unlink("latest")

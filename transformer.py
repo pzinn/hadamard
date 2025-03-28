@@ -235,8 +235,6 @@ class CharDataset(Dataset):
         return word in self.words
     def __getitem__(self, idx):
         ix = array_to_string(self.words[idx])
-        # ix = array_to_string(rot(random.randrange(nn),self.words[idx]))
-        # ix = array_to_string(rot(idx%nn,self.words[idx]))  # cheap trick FAIL, figure out why?
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix
