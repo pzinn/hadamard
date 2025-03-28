@@ -7,49 +7,60 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
+from params import n, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations
+import transformer
 # logging/debugging
 import sys
 from collections import Counter
-from timeit import default_timer as timer # to measure exec time
+from timeit import default_timer as timer  # to measure exec time
 import argparse
 parser = argparse.ArgumentParser(description="Script with logging levels")
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
-debugging = args.debug # for convenience
-import transformer
-from params import *
+debugging = args.debug  # for convenience
 
-eps = 1e-6 # is that too big? need to think
+eps = 1e-6  # is that too big? need to think
+
 
 def generate_random_array():
-    return tuple(random.choices([-1,1],k=n))
+    return tuple(random.choices([-1, 1], k=n))
 
-########### MAIN-DEFINITIONS ###########
+# MAIN-DEFINITIONS #
+
 
 def best_from(arrays_dict):
-    #heapq is slightly more efficient but requires no nan
     # preserves ordering
     items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1])}
+    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1])}  # heapq requires no nan
     return {k: v for k, v in items if k in smallest_keys}
-    #doesn't
-    #return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
+    # doesn't
+    # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
+    # some other discarded alternatives
     """
     arrays_items = list(arrays_dict.items())
     arrays_items.sort(key=lambda item: item[1])
     return dict(arrays_items[:training_size])
     """
+    """
+    scores, _ = zip(*arrays_dict.values())
+    threshold = np.partition(np.array(scores), training_size)[training_size]
+    return {k: v for k, v in arrays_dict.items() if v[0] <= threshold}
+    """
 
-def write_arrays(file_path,arrays):
+
+def write_arrays(file_path, arrays):
     with open(file_path, 'w') as file:
         for s in arrays:
-            file.write("".join(map(lambda x:"+" if x==1 else "-", s))+"\n")
+            file.write("".join(map(lambda x: "+" if x == 1 else "-", s)) + "\n")
+
 
 # for keeping track of stats
-total_hada_dict={}
-def record_stats(arrays_dict,prefix=""):
+total_hada_dict = {}
+
+
+def record_stats(arrays_dict, prefix=""):
     global total_hada_dict
-    if len(arrays_dict)==0:
+    if len(arrays_dict) == 0:
         return
     arrays_items = arrays_dict.items()
     arrays, values = zip(*arrays_items)
@@ -59,14 +70,16 @@ def record_stats(arrays_dict,prefix=""):
     mc_size = 1000
     s = 0
     for _ in range(mc_size):
-      a1 = random.choice(arrays)
-      a2 = random.choice(arrays)
-      s += sum(x*y for x,y in zip(a1,a2))
-    s/=(mc_size*n)
+        a1 = random.choice(arrays)
+        a2 = random.choice(arrays)
+        s += sum(x*y for x, y in zip(a1, a2))
+    s /= (mc_size * n)
     print(f"Correlation: {s}")
 
     # now scores
     scores = normalise(np.array(scores, dtype=float))
+    if debugging:
+        print(f'Score tally: {dict(zip(*np.unique(scores, return_counts=True)))}')
 
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
@@ -77,21 +90,21 @@ def record_stats(arrays_dict,prefix=""):
     max_score = np.max(scores)
     print(f"Max score: {max_score}")
 
-    #tally=Counter([val[1] for val in vals])
-    tally=dict(Counter(gens).most_common())
+    # tally=Counter([val[1] for val in vals])
+    tally = dict(Counter(gens).most_common())
     print(f"Gen tally: {tally}")
 
-    hada_dict = { arrays[i]: gens[i] for i in range(len(arrays_dict)) if scores[i] < eps }
+    hada_dict = {arrays[i]: gens[i] for i in range(len(arrays_dict)) if scores[i] < eps}
     nh = len(hada_dict) / len(arrays_dict)
     print(f"Hadamard ratio: {nh}")
-    #hada_tally = Counter(hada_dict.values())
+    # hada_tally = Counter(hada_dict.values())
     hada_tally = dict(Counter(hada_dict.values()).most_common())
     print(f"Hadamard gen tally: {hada_tally}")
 
     hada_dict.update(total_hada_dict)
     total_hada_dict = hada_dict
     print(f"Total number of Hadamard: {len(total_hada_dict)}")
-    
+
     with open(stats_file, 'a') as file:
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
@@ -104,18 +117,19 @@ def record_stats(arrays_dict,prefix=""):
         writer.add_scalar("Score/"+prefix, mean_score, gen)
         writer.add_scalar("Zero_score/"+prefix, nh, gen)
 
+
 # torch functions
 torch.cuda.set_device(0)  # Use GPU 0
 torch.cuda.empty_cache()  # Free memory before large computation
 
 # Generate row indices for circulant
-indices = torch.arange(nn,device=device).repeat(nn, 1)  # Shape: (nn, nn)
-shifts = torch.arange(nn,device=device).unsqueeze(1)  # Shape: (nn, 1)
+indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
+shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
 rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
-V = torch.arange(2*n,device=device).reshape(8,nn) # Shape: (8,nn) -- the original array and its negation, for convenience
-X = V[:,rolled_indices]
-X[2]=torch.flip(X[2], dims=[1])
-X[6]=torch.flip(X[6], dims=[1])
+V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
+X = V[:, rolled_indices]
+X[2] = torch.flip(X[2], dims=[1])
+X[6] = torch.flip(X[6], dims=[1])
 full_indices = torch.cat([
         torch.cat((X[0], X[1], X[2], X[3]), dim=1),
         torch.cat((X[5], X[0], X[7], X[2]), dim=1),
@@ -148,13 +162,16 @@ def upblock_torch(x):
 
     return Y
 """
+
+
 def upblock_torch(x):
-    return torch.cat((x,-x), dim=1)[...,full_indices]
+    return torch.cat((x, -x), dim=1)[..., full_indices]
+
 
 # for device=='cuda', float is pretty much compulsory
-# float16 is faster but may lead to accuracy issues
-score_type = torch.float32
+# float16 may be faster but may lead to accuracy issues
 if score_function == 'log determinant':
+    score_type = torch.float32
     cst = n/2 * math.log(n)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
@@ -164,24 +181,27 @@ if score_function == 'log determinant':
     def normalise(sc):
         return sc+cst
 elif score_function == 'quartic':
+    score_type = torch.float32
     cst2 = 2*math.sqrt(n)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
-        return torch.linalg.matrix_norm(torch.matmul(C,torch.transpose(C,1,2)))
+        return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
     def normalise(sc):
         return sc / cst2 - n/2
 elif score_function == 'one':
-    I = n * torch.eye(n, device=device,dtype=score_type)
+    score_type = torch.float32
+    Idn = n * torch.eye(n, device=device, dtype=score_type)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
-        M = torch.matmul(C,torch.transpose(C,1,2))-I
-        return torch.linalg.matrix_norm(M,ord=1)
+        M = torch.matmul(C, torch.transpose(C, 1, 2))-Idn
+        return torch.linalg.matrix_norm(M, ord=1)
     def normalise(sc):
         return sc/n
 else:
     raise Exception('unknown score_function')
+
 
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats
@@ -189,9 +209,10 @@ def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score_torch(arrays_tensor)  # Compute scores in parallel
-    return {x: (s,gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
+    return {x: (s, gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
-def subbatch_score(arrays): # same but in batches of score_batch_size
+
+def subbatch_score(arrays):  # same but in batches of score_batch_size
     total_size = len(arrays)
     updated_dict = {}
     for start in range(0, total_size, score_batch_size):
@@ -199,29 +220,32 @@ def subbatch_score(arrays): # same but in batches of score_batch_size
         updated_dict.update(batch_score(arrays[start:end]))
     return updated_dict
 
+
 # parameters of step 2 (can be adjusted)
 max_k = int(math.sqrt(n))
 n_attempts = n
 p = .3/math.sqrt(n)
+
+
 def batch_improve(arrays_items):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
-    #scores = score_torch(arrays_tensor)  # Recompute scores in parallel
+    # scores = score_torch(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
     if debugging:
         cnt1 = torch.tensor(0, device=device)
     for i in range(n):
-        print(f"1-{i} ",end=''); sys.stdout.flush()
+        print(f"1-{i} ", end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
         # Compute new scores for all batch elements in parallel
         new_scores = score_torch(arrays_tensor)
         # Identify which flips improved the score
         mask = new_scores < scores  # True where improvement happens
         if debugging:
-            cnt1+=torch.sum(mask)
+            cnt1 += torch.sum(mask)
         # Apply successful bit flips
         arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
         scores[mask] = new_scores[mask]  # Update scores accordingly
@@ -229,12 +253,12 @@ def batch_improve(arrays_items):
     if debugging:
         cnt2 = torch.tensor(0, device=device)
     for i in range(n_attempts):
-        print(f"2-{i} ",end=''); sys.stdout.flush()
+        print(f"2-{i} ", end=''); sys.stdout.flush()
         # Choose k unique bits to flip, same for entire batch
-        #flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
+        # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
         # variation
         flip_indices = torch.rand(n, device=device) < p
-        flip_indices[i%n] = True # just because
+        flip_indices[i % n] = True  # just because
         # Flip selected bits for all arrays in batch
         arrays_tensor[:, flip_indices] *= -1
         # Compute new scores after flipping k bits
@@ -242,25 +266,25 @@ def batch_improve(arrays_items):
         # Identify improvements
         mask = new_scores < scores
         if debugging:
-            cnt2+=torch.sum(mask)
+            cnt2 += torch.sum(mask)
         # Revert changes for arrays where score did not improve
-        # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1 # ugly... especially cause most of the mask will be False
+        # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1  # ugly... especially cause most of the mask will be False
         arrays_tensor[:, flip_indices] *= -1
-        arrays_tensor[mask.nonzero(), flip_indices] *= -1 # this might be faster?
-        #arrays_tensor[~mask, flip_indices] *= -1 # that doesn't work, left to remember: can't mix masks and tensors of indices
+        arrays_tensor[mask.nonzero(), flip_indices] *= -1  # this might be faster?
+        # arrays_tensor[~mask, flip_indices] *= -1  # that doesn't work, left to remember: can't mix masks and tensors of indices
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
     print("")
     if debugging:
-        print(f'improve success rate: {cnt1/n/len(arrays_items)} {cnt2/n_attempts/len(arrays_items)}')
+        print(f'improve success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)}')
     # Convert back to dict
-    #return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
-    #return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
-    #return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
-    return {tuple(x): (s,g) for x, s, g in zip(torch.where(arrays_tensor>0,1,-1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+    # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
+    # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
+    # return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
+    return {tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+
 
 def subbatch_improve(arrays_items):
-    total_size = len(arrays_items)
     updated_dict = {}
     it = iter(arrays_items)  # Convert dictionary to iterator
     while True:
@@ -270,7 +294,8 @@ def subbatch_improve(arrays_items):
         updated_dict.update(batch_improve(batch))
     return updated_dict
 
-# #### STEP 0
+
+# STEP 0
 
 # initial info
 if resume:
@@ -278,70 +303,65 @@ if resume:
     init_sample = work_dir + f'GEN-{gen:02d}.txt'
     try:
         with open(init_sample, 'r') as f:
-            arrays = [tuple(1 if c=="+" else -1 for c in line.strip()) for line in f]
+            arrays = [tuple(1 if c == "+" else -1 for c in line.strip()) for line in f]
         print(f'***Loading initial sample from {init_sample}***')
     except FileNotFoundError:
         arrays = []
 else:
     # generate initial sample
-    print(f'***Generating initial sample***')
+    print('***Generating initial sample***')
     arrays = list(generate_random_array() for _ in range(sample_size))
 
 arrays_dict = subbatch_score(arrays)
-record_stats(arrays_dict,prefix="sample" if not resume else "") # who knows where the data come from if resuming
+record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
-########### MAIN-LOOP ###########
+# MAIN-LOOP #
 
-while gen<max_iterations:
+while gen < max_iterations:
     if resume:
-        resume=False
+        resume = False
     else:
         # compute GEN-(gen)
-        start_timer=timer()
-        print(f"\n***Improving***")
+        start_timer = timer()
+        print('\n***Improving***')
         arrays_dict = subbatch_improve(arrays_dict.items())
         if debugging:
             print(f"improving: {timer() - start_timer}")
-        record_stats(arrays_dict,"improved")
-        print(f"\n***Selecting***")
+        record_stats(arrays_dict, "improved")
+        print('\n***Selecting***')
         arrays_dict = best_from(arrays_dict)
-        record_stats(arrays_dict,"selected")
-        arrays=arrays_dict.keys()
-        write_arrays(work_dir + f'GEN-{gen:02d}.txt',arrays)
+        record_stats(arrays_dict, "selected")
+        arrays = arrays_dict.keys()
+        write_arrays(work_dir + f'GEN-{gen:02d}.txt', arrays)
     if skip_first_training:
-        skip_first_training=False
+        skip_first_training = False
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen==0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1]==gen)/training_size # decrease training steps depending on how much new stuff added
+        coeff = 1 if gen == 0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1] == gen)/training_size  # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
-        start_timer=timer()
-        save_step = transformer.train(arrays,resume=resume_training,max_steps=max_steps,eval_freq=500,learning_rate=learning_rate*math.sqrt(coeff))
+        start_timer = timer()
+        save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=500, learning_rate=learning_rate*math.sqrt(coeff))
         if debugging:
             print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:
             file.write(f'training {save_step=}\n')
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
-    gen+=1
-    #to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent? confused about what seed does
-    start_timer=timer()
-    new_arrays_dict={}
+    gen += 1
+    # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent? confused about what seed does
+    start_timer = timer()
+    new_arrays_dict = {}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_arrays = transformer.sample(num_samples=b,seed=start+gen*11407)
-        new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict] # remove duplicates
+        new_arrays = transformer.sample(num_samples=b, seed=start+gen*11407)
+        new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
         new_arrays_dict.update(batch_score(new_arrays))
-    record_stats(new_arrays_dict,prefix="sample") # do we produce similar scores as training data?
-    new_arrays_dict.update(arrays_dict) # old ones last to avoid overwriting old gen during improving
-    arrays_dict=new_arrays_dict
+    record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
+    new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen during improving
+    arrays_dict = new_arrays_dict
     if debugging:
         print(f"sampling: {timer() - start_timer}")
     writer.flush()
-
-
-
-
-
