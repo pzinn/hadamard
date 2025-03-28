@@ -19,7 +19,7 @@ parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
 debugging = args.debug  # for convenience
 
-eps = 1e-6  # is that too big? need to think
+eps = 1e-6  # scores are heavily discretised so can be made large
 
 
 def generate_random_array():
@@ -32,7 +32,7 @@ def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
     smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1])}  # heapq requires no nan
-    return {k: v for k, v in items if k in smallest_keys}
+    return {k: v for k, v in items if k in smallest_keys or v[0] < score_threshold + eps}  # always keep H-matrices
     # doesn't
     # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
     # some other discarded alternatives
@@ -167,41 +167,41 @@ def upblock_torch(x):
 def upblock_torch(x):
     return torch.cat((x, -x), dim=1)[..., full_indices]
 
-
 # for device=='cuda', float is pretty much compulsory
 # float16 may be faster but may lead to accuracy issues
 if score_function == 'log determinant':
     score_type = torch.float32
-    cst = n/2 * math.log(n)
+    score_threshold = - n/2 * math.log(n)
+    score_normalisation = 1
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
         _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
         return -logdet
-    def normalise(sc):
-        return sc+cst
 elif score_function == 'quartic':
     score_type = torch.float32
-    cst2 = 2*math.sqrt(n)
+    score_threshold = n**1.5
+    score_normalisation = 2*math.sqrt(n)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
         return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-    def normalise(sc):
-        return sc / cst2 - n/2
 elif score_function == 'one':
-    score_type = torch.float32
+    score_type = torch.float16
+    score_threshold = 0
+    score_normalisation = n
     Idn = n * torch.eye(n, device=device, dtype=score_type)
     def score_torch(m):
         """Compute -log determinant of circulant matrix using PyTorch."""
         C = upblock_torch(m)  # Generate circulant matrix on GPU
         M = torch.matmul(C, torch.transpose(C, 1, 2))-Idn
         return torch.linalg.matrix_norm(M, ord=1)
-    def normalise(sc):
-        return sc/n
 else:
     raise Exception('unknown score_function')
 
+
+def normalise(score):
+    return (score-score_threshold)/score_normalisation
 
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats
