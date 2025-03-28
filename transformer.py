@@ -49,7 +49,7 @@ class CausalSelfAttention(torch.nn.Module):
         self.n_embd = config.n_embd
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
@@ -62,7 +62,7 @@ class CausalSelfAttention(torch.nn.Module):
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
 
         # output projection
         y = self.c_proj(y)
@@ -82,7 +82,7 @@ class Block(torch.nn.Module):
             act     = NewGELU(),
         ))
         m = self.mlp
-        self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x))) # MLP forward
+        self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -115,11 +115,11 @@ class Transformer(torch.nn.Module):
         device = idx.device
         b, t = idx.size()
         assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
+        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos) # position embeddings of shape (1, t, n_embd)
+        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
         x = tok_emb + pos_emb
         for block in self.transformer.h:
             x = block(x)
@@ -167,33 +167,15 @@ def generate(model, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k
 
     return idx
 
-    
-
-
 
 @torch.inference_mode()
-def evaluate(model, dataset, batch_size=50, max_batches=None):
+def evaluate(model, sample):  # TODO rewrite: batches
     model.eval()
-    loader = DataLoader(dataset, shuffle=True, batch_size=batch_size, num_workers=0)
-    losses = []
-    for i, batch in enumerate(loader):
-        batch = [t.to(device) for t in batch]
-        X, Y = batch
-        logits, loss = model(X, Y)
-        losses.append(loss.item())
-        if max_batches is not None and i >= max_batches:
-            break
-    mean_loss = torch.tensor(losses).mean().item()
+    batch = [t.to(device) for t in sample]
+    logits, loss = model(*batch)
+    mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
     return mean_loss
-
-
-"""
-# cyclically rotate a tuple
-def rot(i,a):
-    #    return tuple(map(int,np.roll(np.array(a).reshape(4,nn),i,axis=1).ravel()))
-    return a[i:nn]+a[:i]+a[nn+i:2*nn]+a[nn:nn+i]+a[2*nn+i:3*nn]+a[2*nn:2*nn+i]+a[3*nn+i:]+a[3*nn:3*nn+i]
-"""
 
 
 # conversion string <-> matrix
@@ -263,8 +245,7 @@ def save_model():
     torch.save(model.state_dict(), out_path)
 
 
-def get_loss(dataset, step, name):
-    loss = evaluate(model, dataset, batch_size=100, max_batches=10)
+def record_loss(loss, step, name):
     writer.add_scalar("Loss/"+name, loss, step)
     writer.flush()
     if name == 'test':
@@ -329,12 +310,14 @@ def train(data, **kwargs):
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
     train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
+    # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
+    test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
 
     # training loop
     step = 0
     save_step = None
-    get_loss(train_dataset, step, "train")
-    best_loss = get_loss(test_dataset, step, "test")
+    best_loss = evaluate(model, test_sample)
+    # record_loss(best_loss, step, "test")  # don't record step = 0 data, too ugly
     gpu_batch = (t.to(device, non_blocking=True) for t in next(batch_iter))  # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
@@ -361,8 +344,9 @@ def train(data, **kwargs):
         if step % eval_freq == 0 or step == max_steps:
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
-            get_loss(train_dataset, step, "train")
-            test_loss = get_loss(test_dataset, step, "test")
+            record_loss(loss, step, "train")
+            test_loss = evaluate(model, test_sample)
+            record_loss(test_loss, step, "test")
             # save the model to disk if it has improved
             if test_loss < best_loss:
                 save_model()
