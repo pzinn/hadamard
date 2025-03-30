@@ -315,7 +315,7 @@ def train(data, **kwargs):
 
     # training loop
     step = 0
-    save_step = None
+    save_step = 0
     best_loss = evaluate(model, test_sample)
     # record_loss(best_loss, step, "test")  # don't record step = 0 data, too ugly
     gpu_batch = (t.to(device, non_blocking=True) for t in next(batch_iter))  # note that batch_loader produces tuples of length 2
@@ -354,13 +354,14 @@ def train(data, **kwargs):
                 save_step = step
                 if step == max_steps:
                     max_steps += eval_freq  # don't quit on a winning streak
-            elif test_loss > best_loss+.2 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
+            elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
                 break
 
         gpu_batch = gpu_next_batch
 
     print("")
-    return save_step
+    if save_step > 0:
+        return save_step
 
 
 # def crop(row):

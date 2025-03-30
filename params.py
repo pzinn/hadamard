@@ -19,8 +19,8 @@ n = 4 * nn
 stacking = 5  # preferably a divisor of nn
 
 # scoring
-score_function = 'log determinant'
-# score_function = 'quartic'
+# score_function = 'log determinant'
+score_function = 'quartic'
 # score_function = 'one'
 
 # training parameters
@@ -32,9 +32,9 @@ score_batch_size = sample_size  # for scoring/improving. one should have sample_
 training_batch_size = 256  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 100
-training_steps = 150000  # will be adjusted dynamically (to be less than that)
+training_steps = 200000  # will be adjusted dynamically (to be less than that)
 # training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
-test_set_size = 1024 # must be less than training_size, no more than 10% ideally
+test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 
 # transformer parameters
 @dataclass
