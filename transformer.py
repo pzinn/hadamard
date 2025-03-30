@@ -294,7 +294,7 @@ def train(data, **kwargs):
     data = torch.tensor(list(data), dtype=torch.long).share_memory_()
     for i in range(test_set_size):
         j = random.randrange(i+1, data_len)
-        data[i], data[j] = data[j], data[i]
+        data[[i, j]] = data[[j, i]]
     test_data = data[:test_set_size]
     train_data = data[test_set_size:]
     print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
