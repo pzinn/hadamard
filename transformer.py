@@ -192,13 +192,13 @@ def string_to_array(s): # really, tensor to tuple by now!
     )
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
-def array_to_string(tensor,rnd): # tensor to tensor
+def array_to_string(tensor,rnd1,rnd2): # tensor to tensor
     # Convert input tuple (+1/-1) directly to tensor on GPU or CPU, -1 → 0, +1 → 1
     tensor = (1+tensor >> 1).reshape(4, nn)
     # added: random rotation
-    tensor = torch.roll(tensor, shifts=rnd % nn, dims=1)
+    tensor = torch.roll(tensor, shifts=rnd1, dims=1)
     # added: second rotation
-    tensor[2] = torch.roll(tensor[2], shifts=(rnd//nn) % nn, dims=0)
+    tensor[2] = torch.roll(tensor[2], shifts=rnd2, dims=0)
     if not nice:
         tensor = F.pad(tensor, (0, quarter_string_length*stacking-nn), mode='constant', value=0)  # pad
     # Compute integer encoding using vectorized matrix multiplication
@@ -211,14 +211,16 @@ class CharDataset(Dataset):
     def __init__(self, words, block_size):
         self.words = words
         self.block_size = block_size
-        self.rnd = random.randrange(nn*nn)  # lightweight random
+        self.rnd1 = random.randrange(nn*nn)  # lightweight random
+        self.rnd2 = random.randrange(nn*nn)
     def __len__(self):
         return len(self.words)
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx], self.rnd)
-        self.rnd += 1559+idx
+        ix = array_to_string(self.words[idx], self.rnd1, self.rnd2)
+        self.rnd1 = (self.rnd1+1559+idx) % nn
+        self.rnd2 = (self.rnd2+3137+idx) % nn
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix
