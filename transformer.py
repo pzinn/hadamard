@@ -193,14 +193,18 @@ def string_to_array(s): # really, tensor to tuple by now!
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
 def array_to_string(tensor,rnd1,rnd2): # tensor to tensor
-    # Convert input tuple (+1/-1) directly to tensor on GPU or CPU, -1 → 0, +1 → 1
-    tensor = (1+tensor >> 1).reshape(4, nn)
+    tensor = tensor.reshape(4, nn)
     # added: random rotation
     tensor = torch.roll(tensor, shifts=rnd1, dims=1)
     # added: second rotation
     tensor[2] = torch.roll(tensor[2], shifts=rnd2, dims=0)
+    # added: random signs
+    tensor.mul_(torch.tensor([(((rnd1+rnd2)>>i)&1)*2-1 for i in range(4)]).unsqueeze(1))
+    # Convert -1 → 0, +1 → 1
+    tensor = 1+tensor >> 1
+    # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, quarter_string_length*stacking-nn), mode='constant', value=0)  # pad
+        tensor = F.pad(tensor, (0, quarter_string_length*stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
     return 1 + tensor.reshape(string_length, stacking).matmul(powers_of_two)
 
@@ -319,7 +323,7 @@ def train(data, **kwargs):
     step = 0
     save_step = 0
     best_loss = evaluate(model, test_sample)
-    # record_loss(best_loss, step, "test")  # don't record step = 0 data, too ugly
+    record_loss(best_loss, step, "test")
     gpu_batch = (t.to(device, non_blocking=True) for t in next(batch_iter))  # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
