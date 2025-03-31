@@ -12,7 +12,7 @@ import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from params import config, n, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size
+from params import config, n, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size, num_workers
 
 # -----------------------------------------------------------------------------
 
@@ -266,12 +266,12 @@ if training_size <= test_set_size:
 
 def train(data, **kwargs):
     resume = kwargs.get("resume", False)
-    num_workers = kwargs.get("num_workers", 3)  # should be parameterisable TODO
     max_steps = kwargs.get("max_steps", -1)
     seed = kwargs.get("seed", 3407)
     # optimization -> slowly being moved to params.py
     # batch_size = kwargs.get("batch_size", 32)
     # weight_decay = kwargs.get("weight_decay", 0.01)
+    # num_workers = kwargs.get("num_workers", 3)
     learning_rate = kwargs.get("learning_rate", 5e-4)
     batch_size = training_batch_size
     eval_freq = kwargs.get("eval_freq", 500)

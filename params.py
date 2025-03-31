@@ -35,6 +35,7 @@ max_iterations = 100
 training_steps = 200000  # will be adjusted dynamically (to be less than that)
 # training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
+num_workers = 3  # for cpu parallelisation
 
 # transformer parameters
 @dataclass
