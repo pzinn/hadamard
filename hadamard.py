@@ -343,8 +343,9 @@ while gen < max_iterations:
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
+        eval_freq = int(500*math.sqrt(coeff))
         start_timer = timer()
-        save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=500, learning_rate=learning_rate*math.sqrt(coeff))
+        save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=learning_rate*math.sqrt(coeff))
         if debugging:
             print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:
