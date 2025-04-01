@@ -317,7 +317,7 @@ def train(data, **kwargs):
     save_step = 0
     best_loss = evaluate(model, test_sample)
     record_loss(best_loss, step, "test")
-    gpu_batch = (t.to(device, non_blocking=True) for t in next(batch_iter))  # note that batch_loader produces tuples of length 2
+    batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
         try:
@@ -326,12 +326,12 @@ def train(data, **kwargs):
             # Restart iterator if at end of epoch
             batch_iter = iter(train_loader)
             next_batch = next(batch_iter)
-        gpu_next_batch = (t.to(device, non_blocking=True) for t in next_batch)
-        # gpu_batch = (t.to(device, non_blocking=True) for t in next_batch)
+        # disabled early transfer to GPU to save memory space
+        # gpu_next_batch = tuple(t.to(device, non_blocking=True) for t in next_batch)
 
         # Train on the current batch
         # feed into the model
-        logits, loss = model(*gpu_batch)
+        logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
 
         # calculate the gradient, update the weights
         model.zero_grad(set_to_none=True)
@@ -356,7 +356,7 @@ def train(data, **kwargs):
             elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
                 break
 
-        gpu_batch = gpu_next_batch
+        batch = next_batch
 
     print("")
     if save_step > 0:

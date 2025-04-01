@@ -21,10 +21,11 @@ debugging = args.debug  # for convenience
 
 eps = 1e-6  # scores are heavily discretised so can be made large
 
-# set random seed
+# torch functions
+torch.cuda.set_device(0)  # Use GPU 0
+torch.cuda.empty_cache()  # Free memory before large computation
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
-
 
 def generate_random_array():
     return tuple((2 * torch.randint(2, (n,)) - 1).tolist())
@@ -78,8 +79,8 @@ def record_stats(arrays_dict, prefix=""):
 
     # now scores
     scores = normalise(np.array(scores, dtype=float))
-    if debugging:
-        print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
+    # if debugging:
+    #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
 
     min_score = np.min(scores)
     print(f"Min score: {min_score}")
@@ -118,10 +119,6 @@ def record_stats(arrays_dict, prefix=""):
         writer.add_scalar("Score/"+prefix, mean_score, gen)
         writer.add_scalar("Zero_score/"+prefix, nh, gen)
 
-
-# torch functions
-torch.cuda.set_device(0)  # Use GPU 0
-torch.cuda.empty_cache()  # Free memory before large computation
 
 # Generate row indices for circulant
 indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
