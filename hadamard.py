@@ -138,12 +138,12 @@ full_indices = torch.cat([
     ], dim=0)
 
 """
-def circulant_torch(m):
+def circulant(m):
     return m[..., rolled_indices]
 
-def upblock_torch(x):
+def block_circulant(x):
     batch_size = x.shape[0]
-    X = circulant_torch(x.reshape(batch_size,4,nn))
+    X = circulant(x.reshape(batch_size,4,nn))
 
     Y = torch.empty(batch_size, n, n, dtype=torch.float32, device=device)
 
@@ -164,7 +164,8 @@ def upblock_torch(x):
 """
 
 
-def upblock_torch(x):
+# create the n x n block circulant matrix out of the n bits
+def block_circulant(x):
     return torch.cat((x, -x), dim=1)[..., full_indices]
 
 
@@ -174,34 +175,29 @@ if score_function == 'log determinant':
     score_type = torch.float32  # slogdet needs float32
     score_threshold = - n/2 * math.log(n)
     score_normalisation = 1
-    def score_torch(m):
-        """Compute -log determinant of circulant matrix using PyTorch."""
-        C = upblock_torch(m)  # Generate circulant matrix on GPU
-        _, logdet = torch.linalg.slogdet(C)  # Compute sign and log determinant
-        return -logdet
+    def score(m):
+        return -torch.linalg.slogdet(block_circulant(m))[1]
 elif score_function == 'quartic':
     score_type = torch.float16
     score_threshold = n**1.5
     score_normalisation = 2*math.sqrt(n)
-    def score_torch(m):
-        """Compute -log determinant of circulant matrix using PyTorch."""
-        C = upblock_torch(m)  # Generate circulant matrix on GPU
+    def score(m):
+        C = block_circulant(m)
         return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
 elif score_function == 'one':
     score_type = torch.float16
     score_threshold = 0
     score_normalisation = n
     Idn = n * torch.eye(n, device=device, dtype=score_type)
-    def score_torch(m):
-        """Compute -log determinant of circulant matrix using PyTorch."""
-        C = upblock_torch(m)  # Generate circulant matrix on GPU
+    def score(m):
+        C = block_circulant(m)
         return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
 else:
     raise Exception('unknown score_function')
 
 
-def normalise(score):
-    return (score-score_threshold)/score_normalisation
+def normalise(sc):
+    return (sc-score_threshold)/score_normalisation
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
@@ -209,7 +205,7 @@ def normalise(score):
 def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
-    scores = score_torch(arrays_tensor)  # Compute scores in parallel
+    scores = score(arrays_tensor)  # Compute scores in parallel
     return {x: (s, gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
 
@@ -233,7 +229,7 @@ def batch_improve(arrays_items):
     scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
-    # scores = score_torch(arrays_tensor)  # Recompute scores in parallel
+    # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
     if debugging:
@@ -242,7 +238,7 @@ def batch_improve(arrays_items):
         print(f"1-{i} ", end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
         # Compute new scores for all batch elements in parallel
-        new_scores = score_torch(arrays_tensor)
+        new_scores = score(arrays_tensor)
         # Identify which flips improved the score
         mask = new_scores < scores  # True where improvement happens
         if debugging:
@@ -263,7 +259,7 @@ def batch_improve(arrays_items):
         # Flip selected bits for all arrays in batch
         arrays_tensor[:, flip_indices] *= -1
         # Compute new scores after flipping k bits
-        new_scores = score_torch(arrays_tensor)
+        new_scores = score(arrays_tensor)
         # Identify improvements
         mask = new_scores < scores
         if debugging:
@@ -353,7 +349,8 @@ while gen < max_iterations:
     # sample from model to get GEN-(gen+1)-a
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen += 1
-    # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent? confused about what seed does
+    # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
+    # TODO seed in now useless, not using torch random -- reinstate for reproducibility?
     start_timer = timer()
     new_arrays_dict = {}
     for start in range(0, sample_size, sample_batch_size):
