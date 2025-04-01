@@ -21,7 +21,7 @@ debugging = args.debug  # for convenience
 
 eps = 1e-6  # scores are heavily discretised so can be made large
 
-# system inits
+# set random seed
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
@@ -59,11 +59,7 @@ def write_arrays(file_path, arrays):
 
 
 # for keeping track of stats
-total_hada_dict = {}
-
-
 def record_stats(arrays_dict, prefix=""):
-    global total_hada_dict
     if len(arrays_dict) == 0:
         return
     arrays_items = arrays_dict.items()
@@ -105,17 +101,18 @@ def record_stats(arrays_dict, prefix=""):
     hada_tally = dict(Counter(hada_dict.values()).most_common())
     print(f"Hadamard gen tally: {hada_tally}")
 
-    hada_dict.update(total_hada_dict)
-    total_hada_dict = hada_dict
-    print(f"Total number of Hadamard: {len(total_hada_dict)}")
+    if hasattr(record_stats, "total_hada_dict"):
+        hada_dict.update(record_stats.total_hada_dict)
+    record_stats.total_hada_dict = hada_dict
+    print(f"Total number of Hadamard: {len(record_stats.total_hada_dict)}")
 
     with open(stats_file, 'a') as file:
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(total_hada_dict):>10} {tally} {hada_tally}\n")
+        file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
 
-    write_arrays(hada_file, total_hada_dict.keys())
+    write_arrays(hada_file, record_stats.total_hada_dict.keys())
 
     if prefix:
         writer.add_scalar("Score/"+prefix, mean_score, gen)
