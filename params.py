@@ -8,6 +8,7 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 import glob
 import re
+import time
 import subprocess
 version = subprocess.check_output(["git", "describe", "--always"]).strip().decode()
 
@@ -95,6 +96,8 @@ if not work_dir.endswith('latest/'):
 
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
+random_seed = int(time.time())
+
 stats_file = work_dir + 'stats.txt'  # where to save logs
 hada_file = work_dir + 'hada.txt'  # where to save Hadamard matrices
 
@@ -109,7 +112,7 @@ layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
 writer.add_custom_scalars(layout)
 
 # header of stats file + hparams
-hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'config', 'max_iterations', 'stacking', 'training_steps', 'training_batch_size', 'score_function', 'version']
+hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'config', 'max_iterations', 'stacking', 'training_steps', 'training_batch_size', 'score_function', 'version', 'random_seed']
 with open(stats_file, 'a') as file:
     file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
 """

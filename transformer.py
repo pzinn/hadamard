@@ -5,7 +5,6 @@ if __name__ == "__main__":
 import os
 import sys
 import math
-import random
 
 import torch
 import torch.nn
@@ -215,8 +214,8 @@ class CharDataset(Dataset):
     def __init__(self, words, block_size):
         self.words = words
         self.block_size = block_size
-        self.rnd1 = random.randrange(nn*nn)  # lightweight random
-        self.rnd2 = random.randrange(nn*nn)
+        self.rnd1 = torch.randint(nn*nn, ()).item()  # lightweight random
+        self.rnd2 = torch.randint(nn*nn, ()).item()
     def __len__(self):
         return len(self.words)
     def contains(self, word):
@@ -267,7 +266,6 @@ if training_size <= test_set_size:
 def train(data, **kwargs):
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
-    seed = kwargs.get("seed", 3407)
     # optimization -> slowly being moved to params.py
     # batch_size = kwargs.get("batch_size", 32)
     # weight_decay = kwargs.get("weight_decay", 0.01)
@@ -275,11 +273,6 @@ def train(data, **kwargs):
     learning_rate = kwargs.get("learning_rate", 5e-4)
     batch_size = training_batch_size
     eval_freq = kwargs.get("eval_freq", 500)
-
-    # system inits
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    # os.makedirs(work_dir, exist_ok=True)
 
     block_size = config.block_size
     vocab_size = config.vocab_size  # should one check that this is correct?
@@ -299,7 +292,7 @@ def train(data, **kwargs):
     # convert to torch tensors
     data = torch.tensor(list(data), dtype=torch.long).share_memory_()
     for i in range(test_set_size):
-        j = random.randrange(i+1, data_len)
+        j = torch.randint(i, data_len, ()).item()
         data[[i, j]] = data[[j, i]]
     test_data = data[:test_set_size]
     train_data = data[test_set_size:]
@@ -376,13 +369,7 @@ def train(data, **kwargs):
 
 def sample(**kwargs):
     num_samples = kwargs.get("num_samples", 1000)
-    seed = kwargs.get("seed", 3407)
     top_k = kwargs.get("top_k", -1)  # -1 means no top-k
-
-    # system inits
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    # os.makedirs(work_dir, exist_ok=True)
 
     block_size = config.block_size
 

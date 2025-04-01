@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-from params import n, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations
+from params import n, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, random_seed
 import transformer
 # logging/debugging
 import sys
@@ -21,9 +21,13 @@ debugging = args.debug  # for convenience
 
 eps = 1e-6  # scores are heavily discretised so can be made large
 
+# system inits
+torch.manual_seed(random_seed)
+torch.cuda.manual_seed_all(random_seed)
+
 
 def generate_random_array():
-    return tuple(random.choices([-1, 1], k=n))
+    return tuple((2 * torch.randint(2, (n,)) - 1).tolist())
 
 # MAIN-DEFINITIONS #
 
@@ -350,12 +354,11 @@ while gen < max_iterations:
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen += 1
     # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
-    # TODO seed in now useless, not using torch random -- reinstate for reproducibility?
     start_timer = timer()
     new_arrays_dict = {}
     for start in range(0, sample_size, sample_batch_size):
         b = min(sample_batch_size, sample_size-start)
-        new_arrays = transformer.sample(num_samples=b, seed=start+gen*11407)
+        new_arrays = transformer.sample(num_samples=b)
         new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
         new_arrays_dict.update(batch_score(new_arrays))
     record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
