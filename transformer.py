@@ -191,14 +191,14 @@ def string_to_array(s): # really, tensor to tuple by now!
     )
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
-def array_to_string(tensor,rnd1,rnd2): # tensor to tensor
+def array_to_string(tensor,rnd1,rnd2,rnd3): # tensor to tensor
     tensor = tensor.reshape(4, nn)
-    # added: random rotation
-    tensor = torch.roll(tensor, shifts=rnd1, dims=1)
-    # added: second rotation
-    tensor[2] = torch.roll(tensor[2], shifts=rnd2, dims=0)
+    # added: random rotation/flip
+    tensor = torch.roll(tensor if rnd1<nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
+    # added: second rotation/flip
+    tensor[2] = torch.roll(tensor[2] if rnd2<nn else torch.flip(tensor[2], (0,)), shifts=rnd2, dims=0)
     # added: random signs
-    tensor.mul_(torch.tensor([(((rnd1+rnd2)>>i)&1)*2-1 for i in range(4)]).unsqueeze(1))
+    tensor.mul_(torch.tensor([((rnd3>>i)&1)*2-1 for i in range(4)]).unsqueeze(1))
     # Convert -1 → 0, +1 → 1
     tensor = 1+tensor >> 1
     # pad if necessary
@@ -214,16 +214,18 @@ class CharDataset(Dataset):
     def __init__(self, words, block_size):
         self.words = words
         self.block_size = block_size
-        self.rnd1 = torch.randint(nn*nn, ()).item()  # lightweight random
-        self.rnd2 = torch.randint(nn*nn, ()).item()
+        self.rnd1 = torch.randint(2*nn, ()).item()  # lightweight, reproducible random
+        self.rnd2 = torch.randint(2*nn, ()).item()
+        self.rnd3 = torch.randint(16, ()).item()
     def __len__(self):
         return len(self.words)
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx], self.rnd1, self.rnd2)
-        self.rnd1 = (self.rnd1+1559+idx) % nn
-        self.rnd2 = (self.rnd2+3137+idx) % nn
+        ix = array_to_string(self.words[idx], self.rnd1, self.rnd2, self.rnd3)
+        self.rnd1 = (self.rnd1+1559+idx) % (2*nn)
+        self.rnd2 = (self.rnd2+3137+idx) % (2*nn)
+        self.rnd3 = (self.rnd3+5113+idx) & 15
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix

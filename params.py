@@ -20,8 +20,8 @@ n = 4 * nn
 stacking = 5  # preferably a divisor of nn
 
 # scoring
-# score_function = 'log determinant'
-score_function = 'quartic'
+score_function = 'log determinant'
+# score_function = 'quartic'
 # score_function = 'one'
 
 # training parameters
