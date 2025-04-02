@@ -10,11 +10,13 @@ import glob
 import re
 import time
 import subprocess
-version = subprocess.check_output(["git", "describe", "--always"]).strip().decode()
+version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 
 # hadamard matrix parameters
-nn = 20  # size of matrix = 4*nn
-n = 4 * nn
+nn = 20
+na = 4 * nn  # length of array
+n = 4 * nn  # size of matrix, which happens to be equal to na
+print(f'{n=}')
 
 # encoding
 stacking = 5  # preferably a divisor of nn

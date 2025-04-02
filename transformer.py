@@ -11,7 +11,7 @@ import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from params import config, n, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size, num_workers
+from params import config, na, nn, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size, num_workers
 
 # -----------------------------------------------------------------------------
 
@@ -183,7 +183,7 @@ def char_to_sign(c, i):
 # effectively do nn % stacking == 0 first because simpler
 nice = nn % stacking == 0
 quarter_string_length = string_length//4
-my_range = range(n) if nice else list(i for j in range(4) for i in range(j * quarter_string_length*stacking, j * quarter_string_length*stacking + nn))  # list for reusability
+my_range = range(na) if nice else list(i for j in range(4) for i in range(j * quarter_string_length*stacking, j * quarter_string_length*stacking + nn))  # list for reusability
 def string_to_array(s): # really, tensor to tuple by now!
     return tuple(
         char_to_sign(s[i // stacking] - 1, i % stacking)

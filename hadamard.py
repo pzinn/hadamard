@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-from params import n, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, random_seed
+from params import n, na, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, random_seed
 import transformer
 # logging/debugging
 import sys
@@ -28,7 +28,7 @@ torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
 
 def generate_random_array():
-    return tuple((2 * torch.randint(2, (n,)) - 1).tolist())
+    return tuple((2 * torch.randint(2, (na,)) - 1).tolist())
 
 # MAIN-DEFINITIONS #
 
@@ -217,9 +217,9 @@ def subbatch_score(arrays):  # same but in batches of score_batch_size
 
 
 # parameters of step 2 (can be adjusted)
-max_k = int(math.sqrt(n))
-n_attempts = n
-p = .3/math.sqrt(n)
+# max_k = int(math.sqrt(n))
+n_attempts = na
+p = .3/math.sqrt(na)
 
 
 def batch_improve(arrays_items):
@@ -232,7 +232,7 @@ def batch_improve(arrays_items):
     # step 1: this is the analogue of my old "simple_search2"
     if debugging:
         cnt1 = torch.tensor(0, device=device)
-    for i in range(n):
+    for i in range(na):
         print(f"1-{i} ", end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
         # Compute new scores for all batch elements in parallel
@@ -252,8 +252,8 @@ def batch_improve(arrays_items):
         # Choose k unique bits to flip, same for entire batch
         # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
         # variation
-        flip_indices = torch.rand(n, device=device) < p
-        flip_indices[i % n] = True  # just because
+        flip_indices = torch.rand(na, device=device) < p
+        flip_indices[i % na] = True  # just because
         # Flip selected bits for all arrays in batch
         arrays_tensor[:, flip_indices] *= -1
         # Compute new scores after flipping k bits
