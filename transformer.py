@@ -11,6 +11,7 @@ import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
+from itertools import permutations
 from params import config, na, nn, nm, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size, num_workers
 
 # -----------------------------------------------------------------------------
@@ -191,13 +192,17 @@ def string_to_array(s): # really, tensor to tuple by now!
     )
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
-def array_to_string(tensor,rnd1,rnd2,rnd3): # tensor to tensor
+# Prepare permutations
+perms = torch.tensor(list(p for p in permutations(range(nm)) if p[2]==2), dtype=torch.long)
+def array_to_string(tensor,rnd1,rnd2,rnd3,rnd4): # tensor to tensor
     tensor = tensor.reshape(nm, nn)
-    # added: random rotation/flip
+    # symmetry: random permute A/B/D
+    tensor = tensor[perms[rnd4]]
+    # symmetry: random rotation/flip
     tensor = torch.roll(tensor if rnd1<nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
-    # added: second rotation/flip
+    # symmetry: second rotation/flip
     tensor[2] = torch.roll(tensor[2] if rnd2<nn else torch.flip(tensor[2], (0,)), shifts=rnd2, dims=0)
-    # added: random signs
+    # symmetry: random signs
     tensor.mul_(torch.tensor([((rnd3>>i)&1)*2-1 for i in range(nm)]).unsqueeze(1))
     # Convert -1 → 0, +1 → 1
     tensor = 1+tensor >> 1
@@ -217,15 +222,17 @@ class CharDataset(Dataset):
         self.rnd1 = torch.randint(2*nn, ()).item()  # lightweight, reproducible random
         self.rnd2 = torch.randint(2*nn, ()).item()
         self.rnd3 = torch.randint(1 << nm, ()).item()
+        self.rnd4 = torch.randint(perms.shape[0], ()).item() # TODO automate this BS
     def __len__(self):
         return len(self.words)
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx], self.rnd1, self.rnd2, self.rnd3)
+        ix = array_to_string(self.words[idx], self.rnd1, self.rnd2, self.rnd3, self.rnd4)
         self.rnd1 = (self.rnd1+1559+idx) % (2*nn)
         self.rnd2 = (self.rnd2+3137+idx) % (2*nn)
         self.rnd3 = (self.rnd3+5113+idx) & ((1 << nm)-1)
+        self.rnd3 = (self.rnd4+1+idx) % perms.shape[0]
         x = torch.zeros(self.block_size, dtype=torch.long)
         y = torch.zeros(self.block_size, dtype=torch.long)
         x[1:1+len(ix)] = ix
