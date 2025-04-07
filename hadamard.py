@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-from params import n, na, nn, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, random_seed
+from params import n, na, nn, nm, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, random_seed
 import transformer
 # logging/debugging
 import sys
@@ -231,7 +231,7 @@ def batch_improve(arrays_items):
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
     if debugging:
-        cnt1 = torch.tensor(0, device=device)
+        cnt1 = torch.tensor(0, device=device, dtype=torch.int64)
     for i in range(na):
         print(f"1-{i} ", end=''); sys.stdout.flush()
         arrays_tensor[:, i] *= -1  # Flip only the i-th bit
@@ -246,7 +246,7 @@ def batch_improve(arrays_items):
         scores[mask] = new_scores[mask]  # Update scores accordingly
     # step 2: this is the analogue of my old "simple_search3" except it doesn't stop at first success
     if debugging:
-        cnt2 = torch.tensor(0, device=device)
+        cnt2 = torch.tensor(0, device=device, dtype=torch.int64)
     for i in range(n_attempts):
         print(f"2-{i} ", end=''); sys.stdout.flush()
         # Choose k unique bits to flip, same for entire batch
@@ -269,9 +269,52 @@ def batch_improve(arrays_items):
         # arrays_tensor[~mask, flip_indices] *= -1  # that doesn't work, left to remember: can't mix masks and tensors of indices
         # Update scores where improvements occurred
         scores[mask] = new_scores[mask]
+    # step 3
+    if debugging:
+        cnt3 = torch.tensor(0, device=device, dtype=torch.int64)
+    for i in range(n_attempts):
+        print(f"3-{i} ", end=''); sys.stdout.flush()
+        a=torch.randint(na, ()).item()
+        b=torch.randint(na, ()).item()
+        if a > b:
+            a, b = b, a
+        # Flip selected bits for all arrays in batch
+        arrays_tensor[:, a:b+1] *= -1
+        # Compute new scores after flipping
+        new_scores = score(arrays_tensor)
+        # Identify improvements
+        mask = new_scores < scores
+        if debugging:
+            cnt3 += torch.sum(mask)
+        # Revert changes for arrays where score did not improve
+        arrays_tensor[~mask, a:b+1] *= -1
+        # Update scores where improvements occurred
+        scores[mask] = new_scores[mask]
+    """
+    # step 3
+    if debugging:
+        cnt3 = torch.tensor(0, device=device, dtype=torch.int64)
+    batch_size = arrays_tensor.shape[0]
+    arrays_view = arrays_tensor.view(batch_size,nm,nn)  # reshape, forcing view
+    base = torch.arange(nn, device=device).repeat(batch_size, 1)
+    for j in range(2):
+        shifts = torch.zeros(batch_size, dtype=torch.int64, device=device)
+        for i in range(1,nn):
+            print(f"3-{j}-{i} ", end=''); sys.stdout.flush()
+            arrays_view[:,j]=torch.roll(arrays_view[:,j], shifts=1, dims=1)
+            new_scores = score(arrays_tensor)
+            mask = new_scores < scores  # True where improvement happens
+            if debugging:
+                cnt3 += torch.sum(mask)
+            shifts[mask] = i
+            scores[mask] = new_scores[mask]  # Update scores accordingly
+        # slightly annoying: re-roll according to shifts
+        rolled_indices = (base - 1 - shifts.unsqueeze(1)) % nn
+        arrays_view[:, j] = arrays_view[: ,j].gather(1, rolled_indices)
+    """
     print("")
     if debugging:
-        print(f'improve success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)}')
+        print(f'improve success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)} {cnt3/len(arrays_items)}')
     # Convert back to dict
     # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}

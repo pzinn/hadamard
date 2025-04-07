@@ -13,12 +13,15 @@ import subprocess
 version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 
 # hadamard matrix parameters
-nn = 20
-na = 4 * nn  # length of array
-n = 4 * nn  # size of matrix, which happens to be equal to na
+nn = 20 # size of basic block
+n = 4 * nn  # size of matrix
 print(f'{n=}')
 
-# encoding
+# array encoding
+nm = 4 # number of blocks
+na = nm * nn  # length of array
+
+# string encoding
 stacking = 5  # preferably a divisor of nn
 
 # scoring
@@ -54,7 +57,7 @@ class ModelConfig:
 nchars = 1 << stacking
 # string_length = n//stacking # only works if stacking | n
 # string_length = 1 + (n-1) // stacking # +1, -1 in case stacking doesn't divide n
-string_length = (1+(nn-1)//stacking)*4  # more padding
+string_length = (1+(nn-1)//stacking)*nm  # more padding
 
 config = ModelConfig(vocab_size=nchars+1, block_size=string_length+1)
 # vocab_size is all the possible characters and special 0 token
