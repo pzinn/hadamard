@@ -1,3 +1,8 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# a script to check that matrices are Hadamard. takes input from stdin
+
 import sys
 import numpy as np
 import scipy.linalg as sl
@@ -11,7 +16,10 @@ def upblock(x):
     B = sl.circulant(_bb)
     C = np.fliplr(sl.circulant(_cc))
     D = sl.circulant(_dd)
-    return np.block([[A, B, C, D], [-B, A, -D, C], [-C, D, A, -B], [-D, -C, B, A]])
+    return np.block([[A, B, C, D],
+                     [-B, A, -D, C],
+                     [-C, D, A, -B],
+                     [-D, -C, B, A]])
 
 
 def score(a):
