@@ -30,12 +30,12 @@ sample_size = 100000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 sample_batch_size = sample_size//4  # for sampling. preferably a divisor of sample_size
-score_batch_size = sample_size  # for scoring/improving. one should have sample_batch_size < score_batch_size
+score_batch_size = 2*sample_size  # for scoring/improving. one should have sample_batch_size < score_batch_size
 training_batch_size = 256  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 100
 training_steps = 200000  # will be adjusted dynamically (to be less than that)
-# training_steps = (2*nn*training_size)//training_batch_size # 2 epochs??
+num_improve = 3  # number of times data get improved per generation
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 3  # for cpu parallelisation
 
