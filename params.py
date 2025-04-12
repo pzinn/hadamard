@@ -17,21 +17,17 @@ nn = 20 # size of basic block
 n = 4 * nn  # size of matrix
 print(f'{n=}')
 
-# array encoding
-nm = 4 # number of blocks
-na = nm * nn  # length of array
-
 # string encoding
 stacking = 5  # preferably a divisor of nn
 
 # scoring
-score_function = 'log determinant'
+score_function = 'fft log determinant'
 # score_function = 'quartic'
 # score_function = 'one'
 
 # training parameters
 sample_size = 100000
-training_size = sample_size//2  # must be > test_set_size
+training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 sample_batch_size = sample_size//4  # for sampling. preferably a divisor of sample_size
 score_batch_size = sample_size  # for scoring/improving. one should have sample_batch_size < score_batch_size
@@ -53,6 +49,9 @@ class ModelConfig:
     n_embd: int = 64
     n_head: int = 4
 
+# array encoding -- do not change
+nm = 4 # number of blocks
+na = nm * nn  # length of array
 
 nchars = 1 << stacking
 # string_length = n//stacking # only works if stacking | n

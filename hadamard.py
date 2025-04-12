@@ -175,6 +175,23 @@ if score_function == 'log determinant':
     score_normalisation = 1
     def score(m):
         return -torch.linalg.slogdet(block_circulant(m))[1]
+elif score_function == 'fft log determinant':
+    score_type = torch.float32  # rethink
+    score_threshold = - n/4 * math.log(n)
+    score_normalisation = .5
+    def score(m):
+        mm = m.reshape(-1,4,nn)  # view?
+        f = torch.fft.rfft(mm, dim=2)
+        s = torch.log(torch.real(f[:,:,0].pow(2).sum(dim=1)))  # this part is real
+        if nn % 2 == 0:
+            s += torch.log(torch.real(f[:,:,nn//2].pow(2).sum(dim=1)))  # this part is real
+        ff = f[:,[0,1,3],:].pow(2).sum(dim=1)
+        f = f * f.conj()
+        ff = ff * ff.conj()
+        for i in range(1,1+(nn-1)//2):  # TODO better
+            s += torch.log(torch.real(ff[:,i]+f[:,2,i]*(f[:,2,i]+2*f[:,0,i]+2*f[:,1,i]+2*f[:,3,i])))
+        return -s
+
 elif score_function == 'quartic':
     score_type = torch.float16
     score_threshold = n**1.5
