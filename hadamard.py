@@ -223,8 +223,8 @@ def batch_improve(arrays_items):
         # step 1: this is the analogue of my old "simple_search2"
         if debugging:
             cnt1 = torch.tensor(0, device=device, dtype=torch.int64)
+            print(f"1", end=''); sys.stdout.flush()
         for i in range(na):
-            print(f"1-{i} ", end=''); sys.stdout.flush()
             arrays_tensor[:, i] *= -1  # Flip only the i-th bit
             # Compute new scores for all batch elements in parallel
             new_scores = score(arrays_tensor)
@@ -238,8 +238,8 @@ def batch_improve(arrays_items):
         # step 2: this is the analogue of my old "simple_search3" except it doesn't stop at first success
         if debugging:
             cnt2 = torch.tensor(0, device=device, dtype=torch.int64)
+            print(f"2", end=''); sys.stdout.flush()
         for i in range(n_attempts):
-            print(f"2-{i} ", end=''); sys.stdout.flush()
             # Choose k unique bits to flip, same for entire batch
             # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
             # variation
@@ -263,8 +263,8 @@ def batch_improve(arrays_items):
         # step 3
         if debugging:
             cnt3 = torch.tensor(0, device=device, dtype=torch.int64)
+            print(f"3", end=''); sys.stdout.flush()
         for i in range(n_attempts):
-            print(f"3-{i} ", end=''); sys.stdout.flush()
             a=torch.randint(na, ()).item()
             b=torch.randint(na, ()).item()
             if a > b:
@@ -291,7 +291,6 @@ def batch_improve(arrays_items):
         for j in range(2):
             shifts = torch.zeros(batch_size, dtype=torch.int64, device=device)
             for i in range(1,nn):
-                print(f"3-{j}-{i} ", end=''); sys.stdout.flush()
                 arrays_view[:,j]=torch.roll(arrays_view[:,j], shifts=1, dims=1)
                 new_scores = score(arrays_tensor)
                 mask = new_scores < scores  # True where improvement happens
@@ -303,9 +302,8 @@ def batch_improve(arrays_items):
             rolled_indices = (base - 1 - shifts.unsqueeze(1)) % nn
             arrays_view[:, j] = arrays_view[: ,j].gather(1, rolled_indices)
         """
-        print("")
         if debugging:
-            print(f'improve success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)} {cnt3/len(arrays_items)}')
+            print(f'\nimprove success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)} {cnt3/len(arrays_items)}')
         # Convert back to dict
     # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
@@ -367,13 +365,13 @@ while gen < max_iterations:
     else:
         # train on GEN-gen
         print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen == 0 or not resume_training else .03+.97*sum(1 for v in arrays_dict.values() if v[1] == gen)/len(arrays_dict)  # decrease training steps depending on how much new stuff added
+        coeff = 1 if gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
-        eval_freq = int(500*math.sqrt(coeff))
+        eval_freq = int(500*coeff)
         start_timer = timer()
-        save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=learning_rate*math.sqrt(coeff))
+        save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=learning_rate*coeff)
         if debugging:
             print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:

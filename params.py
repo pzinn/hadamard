@@ -35,7 +35,7 @@ training_batch_size = 256  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 100
 training_steps = 200000  # will be adjusted dynamically (to be less than that)
-num_improve = 3  # number of times data get improved per generation
+num_improve = 5  # number of times data get improved per generation
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 3  # for cpu parallelisation
 
