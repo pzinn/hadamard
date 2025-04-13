@@ -193,7 +193,7 @@ def string_to_array(s): # really, tensor to tuple by now!
 # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
 powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
 # Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[2]==2), dtype=torch.long)
+perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3]==3), dtype=torch.long)
 def array_to_string(tensor,rnd): # tensor to tensor
     tensor = tensor.reshape(nm, nn)
     # symmetry: random permute A/B/D
@@ -204,7 +204,7 @@ def array_to_string(tensor,rnd): # tensor to tensor
     tensor = torch.roll(tensor if rnd1<nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
     # symmetry: second rotation/flip
     rnd, rnd2 = divmod(rnd, 2*nn)
-    tensor[2] = torch.roll(tensor[2] if rnd2<nn else torch.flip(tensor[2], (0,)), shifts=rnd2, dims=0)
+    tensor[3] = torch.roll(tensor[3] if rnd2<nn else torch.flip(tensor[3], (0,)), shifts=rnd2, dims=0)
     # symmetry: random signs
     tensor.mul_(torch.tensor([((rnd>>i)&1)*2-1 for i in range(nm)]).unsqueeze(1))
     # Convert -1 → 0, +1 → 1

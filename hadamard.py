@@ -19,7 +19,7 @@ parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 args = parser.parse_args()
 debugging = args.debug  # for convenience
 
-eps = 1e-6  # scores are heavily discretised so can be made large
+eps = 1e-5  # scores are heavily discretised so can be made large
 
 # torch functions
 torch.cuda.set_device(0)  # Use GPU 0
@@ -126,8 +126,8 @@ if score_function != 'fft log determinant':
     rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
     V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
     X = V[:, rolled_indices]
-    X[2] = torch.flip(X[2], dims=[1])
-    X[6] = torch.flip(X[6], dims=[1])
+    X[3] = torch.flip(X[3], dims=[1])
+    X[7] = torch.flip(X[7], dims=[1])
     full_indices = torch.cat([
         torch.cat((X[0], X[1], X[2], X[3]), dim=1),
         torch.cat((X[5], X[0], X[7], X[2]), dim=1),
@@ -148,11 +148,12 @@ if score_function == 'log determinant':
         return -torch.linalg.slogdet(block_circulant(m))[1]
 elif score_function == 'fft log determinant':
     score_type = torch.float32
-    score_threshold = - n/4 * math.log(n)
+    # score_threshold = - n/4 * math.log(n)
+    score_threshold = 0  # see renormalisation of m below
     score_normalisation = .5
+    cst = 1 / math.sqrt(n)
     def score(m):
-        mm = m.view(-1,4,nn)
-        f = torch.fft.rfft(mm, dim=2)
+        f = cst * torch.fft.rfft(m.view(-1,4,nn), dim=2)  # cst improves accurary
         # we do separately real pieces for accuracy reasons
         s = - torch.log(torch.real(f[:,:,0].pow(2).sum(dim=1)))
         if nn % 2 == 0:
@@ -160,10 +161,10 @@ elif score_function == 'fft log determinant':
             f = f[:,:,1:-1]
         else:
             f = f[:,:,1:]
-        ff = f[:,[0,1,3],:].pow(2).sum(dim=1)
+        ff = f[:,:3,:].pow(2).sum(dim=1)
         f = f * f.conj()
         ff = ff * ff.conj()
-        s -= torch.log(torch.real(ff+f[:,2]*(f[:,2]+2*f[:,0]+2*f[:,1]+2*f[:,3]))).sum(dim=1)
+        s -= torch.log(torch.real(ff+f[:,3]*(2*f.sum(dim=1)-f[:,3]))).sum(dim=1)
         return s
 elif score_function == 'quartic':
     score_type = torch.float16
@@ -304,7 +305,7 @@ def batch_improve(arrays_items):
         """
         if debugging:
             print(f'\nimprove success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)} {cnt3/len(arrays_items)}')
-        # Convert back to dict
+    # Convert back to dict
     # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
     # return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
