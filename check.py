@@ -14,8 +14,8 @@ def upblock(x):
     _aa, _bb, _cc, _dd = x.reshape(4, -1)
     A = sl.circulant(_aa)
     B = sl.circulant(_bb)
-    C = np.fliplr(sl.circulant(_cc))
-    D = sl.circulant(_dd)
+    C = sl.circulant(_cc)
+    D = np.fliplr(sl.circulant(_dd))
     return np.block([[A, B, C, D],
                      [-B, A, -D, C],
                      [-C, D, A, -B],
