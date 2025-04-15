@@ -182,8 +182,8 @@ def char_to_sign(c, i):
     return int(2 * ((c >> i) & 1) - 1)
 # effectively do nn % stacking == 0 first because simpler
 nice = nn % stacking == 0
-quarter_string_length = string_length//nm
-my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * quarter_string_length*stacking, j * quarter_string_length*stacking + nn))  # list for reusability
+segment_string_length = string_length//nm
+my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*stacking, j * segment_string_length*stacking + nn))  # list for reusability
 def string_to_array(s): # really, tensor to tuple by now!
     return tuple(
         char_to_sign(s[i // stacking] - 1, i % stacking)
@@ -210,7 +210,7 @@ def array_to_string(tensor,rnd): # tensor to tensor
     tensor = 1+tensor >> 1
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, quarter_string_length*stacking-nn), mode='constant', value=0)
+        tensor = F.pad(tensor, (0, segment_string_length*stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
     return 1 + tensor.reshape(string_length, stacking).matmul(powers_of_two)
 
@@ -229,11 +229,8 @@ class CharDataset(Dataset):
     def __getitem__(self, idx):
         ix = array_to_string(self.words[idx], self.rnd)
         self.rnd += 86477 + idx
-        x = torch.zeros(self.block_size, dtype=torch.long)
-        y = torch.zeros(self.block_size, dtype=torch.long)
-        x[1:1+len(ix)] = ix
-        y[:len(ix)] = ix
-        y[len(ix)+1:] = -1  # index -1 will mask the loss at the inactive locations
+        x = torch.cat([torch.tensor([0], dtype=torch.long), ix])
+        y = torch.cat([ix, torch.tensor([-1], dtype=torch.long)])  # index -1 will mask the loss at the inactive locations
         return x, y
 
 # -----------------------------------------------------------------------------
@@ -260,8 +257,7 @@ def save_model():
 def record_loss(loss, step, name):
     writer.add_scalar("Loss/"+name, loss, step)
     writer.flush()
-    if name == 'test':
-        print(f"{step=} {name} {loss=:.6f}", end='\t'); sys.stdout.flush()
+    print(f"{name} {loss=:.6f}", end='\t');
 
 
 if training_size <= test_set_size:
@@ -350,6 +346,7 @@ def train(data, **kwargs):
             next_batch = next(batch_iter)
         step += 1
         if step % eval_freq == 0 or step == max_steps:
+            print(f"{step=} ", end='\t');
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             record_loss(loss, step, "train")
@@ -365,8 +362,8 @@ def train(data, **kwargs):
                     max_steps += eval_freq  # don't quit on a winning streak
             elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
                 break
-
         batch = next_batch
+        sys.stdout.flush()
 
     print("")
     if save_step > 0:
@@ -390,6 +387,6 @@ def sample(**kwargs):
     top_k = top_k if top_k != -1 else None
     X_samp = generate(model, X_init, block_size-1, top_k=top_k, do_sample=True).cpu()
     # samples = [ crop(row[1:].tolist()) for row in X_samp ]
-    # here we assume that the length is entirely fixed -> no need for crop. revert if encoding has variable length
-    samples = [string_to_array(row[1:string_length+1].tolist()) for row in X_samp if len(row) >= string_length+1]
-    return samples
+    # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
+    # revert if encoding has variable length
+    return [string_to_array(row[1:].tolist()) for row in X_samp]
