@@ -164,7 +164,6 @@ def generate(model, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k
             _, idx_next = torch.topk(probs, k=1, dim=-1)
         # append sampled index to the running sequence and continue
         idx = torch.cat((idx, idx_next), dim=1)
-
     return idx
 
 
@@ -270,6 +269,7 @@ if training_size <= test_set_size:
 
 
 def train(data, **kwargs):
+    global training_batch_size
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
     # optimization -> slowly being moved to params.py
@@ -277,7 +277,6 @@ def train(data, **kwargs):
     # weight_decay = kwargs.get("weight_decay", 0.01)
     # num_workers = kwargs.get("num_workers", 3)
     learning_rate = kwargs.get("learning_rate", 5e-4)
-    batch_size = training_batch_size
     eval_freq = kwargs.get("eval_freq", 500)
 
     block_size = config.block_size
@@ -313,7 +312,7 @@ def train(data, **kwargs):
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=batch_size, pin_memory=True, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
@@ -336,20 +335,25 @@ def train(data, **kwargs):
         # gpu_next_batch = tuple(t.to(device, non_blocking=True) for t in next_batch)
 
         # Train on the current batch
-        # feed into the model
-        logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
-
-        # calculate the gradient, update the weights
-        model.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-
-        # evaluate the model
+        try:
+            # feed into the model
+            logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
+            # calculate the gradient, update the weights
+            model.zero_grad(set_to_none=True)
+            loss.backward()
+            optimizer.step()
+        except torch.cuda.OutOfMemoryError:
+            print('out of memory -- decreasing training_batch_size')
+            training_batch_size //= 2
+            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
+            batch_iter = iter(train_loader)
+            next_batch = next(batch_iter)
         step += 1
         if step % eval_freq == 0 or step == max_steps:
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             record_loss(loss, step, "train")
+            # evaluate the model
             test_loss = evaluate(model, test_sample)
             record_loss(test_loss, step, "test")
             # save the model to disk if it has improved
