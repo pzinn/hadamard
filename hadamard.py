@@ -209,7 +209,7 @@ def subbatch_score(arrays):  # same but in batches of score_batch_size
 
 # parameters of step 2 (can be adjusted)
 # max_k = int(math.sqrt(n))
-n_attempts = na
+n_attempts = na * num_improve
 p = .3/math.sqrt(na)
 
 
@@ -220,11 +220,11 @@ def batch_improve(arrays_items):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    for _ in range(num_improve):
-        # step 1: this is the analogue of my old "simple_search2"
+    # step 1: this is the analogue of my old "simple_search2"
+    for j in range(num_improve):
         if debugging:
-            cnt1 = torch.tensor(0, device=device, dtype=torch.int64)
-            print(f"1", end=''); sys.stdout.flush()
+            cnt = torch.tensor(0, device=device, dtype=torch.int64)
+        print(f"1({j})", end=''); sys.stdout.flush()
         for i in range(na):
             arrays_tensor[:, i] *= -1  # Flip only the i-th bit
             # Compute new scores for all batch elements in parallel
@@ -232,60 +232,35 @@ def batch_improve(arrays_items):
             # Identify which flips improved the score
             mask = new_scores < scores  # True where improvement happens
             if debugging:
-                cnt1 += torch.sum(mask)
+                cnt += torch.sum(mask)
             # Apply successful bit flips
             arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
             scores[mask] = new_scores[mask]  # Update scores accordingly
-        # step 2: this is the analogue of my old "simple_search3" except it doesn't stop at first success
         if debugging:
-            cnt2 = torch.tensor(0, device=device, dtype=torch.int64)
-            print(f"2", end=''); sys.stdout.flush()
-        for i in range(n_attempts):
-            # Choose k unique bits to flip, same for entire batch
-            # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
-            # variation
-            flip_indices = torch.rand(na, device=device) < p
-            flip_indices[i % na] = True  # just because
-            # Flip selected bits for all arrays in batch
-            arrays_tensor[:, flip_indices] *= -1
-            # Compute new scores after flipping k bits
-            new_scores = score(arrays_tensor)
-            # Identify improvements
-            mask = new_scores < scores
-            if debugging:
-                cnt2 += torch.sum(mask)
-            # Revert changes for arrays where score did not improve
-            # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1  # ugly... especially cause most of the mask will be False
-            arrays_tensor[:, flip_indices] *= -1
-            arrays_tensor[mask.nonzero(), flip_indices] *= -1  # this might be faster?
-            # arrays_tensor[~mask, flip_indices] *= -1  # that doesn't work, left to remember: can't mix masks and tensors of indices
-            # Update scores where improvements occurred
-            scores[mask] = new_scores[mask]
-        # step 3
+            print(f' improve success rate: {cnt/len(arrays_items)}')
+    # step 2
+    if debugging:
+        cnt.zero_()
+    print(f"2", end=''); sys.stdout.flush()
+    for i in range(n_attempts):
+        a=torch.randint(na, ()).item()
+        b=torch.randint(na, ()).item()
+        if a > b:
+            a, b = b, a
+        # Flip selected bits for all arrays in batch
+        arrays_tensor[:, a:b+1] *= -1
+        # Compute new scores after flipping
+        new_scores = score(arrays_tensor)
+        # Identify improvements
+        mask = new_scores < scores
         if debugging:
-            cnt3 = torch.tensor(0, device=device, dtype=torch.int64)
-            print(f"3", end=''); sys.stdout.flush()
-        for i in range(n_attempts):
-            a=torch.randint(na, ()).item()
-            b=torch.randint(na, ()).item()
-            if a > b:
-                a, b = b, a
-            # Flip selected bits for all arrays in batch
-            arrays_tensor[:, a:b+1] *= -1
-            # Compute new scores after flipping
-            new_scores = score(arrays_tensor)
-            # Identify improvements
-            mask = new_scores < scores
-            if debugging:
-                cnt3 += torch.sum(mask)
-            # Revert changes for arrays where score did not improve
-            arrays_tensor[~mask, a:b+1] *= -1
-            # Update scores where improvements occurred
-            scores[mask] = new_scores[mask]
+            cnt += torch.sum(mask)
+        # Revert changes for arrays where score did not improve
+        arrays_tensor[~mask, a:b+1] *= -1
+        # Update scores where improvements occurred
+        scores[mask] = new_scores[mask]
         """
         # step 3
-        if debugging:
-            cnt3 = torch.tensor(0, device=device, dtype=torch.int64)
         batch_size = arrays_tensor.shape[0]
         arrays_view = arrays_tensor.view(batch_size,nm,nn)  # reshape, forcing view
         base = torch.arange(nn, device=device).repeat(batch_size, 1)
@@ -303,8 +278,35 @@ def batch_improve(arrays_items):
             rolled_indices = (base - 1 - shifts.unsqueeze(1)) % nn
             arrays_view[:, j] = arrays_view[: ,j].gather(1, rolled_indices)
         """
+    if debugging:
+        print(f' improve success rate: {cnt/len(arrays_items)}')
+    # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
+    if debugging:
+        cnt.zero_()
+    print(f"3", end=''); sys.stdout.flush()
+    for i in range(n_attempts):
+        # Choose k unique bits to flip, same for entire batch
+        # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
+        # variation
+        flip_indices = torch.rand(na, device=device) < p
+        flip_indices[i % na] = True  # just because
+        # Flip selected bits for all arrays in batch
+        arrays_tensor[:, flip_indices] *= -1
+        # Compute new scores after flipping k bits
+        new_scores = score(arrays_tensor)
+        # Identify improvements
+        mask = new_scores < scores
         if debugging:
-            print(f'\nimprove success rate: {cnt1/len(arrays_items)} {cnt2/len(arrays_items)} {cnt3/len(arrays_items)}')
+            cnt += torch.sum(mask)
+            # Revert changes for arrays where score did not improve
+            # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1  # ugly... especially cause most of the mask will be False
+        arrays_tensor[:, flip_indices] *= -1
+        arrays_tensor[mask.nonzero(), flip_indices] *= -1  # this might be faster?
+        # arrays_tensor[~mask, flip_indices] *= -1  # that doesn't work, left to remember: can't mix masks and tensors of indices
+        # Update scores where improvements occurred
+        scores[mask] = new_scores[mask]
+    if debugging:
+        print(f' improve success rate: {cnt/len(arrays_items)}')
     # Convert back to dict
     # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
