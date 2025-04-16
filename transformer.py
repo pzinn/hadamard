@@ -253,9 +253,10 @@ def save_model():
     print('saving model to workdir')
     torch.save(model.state_dict(), out_path)
 
+norm = 1/(math.log(2)*stacking)  # renormalise so it starts at 1
 
 def record_loss(loss, step, name):
-    writer.add_scalar("Loss/"+name, loss, step)
+    writer.add_scalar("Loss/"+name, norm*loss, step)
     writer.flush()
     print(f"{name} {loss=:.6f}", end='\t');
 

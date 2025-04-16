@@ -307,6 +307,8 @@ def batch_improve(arrays_items):
         scores[mask] = new_scores[mask]
     if debugging:
         print(f' improve success rate: {cnt/len(arrays_items)}')
+    else:
+        print('')
     # Convert back to dict
     # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
     # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
