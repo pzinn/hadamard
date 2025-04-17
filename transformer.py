@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
-from params import config, na, nn, nm, device, weight_decay, training_batch_size, string_length, training_size, writer, work_dir, stacking, test_set_size, num_workers
+from params import config, na, nn, nm, device, weight_decay, training_batch_size, string_length, training_size, work_dir, stacking, test_set_size, num_workers, record_loss
 
 # -----------------------------------------------------------------------------
 
@@ -255,20 +255,13 @@ def save_model():
     print('saving model to workdir')
     torch.save(model.state_dict(), out_path)
 
-norm = 1/(math.log(2)*stacking)  # renormalise so it starts at 1
-
-def record_loss(loss, step, name):
-    writer.add_scalar("Loss/"+name, norm*loss, step)
-    writer.flush()
-    print(f"{name} {loss=:.6f}", end='\t');
-
 
 if training_size <= test_set_size:
     raise SystemExit("{training_size=} must be greater than {test_set_size=}")
 
 
 def train(data, **kwargs):
-    torch.set_float32_matmul_precision('high') # can also try 'medium', might be dangerous
+    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
     global training_batch_size
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)

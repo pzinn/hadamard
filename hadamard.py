@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-from params import n, na, nn, nm, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, debugging
+import params  # for gen
+from params import n, na, nn, device, resume, training_size, stats_file, hada_file, score_function, score_batch_size, work_dir, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, debugging, record_score
 import transformer
 # logging/debugging
 import sys
@@ -21,6 +22,7 @@ torch.cuda.set_device(0)  # Use GPU 0
 torch.cuda.empty_cache()  # Free memory before large computation
 torch.manual_seed(random_seed)
 torch.cuda.manual_seed_all(random_seed)
+
 
 def generate_random_array():
     return tuple((2 * torch.randint(2, (na,)) - 1).tolist())
@@ -106,13 +108,13 @@ def record_stats(arrays_dict, prefix=""):
         if not hasattr(record_stats, "has_run"):
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
 
     write_arrays(hada_file, record_stats.total_hada_dict.keys())
 
     if prefix:
-        writer.add_scalar("Score/"+prefix, mean_score, gen)
-        writer.add_scalar("Zero_score/"+prefix, nh, gen)
+        record_score(prefix, mean_score, nh)
+
 
 if score_function != 'fft log determinant':
     # Generate row indices for circulant
@@ -150,16 +152,16 @@ elif score_function == 'fft log determinant':
     def score(m):
         f = cst * torch.fft.rfft(m.view(-1,4,nn), dim=2)  # cst improves accuracy
         # we do separately real pieces for accuracy reasons
-        s = - torch.log(torch.real(f[:,:,0].pow(2).sum(dim=1)))
+        s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
         if nn % 2 == 0:
-            s -= torch.log(torch.real(f[:,:,nn//2].pow(2).sum(dim=1)))
-            f = f[:,:,1:-1]
+            s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
+            f = f[:, :, 1:-1]
         else:
-            f = f[:,:,1:]
-        ff = f[:,:3,:].pow(2).sum(dim=1)
+            f = f[:, :, 1:]
+        ff = f[:, :3, :].pow(2).sum(dim=1)
         f = f * f.conj()
         ff = ff * ff.conj()
-        s -= torch.log(torch.real(ff+f[:,3]*(2*f.sum(dim=1)-f[:,3]))).sum(dim=1)
+        s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
         return s
 elif score_function == 'quartic':
     score_type = torch.float16
@@ -191,7 +193,7 @@ def batch_score(arrays):
     torch.set_float32_matmul_precision('highest')
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score(arrays_tensor)  # Compute scores in parallel
-    return {x: (s, gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
+    return {x: (s, params.gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
 
 def subbatch_score(arrays):  # same but in batches of score_batch_size
@@ -237,10 +239,10 @@ def batch_improve(arrays_items):
     # step 2
     if debugging:
         cnt.zero_()
-    print(f"2", end=''); sys.stdout.flush()
+    print('2', end=''); sys.stdout.flush()
     for i in range(n_attempts):
-        a=torch.randint(na, ()).item()
-        b=torch.randint(na, ()).item()
+        a = torch.randint(na, ()).item()
+        b = torch.randint(na, ()).item()
         if a > b:
             a, b = b, a
         # Flip selected bits for all arrays in batch
@@ -279,7 +281,7 @@ def batch_improve(arrays_items):
     # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
     if debugging:
         cnt.zero_()
-    print(f"3", end=''); sys.stdout.flush()
+    print('3', end=''); sys.stdout.flush()
     for i in range(n_attempts):
         # Choose k unique bits to flip, same for entire batch
         # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
@@ -328,7 +330,7 @@ def subbatch_improve(arrays_items):
 # initial info
 if resume:
     # use existing sample
-    init_sample = work_dir + f'GEN-{gen:02d}.txt'
+    init_sample = work_dir + f'GEN-{params.gen:02d}.txt'
     try:
         with open(init_sample, 'r') as f:
             arrays = [tuple(1 if c == "+" else -1 for c in line.strip()) for line in f]
@@ -360,15 +362,15 @@ while True:
         arrays_dict = best_from(arrays_dict)
         record_stats(arrays_dict, "selected")
         arrays = arrays_dict.keys()
-        write_arrays(work_dir + f'GEN-{gen:02d}.txt', arrays)
-    if gen == max_iterations:
+        write_arrays(work_dir + f'GEN-{params.gen:02d}.txt', arrays)
+    if params.gen == max_iterations:
         break
     if skip_first_training:
         skip_first_training = False
     else:
         # train on GEN-gen
-        print(f"\n***Training on GEN-{gen:02d}***")
-        coeff = 1 if gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
+        print(f"\n***Training on GEN-{params.gen:02d}***")
+        coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
         if debugging:
             print(f"{coeff=}")
         max_steps = int(training_steps*coeff)
@@ -380,12 +382,13 @@ while True:
         with open(stats_file, 'a') as file:
             file.write(f'training {save_step=}\n')
     # sample from model to get new data
-    print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
-    gen += 1
+    print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
+    params.gen += 1
     # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
     start_timer = timer()
     new_arrays_dict = {}
     for start in range(0, sample_size, sample_batch_size):
+        print('*', end=''); sys.stdout.flush()
         b = min(sample_batch_size, sample_size-start)
         new_arrays = transformer.sample(num_samples=b)
         new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
@@ -395,4 +398,3 @@ while True:
     arrays_dict = new_arrays_dict
     if debugging:
         print(f"sampling: {timer() - start_timer}")
-    writer.flush()
