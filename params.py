@@ -18,7 +18,7 @@ n = 4 * nn  # size of matrix
 print(f'{n=}')
 
 # string encoding
-stacking = 5  # preferably a divisor of nn
+stacking = 10  # preferably a divisor of nn
 
 # scoring
 score_function = 'fft log determinant'

@@ -193,6 +193,7 @@ def normalise(sc):
 # but useful for logging/stats
 def batch_score(arrays):
     torch.cuda.empty_cache()  # Free memory
+    torch.set_float32_matmul_precision('highest')
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score(arrays_tensor)  # Compute scores in parallel
     return {x: (s, gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict

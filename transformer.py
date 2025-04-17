@@ -26,7 +26,8 @@ class NewGELU(torch.nn.Module):
     Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
     """
     def forward(self, x):
-        return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+        return x / (1.0 + torch.exp(-1.6*x))
+        # return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
 
 class CausalSelfAttention(torch.nn.Module):
     """
@@ -239,6 +240,7 @@ class CharDataset(Dataset):
 model = Transformer(config)
 model.to(device)
 model.need_reload = True
+#model = torch.compile(model) # requires PyTorch 2.0
 
 out_path = os.path.join(work_dir, "model.pt")
 
@@ -266,6 +268,7 @@ if training_size <= test_set_size:
 
 
 def train(data, **kwargs):
+    torch.set_float32_matmul_precision('high') # can also try 'medium', might be dangerous
     global training_batch_size
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
@@ -305,7 +308,7 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99), eps=1e-8)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -376,6 +379,7 @@ def train(data, **kwargs):
 
 
 def sample(**kwargs):
+    torch.set_float32_matmul_precision('high') # can also try 'medium', might be dangerous
     num_samples = kwargs.get("num_samples", 1000)
     top_k = kwargs.get("top_k", -1)  # -1 means no top-k
 
