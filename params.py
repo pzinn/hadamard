@@ -10,7 +10,11 @@ import glob
 import re
 import time
 import subprocess
-version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
+import argparse
+parser = argparse.ArgumentParser(description="Script with logging levels")
+parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+args = parser.parse_args()
+debugging = args.debug
 
 # hadamard matrix parameters
 nn = 20 # size of basic block
@@ -116,6 +120,7 @@ layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
 writer.add_custom_scalars(layout)
 
 # header of stats file + hparams
+version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'config', 'max_iterations', 'stacking', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'version', 'random_seed']
 with open(stats_file, 'a') as file:
     file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)

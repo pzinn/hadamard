@@ -7,17 +7,12 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-from params import n, na, nn, nm, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed
+from params import n, na, nn, nm, device, resume, training_size, stats_file, hada_file, writer, score_function, score_batch_size, work_dir, gen, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, debugging
 import transformer
 # logging/debugging
 import sys
 from collections import Counter
 from timeit import default_timer as timer  # to measure exec time
-import argparse
-parser = argparse.ArgumentParser(description="Script with logging levels")
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-args = parser.parse_args()
-debugging = args.debug  # for convenience
 
 eps = 1e-5  # scores are heavily discretised so can be made large
 
@@ -153,7 +148,7 @@ elif score_function == 'fft log determinant':
     score_normalisation = .5
     cst = 1 / math.sqrt(n)
     def score(m):
-        f = cst * torch.fft.rfft(m.view(-1,4,nn), dim=2)  # cst improves accurary
+        f = cst * torch.fft.rfft(m.view(-1,4,nn), dim=2)  # cst improves accuracy
         # we do separately real pieces for accuracy reasons
         s = - torch.log(torch.real(f[:,:,0].pow(2).sum(dim=1)))
         if nn % 2 == 0:
@@ -350,11 +345,11 @@ record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows wh
 
 # MAIN-LOOP #
 
-while gen < max_iterations:
+while True:
     if resume:
         resume = False
     else:
-        # compute GEN-(gen)
+        # improve existing data, write to GEN-(gen)
         start_timer = timer()
         print('\n***Improving***')
         arrays_dict = subbatch_improve(arrays_dict.items())
@@ -366,6 +361,8 @@ while gen < max_iterations:
         record_stats(arrays_dict, "selected")
         arrays = arrays_dict.keys()
         write_arrays(work_dir + f'GEN-{gen:02d}.txt', arrays)
+    if gen == max_iterations:
+        break
     if skip_first_training:
         skip_first_training = False
     else:
@@ -382,7 +379,7 @@ while gen < max_iterations:
             print(f"training: {timer() - start_timer}")
         with open(stats_file, 'a') as file:
             file.write(f'training {save_step=}\n')
-    # sample from model to get GEN-(gen+1)-a
+    # sample from model to get new data
     print(f"\n***Sampling from transformer trained on GEN-{gen:02d}***")
     gen += 1
     # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
