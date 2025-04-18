@@ -1,10 +1,6 @@
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
-import os
-# import torch
-import time
-
 # hadamard matrix parameters
 nn = 20  # size of basic block
 n = 4 * nn  # size of matrix
@@ -33,33 +29,19 @@ test_set_size = 1024  # must be less than training_size, no more than 10% ideall
 num_workers = 3  # for cpu parallelisation
 
 
-# transformer parameters
-n_layer = 4
-n_embd = 64
-n_head = 4
-stacking = 10
+# transformer parameters: use values, or lists for a sweep
+transformer_config = {
+    "n_layer": 4,
+    "n_embd": 64,
+    "n_head": 4,
+    "stacking": 10  # [5,6,7,8,9,10]
+}
+
 
 # array encoding -- do not change
 nm = 4  # number of blocks
 na = nm * nn  # length of array
 
-
-class ModelConfig:
-    def __init__(self, n_layer=4, n_embd=64, n_head=4, stacking=10):
-        self.n_layer = n_layer
-        self.n_embd = n_embd
-        self.n_head = n_head
-        self.stacking = stacking
-        # Automatically computed values
-        # string_length = n//stacking # only works if stacking | n
-        # string_length = 1 + (n-1) // stacking # +1, -1 in case stacking doesn't divide n
-        string_length = (1+(nn-1)//stacking)*nm  # more padding
-        self.block_size = string_length + 1  # block_size : <START> token followed by string
-        nchars = 1 << stacking
-        self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
-
-
-config = ModelConfig(n_layer, n_embd, n_head, stacking)
 
 resume = False  # whether to resume a previous run
 # if True, obviously, Hadamard parameters must be the same
@@ -76,6 +58,42 @@ skip_first_training = False  # only meaningful if resume: start by sampling from
 
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
+
+class ModelConfig:
+    def __init__(self, n_layer=4, n_embd=64, n_head=4, stacking=10):
+        self.n_layer = n_layer
+        self.n_embd = n_embd
+        self.n_head = n_head
+        self.stacking = stacking
+        # Automatically computed values
+        # string_length = n//stacking # only works if stacking | n
+        # string_length = 1 + (n-1) // stacking # +1, -1 in case stacking doesn't divide n
+        string_length = (1+(nn-1)//stacking)*nm  # more padding
+        self.block_size = string_length + 1  # block_size : <START> token followed by string
+        nchars = 1 << stacking
+        self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
+    def __repr__(self):
+        params = vars(self)  # returns self.__dict__
+        param_str = ", ".join(f"{k}={v!r}" for k, v in params.items())
+        return f"{self.__class__.__name__}({param_str})"
+
+
+is_sweep = any(isinstance(v, (list, tuple)) for v in transformer_config.values())
+
+if is_sweep:
+    config = ModelConfig()  # parameters will be set later (hack)
+    sweep_config = {
+        "method": "grid",
+        "parameters": {
+            k: {"values": list(v)} if isinstance(v, (list, tuple)) else {"value": v}
+            for k, v in transformer_config.items()
+            }
+        }
+else:
+    config = ModelConfig(transformer_config["n_layer"], transformer_config["n_embd"], transformer_config["n_head"], transformer_config["stacking"])
+
+
+import time
 random_seed = int(time.time())
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
