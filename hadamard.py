@@ -22,12 +22,6 @@ import os
 
 eps = 1e-5  # scores are heavily discretised so can be made large
 
-# torch functions
-torch.cuda.set_device(0)  # Use GPU 0
-torch.cuda.empty_cache()  # Free memory before large computation
-torch.manual_seed(random_seed)
-torch.cuda.manual_seed_all(random_seed)
-
 
 def generate_random_array():
     return tuple((2 * torch.randint(2, (na,)) - 1).tolist())
@@ -109,18 +103,16 @@ def record_stats(arrays_dict, prefix=""):
     record_stats.total_hada_dict = hada_dict
     print(f"Total number of Hadamard: {len(record_stats.total_hada_dict)}")
 
-    with open(stats_file, 'a') as file:
+    with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
 
-    write_arrays(hada_file, record_stats.total_hada_dict.keys())
+    write_arrays(logger.hada_file, record_stats.total_hada_dict.keys())
 
     if prefix:
-        logger.record_score(prefix, mean_score, nh)
-        # if params.gen == max_iterations:  # only do histograms for last gen
-        logger.record_histogram(prefix, scores, gens)
+        logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 
 if score_function != 'fft log determinant':
@@ -342,7 +334,6 @@ def find_latest_gen():
 
 
 def main():
-    global stats_file, hada_file, version
     # directory, gen
     if params.resume:
         # existing directory, default is latest
@@ -354,7 +345,7 @@ def main():
     else:
         # make directory
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        params.work_dir = f'training/{n}/{config.stacking}/{date}_{sample_size}_{training_size}/'
+        params.work_dir = f'training/{n}/{date}_{sample_size}_{training_size}/'
         os.makedirs(params.work_dir, exist_ok=True)
         #
         params.gen = 0
@@ -365,24 +356,21 @@ def main():
     except FileNotFoundError:
         pass
     os.symlink(params.work_dir, "latest")
-    stats_file = params.work_dir + 'stats.txt'  # where to save logs
-    hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
 
     # logging: text stats file + fancy (tensorboard or wandb)
-    # header of stats file
-    import subprocess
-    version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
-    hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'config', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'version', 'random_seed']  # TODO failing now REDO
-    with open(stats_file, 'a') as file:
-        file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
-    record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
-    # start fancy logging
     logger.init_logging()
+    record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
 
     # initialise transformer
     if is_sweep:
         config.__init__(wandb.config.n_layer, wandb.config.n_embd, wandb.config.n_head, wandb.config.stacking)  # hack TODO clean up
     transformer.init_model()
+
+    # torch functions
+    torch.cuda.set_device(0)  # Use GPU 0
+    torch.cuda.empty_cache()  # Free memory before large computation
+    torch.manual_seed(random_seed)
+    torch.cuda.manual_seed_all(random_seed)
 
     # STEP 0
 
@@ -438,7 +426,7 @@ def main():
             save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=learning_rate*coeff)
             if debugging:
                 print(f"training: {timer() - start_timer}")
-            with open(stats_file, 'a') as file:
+            with open(logger.stats_file, 'a') as file:
                 file.write(f'training {save_step=}\n')
         # sample from model to get new data
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")

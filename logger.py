@@ -2,15 +2,21 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 import params
-import re
 import math
-
+import subprocess
+from params import n, sample_size, training_size, learning_rate, config, max_iterations, training_steps, training_batch_size, score_function, num_improve, random_seed
 
 def init_logging():
-    global record_loss  # ugly TODO better
-    global record_score
-    global record_histogram
-    norm = 1/(math.log(2)*params.config.stacking)  # renormalise loss so it starts at 1
+    global record_loss, record_scores  # ugly TODO better
+    global stats_file, hada_file
+    global version
+
+    # header of stats file
+    stats_file = params.work_dir + 'stats.txt'  # where to save logs
+    hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
+    version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
+    hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'version', 'random_seed']  # exclude config because of sweeps
+
     if params.logging == 'tensorboard':
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=params.work_dir)
@@ -20,29 +26,34 @@ def init_logging():
                                }
                   }
         writer.add_custom_scalars(layout)
+        with open(stats_file, 'a') as file:
+            file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
+            file.write(f"config={config}\n")
         def record_loss(loss, step, name):
             writer.add_scalar("Loss/"+name, norm*loss, step)
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_score(prefix, mean_score, nh, gen):
-            writer.add_scalar("Score/"+prefix, mean_score, gen)
-            writer.add_scalar("Zero_score/"+prefix, nh, gen)
+        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        def record_scores(prefix, scores, gens, mean_score, nh):
+            writer.add_scalar("Score/"+prefix, mean_score, params.gen)
+            writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
-        def record_histogram(prefix, scores, gens):
-            pass  # TODO
     elif params.logging == 'wandb':
         import wandb
-        myid = re.sub('training', '', re.sub('/', '', params.work_dir))
-        wandb.init(entity='pzinn-the-university-of-melbourne', project='sekrit', name=params.work_dir, config=params.config, resume=params.resume, id=myid)
+        import datetime
+        date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
+        myname = f'{params.n}_{date}_{params.sample_size}_{params.training_size}'
+        fixed_config = {name: globals().get(name) for name in hparam_list}
+        wandb.init(entity='pzinn-the-university-of-melbourne', project='sekrit', name=myname, id=myname, config=fixed_config if params.is_sweep else {**fixed_config, **config}, resume=params.resume)  # if sweep mode, resume not supported -- also config is not up to date yet
+        with open(stats_file, 'a') as file:
+            file.write(f"config={wandb.config}\n")  # TODO write better
+        norm = 1/(math.log(2)*wandb.config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_score(prefix, mean_score, nh):
-            wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh})
-        def record_histogram(prefix, scores, gens):
-            # wandb.summary["histogram/scores/"+prefix] = wandb.Histogram(scores)
-            # wandb.summary["histogram/gens/"+prefix] = wandb.Histogram(gens)
-            wandb.log({"gen": params.gen, "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
+        def record_scores(prefix, scores, gens, mean_score, nh):
+            wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
+                       "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
 
 
 if params.is_sweep:

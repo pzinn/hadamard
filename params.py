@@ -6,9 +6,6 @@ nn = 20  # size of basic block
 n = 4 * nn  # size of matrix
 print(f'{n=}')
 
-# string encoding
-stacking = 10  # preferably a divisor of nn
-
 # scoring
 score_function = 'fft log determinant'
 # score_function = 'quartic'
@@ -34,7 +31,7 @@ transformer_config = {
     "n_layer": 4,
     "n_embd": 64,
     "n_head": 4,
-    "stacking": 10  # [5,6,7,8,9,10]
+    "stacking": 10  # [5,6,7,8,9,10]  # preferably a divisor of nn
 }
 
 
