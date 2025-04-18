@@ -12,7 +12,9 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
-from params import config, na, nn, nm, device, weight_decay, training_batch_size, string_length, training_size, work_dir, stacking, test_set_size, num_workers, record_loss
+import params  # for training_batch_size, work_dir
+from params import config, na, nn, nm, device, weight_decay, training_size, test_set_size, num_workers
+import logger
 
 # -----------------------------------------------------------------------------
 
@@ -135,10 +137,46 @@ class Transformer(torch.nn.Module):
         return logits, loss
 
 # -----------------------------------------------------------------------------
+
+
+def init_model():
+    global model  # to simplify, model, etc, are global
+    global model_path
+    global powers_of_two
+    global my_range
+    global string_length
+    global segment_string_length
+    global nice
+    model = Transformer(config)
+    model.to(device)
+    model.need_reload = True
+    # model = torch.compile(model) # requires PyTorch 2.0
+    model_path = os.path.join(params.work_dir, "model.pt")
+    # stuff for coding/decoding arrays
+    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    string_length = config.block_size - 1
+    segment_string_length = string_length//nm
+    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
+    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
+
+
+def load_model():
+    if model.need_reload:
+        model.load_state_dict(torch.load(model_path, weights_only=True))
+        print('resuming from existing model in the workdir')
+
+
+def save_model():
+    print('saving model to workdir')
+    torch.save(model.state_dict(), model_path)
+
+
+# -----------------------------------------------------------------------------
 # helper functions for evaluating and sampling from the model
 
+
 @torch.no_grad()
-def generate(model, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
+def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
     """
     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
     the sequence max_new_tokens times, feeding the predictions back into the model each time.
@@ -169,7 +207,7 @@ def generate(model, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k
 
 
 @torch.inference_mode()
-def evaluate(model, sample):  # TODO rewrite: batches
+def evaluate(sample):
     model.eval()
     batch = [t.to(device) for t in sample]
     logits, loss = model(*batch)
@@ -181,42 +219,44 @@ def evaluate(model, sample):  # TODO rewrite: batches
 # conversion string <-> matrix
 def char_to_sign(c, i):
     return int(2 * ((c >> i) & 1) - 1)
-# effectively do nn % stacking == 0 first because simpler
-nice = nn % stacking == 0
-segment_string_length = string_length//nm
-my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*stacking, j * segment_string_length*stacking + nn))  # list for reusability
-def string_to_array(s): # really, tensor to tuple by now!
+
+
+def string_to_array(s):  # really, tensor to tuple by now!
     return tuple(
-        char_to_sign(s[i // stacking] - 1, i % stacking)
+        char_to_sign(s[i // config.stacking] - 1, i % config.stacking)
         for i in my_range
     )
-# Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-powers_of_two = 2 ** torch.arange(stacking, dtype=torch.long)
+
+
 # Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3]==3), dtype=torch.long)
-def array_to_string(tensor,rnd): # tensor to tensor
+perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
+
+
+def array_to_string(tensor, rnd):  # tensor to tensor
     tensor = tensor.reshape(nm, nn)
     # symmetry: random permute A/B/D
     rnd, rnd4 = divmod(rnd, perms.shape[0])
     tensor = tensor[perms[rnd4]]
     # symmetry: random rotation/flip
     rnd, rnd1 = divmod(rnd, 2*nn)
-    tensor = torch.roll(tensor if rnd1<nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
+    tensor = torch.roll(tensor if rnd1 < nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
     # symmetry: second rotation/flip
     rnd, rnd2 = divmod(rnd, 2*nn)
-    tensor[3] = torch.roll(tensor[3] if rnd2<nn else torch.flip(tensor[3], (0,)), shifts=rnd2, dims=0)
+    tensor[3] = torch.roll(tensor[3] if rnd2 < nn else torch.flip(tensor[3], (0,)), shifts=rnd2, dims=0)
     # symmetry: random signs
-    tensor.mul_(torch.tensor([((rnd>>i)&1)*2-1 for i in range(nm)]).unsqueeze(1))
+    tensor.mul_(torch.tensor([((rnd >> i) & 1)*2-1 for i in range(nm)]).unsqueeze(1))
     # Convert -1 → 0, +1 → 1
     tensor = 1+tensor >> 1
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, segment_string_length*stacking-nn), mode='constant', value=0)
+        tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.reshape(string_length, stacking).matmul(powers_of_two)
+    return 1 + tensor.reshape(string_length, config.stacking).matmul(powers_of_two)
+
 
 # -----------------------------------------------------------------------------
 # helper functions for creating the training and test Datasets that emit words
+
 
 class CharDataset(Dataset):
     def __init__(self, words, block_size):
@@ -234,27 +274,6 @@ class CharDataset(Dataset):
         y = torch.cat([ix, torch.tensor([-1], dtype=torch.long)])  # index -1 will mask the loss at the inactive locations
         return x, y
 
-# -----------------------------------------------------------------------------
-
-
-model = Transformer(config)
-model.to(device)
-model.need_reload = True
-#model = torch.compile(model) # requires PyTorch 2.0
-
-out_path = os.path.join(work_dir, "model.pt")
-
-
-def load_model():
-    if model.need_reload:
-        model.load_state_dict(torch.load(out_path, weights_only=True))
-        print('resuming from existing model in the workdir')
-
-
-def save_model():
-    print('saving model to workdir')
-    torch.save(model.state_dict(), out_path)
-
 
 if training_size <= test_set_size:
     raise SystemExit("{training_size=} must be greater than {test_set_size=}")
@@ -262,7 +281,6 @@ if training_size <= test_set_size:
 
 def train(data, **kwargs):
     torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
-    global training_batch_size
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
     # optimization -> slowly being moved to params.py
@@ -305,7 +323,7 @@ def train(data, **kwargs):
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=params.training_batch_size, pin_memory=True, num_workers=num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
@@ -313,8 +331,8 @@ def train(data, **kwargs):
     # training loop
     step = 0
     save_step = 0
-    best_loss = evaluate(model, test_sample)
-    record_loss(best_loss, step, "test")
+    best_loss = evaluate(test_sample)
+    logger.record_loss(best_loss, step, "test")
     batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
@@ -336,9 +354,9 @@ def train(data, **kwargs):
             loss.backward()
             optimizer.step()
         except torch.cuda.OutOfMemoryError:
-            print('out of memory -- decreasing training_batch_size')
-            training_batch_size //= 2
-            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
+            print('out of memory -- decreasing params.training_batch_size')
+            params.training_batch_size //= 2
+            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=params.training_batch_size, pin_memory=True, num_workers=num_workers)
             batch_iter = iter(train_loader)
             next_batch = next(batch_iter)
         step += 1
@@ -346,10 +364,10 @@ def train(data, **kwargs):
             print(f"{step=} ", end='\t');
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
-            record_loss(loss, step, "train")
+            logger.record_loss(loss, step, "train")
             # evaluate the model
-            test_loss = evaluate(model, test_sample)
-            record_loss(test_loss, step, "test")
+            test_loss = evaluate(test_sample)
+            logger.record_loss(test_loss, step, "test")
             # save the model to disk if it has improved
             if test_loss < best_loss:
                 save_model()
@@ -372,18 +390,16 @@ def train(data, **kwargs):
 
 
 def sample(**kwargs):
-    torch.set_float32_matmul_precision('high') # can also try 'medium', might be dangerous
+    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
     num_samples = kwargs.get("num_samples", 1000)
     top_k = kwargs.get("top_k", -1)  # -1 means no top-k
-
-    block_size = config.block_size
 
     load_model()
     model.need_reload = False
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
-    X_samp = generate(model, X_init, block_size-1, top_k=top_k, do_sample=True).cpu()
+    X_samp = generate(X_init, config.block_size-1, top_k=top_k, do_sample=True).cpu()
     # samples = [ crop(row[1:].tolist()) for row in X_samp ]
     # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
     # revert if encoding has variable length

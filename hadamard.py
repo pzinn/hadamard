@@ -7,13 +7,18 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-import params  # for gen
-from params import n, na, nn, device, resume, training_size, stats_file, hada_file, score_function, score_batch_size, work_dir, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, debugging, record_score
+import params  # for gen, work_dir, config (TODO possibly rethink config)
+from params import n, na, nn, device, resume, training_size, score_function, score_batch_size, sample_size, sample_batch_size, skip_first_training, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, debugging
 import transformer
 # logging/debugging
+import logger
 import sys
 from collections import Counter
 from timeit import default_timer as timer  # to measure exec time
+import glob
+import re
+import datetime
+import os
 
 eps = 1e-5  # scores are heavily discretised so can be made large
 
@@ -105,7 +110,7 @@ def record_stats(arrays_dict, prefix=""):
     print(f"Total number of Hadamard: {len(record_stats.total_hada_dict)}")
 
     with open(stats_file, 'a') as file:
-        if not hasattr(record_stats, "has_run"):
+        if not record_stats.has_run:
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
@@ -113,7 +118,9 @@ def record_stats(arrays_dict, prefix=""):
     write_arrays(hada_file, record_stats.total_hada_dict.keys())
 
     if prefix:
-        record_score(prefix, mean_score, nh)
+        logger.record_score(prefix, mean_score, nh)
+        # if params.gen == max_iterations:  # only do histograms for last gen
+        logger.record_histogram(prefix, scores, gens)
 
 
 if score_function != 'fft log determinant':
@@ -150,7 +157,7 @@ elif score_function == 'fft log determinant':
     score_normalisation = .5
     cst = 1 / math.sqrt(n)
     def score(m):
-        f = cst * torch.fft.rfft(m.view(-1,4,nn), dim=2)  # cst improves accuracy
+        f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
         # we do separately real pieces for accuracy reasons
         s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
         if nn % 2 == 0:
@@ -325,12 +332,63 @@ def subbatch_improve(arrays_items):
     return updated_dict
 
 
+# helper function
+def find_latest_gen():
+    # Get all filenames matching the pattern
+    files = glob.glob(params.work_dir+"GEN-*.txt")
+    # Extract the numerical part using regex
+    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
+    return max(indices) if indices else 0  # Return max index, or 0 if no files found
+
+
+if resume:
+    # existing directory, default is latest
+    if not hasattr(params, "work_dir"):
+        params.work_dir = os.readlink("latest")
+    # initialise gen if necessary
+    if not hasattr(params, "gen"):
+        params.gen = find_latest_gen()
+else:
+    # make directory
+    date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
+    params.work_dir = f'training/{n}/{params.config.stacking}/{date}_{sample_size}_{training_size}/'
+    os.makedirs(params.work_dir, exist_ok=True)
+    #
+    params.gen = 0
+
+if not params.work_dir.endswith('/'):
+    params.work_dir += '/'  # add trailing /
+try:
+    os.unlink("latest")
+except FileNotFoundError:
+    pass
+os.symlink(params.work_dir, "latest")
+stats_file = params.work_dir + 'stats.txt'  # where to save logs
+hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
+
+
+# initialise transformer
+transformer.init_model()
+
+
+# logging: text stats file + fancy (tensorboard or wandb)
+# header of stats file
+import subprocess
+version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
+hparam_list = ['n', 'sample_size', 'training_size', 'learning_rate', 'config', 'max_iterations', 'stacking', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'version', 'random_seed']
+with open(stats_file, 'a') as file:
+    file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
+record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
+# start fancy logging
+logger.init_logging()
+
+
 # STEP 0
 
 # initial info
 if resume:
     # use existing sample
-    init_sample = work_dir + f'GEN-{params.gen:02d}.txt'
+    init_sample = params.work_dir + f'GEN-{params.gen:02d}.txt'
     try:
         with open(init_sample, 'r') as f:
             arrays = [tuple(1 if c == "+" else -1 for c in line.strip()) for line in f]
@@ -362,7 +420,7 @@ while True:
         arrays_dict = best_from(arrays_dict)
         record_stats(arrays_dict, "selected")
         arrays = arrays_dict.keys()
-        write_arrays(work_dir + f'GEN-{params.gen:02d}.txt', arrays)
+        write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
     if params.gen == max_iterations:
         break
     if skip_first_training:
