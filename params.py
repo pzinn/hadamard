@@ -31,7 +31,7 @@ transformer_config = {
     "n_layer": 4,
     "n_embd": 64,
     "n_head": 4,
-    "stacking": [4,10]  # [5,6,7,8,9,10]  # preferably a divisor of nn
+    "stacking": 9  # [5,6,7,8,9,10]  # preferably a divisor of nn
 }
 
 

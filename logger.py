@@ -6,6 +6,9 @@ import math
 import subprocess
 from params import n, sample_size, training_size, learning_rate, max_iterations, training_steps, training_batch_size, score_function, num_improve, random_seed
 
+wandb_entity = 'aiformath'
+wandb_project = 'topsekrit'
+
 def init_logging():
     global record_loss, record_scores  # ugly TODO better
     global stats_file, hada_file
@@ -46,7 +49,7 @@ def init_logging():
         fixed_config = {name: globals().get(name) for name in hparam_list}
         if not params.is_sweep:
             fixed_config.update(params.transformer_config)
-        wandb.init(entity='pzinn-the-university-of-melbourne', project='sekrit', name=myname, id=myname, config=fixed_config, resume=params.resume)  # if sweep mode, resume not supported -- also config is not up to date yet
+        wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, config=fixed_config, resume=params.resume)  # if sweep mode, resume not supported -- also config is not up to date yet
         with open(stats_file, 'a') as file:
             file.writelines(f"{name}={value!r}\n" for name, value in wandb.config.items())
         norm = 1/(math.log(2)*wandb.config.stacking)  # renormalise loss so it starts at 1
@@ -60,4 +63,4 @@ def init_logging():
 
 if params.is_sweep:
     import wandb  # compulsory
-    sweep_id = wandb.sweep(entity='pzinn-the-university-of-melbourne', project="sekrit", sweep=params.sweep_config)
+    sweep_id = wandb.sweep(entity=wandb_entity, project=wandb_project, sweep=params.sweep_config)
