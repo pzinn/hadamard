@@ -399,7 +399,7 @@ def sample(**kwargs):
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
-    X_samp = generate(X_init, config.block_size-1, top_k=top_k, do_sample=True).cpu()
+    X_samp = generate(X_init, params.config.block_size-1, top_k=top_k, do_sample=True).cpu()
     # samples = [ crop(row[1:].tolist()) for row in X_samp ]
     # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
     # revert if encoding has variable length
