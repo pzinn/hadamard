@@ -31,7 +31,7 @@ transformer_config = {
     "n_layer": 4,
     "n_embd": 64,
     "n_head": 4,
-    "stacking": 10  # [5,6,7,8,9,10]  # preferably a divisor of nn
+    "stacking": [4,10]  # [5,6,7,8,9,10]  # preferably a divisor of nn
 }
 
 
@@ -78,7 +78,7 @@ class ModelConfig:
 is_sweep = any(isinstance(v, (list, tuple)) for v in transformer_config.values())
 
 if is_sweep:
-    config = ModelConfig()  # parameters will be set later (hack)
+    # ModelConfig will be determined later
     sweep_config = {
         "method": "grid",
         "parameters": {

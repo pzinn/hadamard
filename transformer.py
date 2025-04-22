@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
 import params  # for training_batch_size, work_dir
-from params import config, na, nn, nm, device, weight_decay, training_size, test_set_size, num_workers
+from params import na, nn, nm, device, weight_decay, training_size, test_set_size, num_workers
 import logger
 
 # -----------------------------------------------------------------------------
@@ -147,17 +147,17 @@ def init_model():
     global string_length
     global segment_string_length
     global nice
-    model = Transformer(config)
+    model = Transformer(params.config)
     model.to(device)
     model.need_reload = True
     # model = torch.compile(model) # requires PyTorch 2.0
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    string_length = config.block_size - 1
+    powers_of_two = 2 ** torch.arange(params.config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    string_length = params.config.block_size - 1
     segment_string_length = string_length//nm
-    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
+    nice = nn % params.config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
+    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*params.config.stacking, j * segment_string_length*params.config.stacking + nn))  # list for reusability
 
 
 def load_model():
@@ -223,7 +223,7 @@ def char_to_sign(c, i):
 
 def string_to_array(s):  # really, tensor to tuple by now!
     return tuple(
-        char_to_sign(s[i // config.stacking] - 1, i % config.stacking)
+        char_to_sign(s[i // params.config.stacking] - 1, i % params.config.stacking)
         for i in my_range
     )
 
@@ -249,9 +249,9 @@ def array_to_string(tensor, rnd):  # tensor to tensor
     tensor = 1+tensor >> 1
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+        tensor = F.pad(tensor, (0, segment_string_length*params.config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.reshape(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + tensor.reshape(string_length, params.config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
@@ -290,8 +290,8 @@ def train(data, **kwargs):
     learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
 
-    block_size = config.block_size
-    vocab_size = config.vocab_size  # should one check that this is correct?
+    block_size = params.config.block_size
+    vocab_size = params.config.vocab_size  # should one check that this is correct?
 
     # print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     if resume:

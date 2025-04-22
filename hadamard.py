@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-import params  # for gen, work_dir
-from params import n, na, nn, device, training_size, score_function, score_batch_size, sample_size, sample_batch_size, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, is_sweep, debugging, training_batch_size, config
+import params  # for gen, work_dir, config
+from params import n, na, nn, device, training_size, score_function, score_batch_size, sample_size, sample_batch_size, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, is_sweep, debugging, training_batch_size
 import transformer
 # logging/debugging
 import logger
@@ -363,7 +363,7 @@ def main():
 
     # initialise transformer
     if is_sweep:
-        config.__init__(wandb.config.n_layer, wandb.config.n_embd, wandb.config.n_head, wandb.config.stacking)  # hack TODO clean up
+        params.config=params.ModelConfig(wandb.config.n_layer, wandb.config.n_embd, wandb.config.n_head, wandb.config.stacking)
     transformer.init_model()
 
     # torch functions

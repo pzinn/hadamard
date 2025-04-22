@@ -4,7 +4,7 @@ if __name__ == "__main__":
 import params
 import math
 import subprocess
-from params import n, sample_size, training_size, learning_rate, config, max_iterations, training_steps, training_batch_size, score_function, num_improve, random_seed
+from params import n, sample_size, training_size, learning_rate, max_iterations, training_steps, training_batch_size, score_function, num_improve, random_seed
 
 def init_logging():
     global record_loss, record_scores  # ugly TODO better
@@ -28,12 +28,12 @@ def init_logging():
         writer.add_custom_scalars(layout)
         with open(stats_file, 'a') as file:
             file.writelines(f"{name}={globals().get(name)!r}\n" for name in hparam_list)
-            file.write(f"config={config}\n")
+            file.write(f"config={params.config}\n")
         def record_loss(loss, step, name):
             writer.add_scalar("Loss/"+name, norm*loss, step)
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        norm = 1/(math.log(2)*params.config.stacking)  # renormalise loss so it starts at 1
         def record_scores(prefix, scores, gens, mean_score, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
@@ -44,9 +44,11 @@ def init_logging():
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
         myname = f'{params.n}_{date}_{params.sample_size}_{params.training_size}'
         fixed_config = {name: globals().get(name) for name in hparam_list}
-        wandb.init(entity='pzinn-the-university-of-melbourne', project='sekrit', name=myname, id=myname, config=fixed_config if params.is_sweep else {**fixed_config, **config}, resume=params.resume)  # if sweep mode, resume not supported -- also config is not up to date yet
+        if not params.is_sweep:
+            fixed_config.update(params.transformer_config)
+        wandb.init(entity='pzinn-the-university-of-melbourne', project='sekrit', name=myname, id=myname, config=fixed_config, resume=params.resume)  # if sweep mode, resume not supported -- also config is not up to date yet
         with open(stats_file, 'a') as file:
-            file.write(f"config={wandb.config}\n")  # TODO write better
+            file.writelines(f"{name}={value!r}\n" for name, value in wandb.config.items())
         norm = 1/(math.log(2)*wandb.config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
