@@ -381,7 +381,7 @@ def main():
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
+            save_step = transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
             if debugging:
                 print(f"training: {timer() - start_timer}")
             with open(logger.stats_file, 'a') as file:

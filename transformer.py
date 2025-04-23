@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
 import params  # for work_dir
-from params import na, nn, nm, device, config
+from params import na, nn, nm, device, config, resume_training
 import logger
 
 # -----------------------------------------------------------------------------
@@ -286,12 +286,11 @@ def train(data, **kwargs):
     print(f"number of unique characters in the vocabulary: {vocab_size}")
 
     # these parameters are adjusted dynamically during the run
-    resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
     learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
 
-    if resume:
+    if resume_training:
         try:
             load_model()
         except FileNotFoundError:
