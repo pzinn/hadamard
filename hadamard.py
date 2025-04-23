@@ -192,11 +192,13 @@ def batch_score(arrays):
 
 
 def subbatch_score(arrays):  # same but in batches of score_batch_size
-    total_size = len(arrays)
     updated_dict = {}
-    for start in range(0, total_size, config.score_batch_size):
-        end = min(start + config.score_batch_size, total_size)
-        updated_dict.update(batch_score(arrays[start:end]))
+    it = iter(arrays)  # Convert set/list to iterator
+    while True:
+        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
+        if not batch:
+            break
+        updated_dict.update(batch_score(batch))
     return updated_dict
 
 
@@ -305,9 +307,9 @@ def batch_improve(arrays_items):
     return {tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
 
 
-def subbatch_improve(arrays_items):
+def subbatch_improve(arrays_dict):
     updated_dict = {}
-    it = iter(arrays_items)  # Convert dictionary to iterator
+    it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
@@ -359,7 +361,7 @@ def main():
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
             print('\n***Improving***')
-            arrays_dict = subbatch_improve(arrays_dict.items())
+            arrays_dict = subbatch_improve(arrays_dict)
             if debugging:
                 print(f"improving: {timer() - start_timer}")
             record_stats(arrays_dict, "improved")
@@ -389,17 +391,11 @@ def main():
         # sample from model to get new data
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
-        # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
         start_timer = timer()
-        new_arrays_dict = {}
-        for start in range(0, config.sample_size, config.sample_batch_size):
-            print('*', end=''); sys.stdout.flush()
-            b = min(config.sample_batch_size, config.sample_size-start)
-            new_arrays = transformer.sample(num_samples=b)
-            new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
-            new_arrays_dict.update(batch_score(new_arrays))
+        new_arrays = transformer.sample()
+        new_arrays_dict = subbatch_score(new_arrays)
         record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
-        new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen during improving
+        new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
         arrays_dict = new_arrays_dict
         if debugging:
             print(f"sampling: {timer() - start_timer}")

@@ -15,6 +15,7 @@ from itertools import permutations
 import params  # for work_dir
 from params import na, nn, nm, device, config, resume_training
 import logger
+from collections import deque
 
 # -----------------------------------------------------------------------------
 
@@ -185,7 +186,7 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
     block_size = model.get_block_size()
     for i in range(max_new_tokens):
         # if the sequence context is growing too long we must crop it at block_size
-        idx_cond = idx[:, :i+1] if i <= block_size else idx[:, i+1-block_size:i+1]
+        idx_cond = idx[:, :i+1] if i < block_size else idx[:, i+1-block_size:i+1]
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(idx_cond)
         # pluck the logits at the final step and scale by desired temperature
@@ -353,7 +354,7 @@ def train(data, **kwargs):
             next_batch = next(batch_iter)
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            print(f"{step=} ", end='\t');
+            print(f"{step=} ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
@@ -371,7 +372,6 @@ def train(data, **kwargs):
                 break
         batch = next_batch
         sys.stdout.flush()
-
     print("")
     if save_step > 0:
         return save_step
@@ -379,20 +379,30 @@ def train(data, **kwargs):
 
 # def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
+stream = torch.cuda.Stream()
 
 
-def sample(**kwargs):
-    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
-    num_samples = kwargs.get("num_samples", 1000)
-    top_k = kwargs.get("top_k", -1)  # -1 means no top-k
-
+def sample():
     load_model()
     model.need_reload = False
-
-    X = torch.zeros(num_samples, config.block_size, dtype=torch.long).to(device)
-    top_k = top_k if top_k != -1 else None
-    generate(X, config.block_size-1, top_k=top_k, do_sample=True)
-    # samples = [ crop(row[1:].tolist()) for row in X_samp ]
-    # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
-    # revert if encoding has variable length
-    return [string_to_array(row[1:].tolist()) for row in X.cpu()]
+    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
+    num_batches = config.sample_size // config.sample_batch_size
+    new_arrays_set = set()
+    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long).to(device)
+    pipeline = deque()
+    for _ in range(num_batches):
+        print('*', end=''); sys.stdout.flush()
+        with torch.cuda.stream(stream):
+            X.zero_()
+            generate(X, config.block_size-1, do_sample=True)
+        pipeline.append((X.to('cpu', non_blocking=True), stream.record_event()))
+        if len(pipeline) > 1:
+            X_prev, event_prev = pipeline.popleft()
+            event_prev.synchronize()  # ensures GPU is done with previous batch
+            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_prev)
+    # Flush remaining
+    while pipeline:
+        X_final, event_final = pipeline.popleft()
+        event_final.synchronize()
+        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_final)
+    return new_arrays_set
