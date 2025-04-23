@@ -183,9 +183,9 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
     Most likely you'll want to make sure to be in model.eval() mode of operation for this.
     """
     block_size = model.get_block_size()
-    for _ in range(max_new_tokens):
+    for i in range(max_new_tokens):
         # if the sequence context is growing too long we must crop it at block_size
-        idx_cond = idx if idx.size(1) <= block_size else idx[:, -block_size:]
+        idx_cond = idx[:, :i+1] if i <= block_size else idx[:, i+1-block_size:i+1]
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(idx_cond)
         # pluck the logits at the final step and scale by desired temperature
@@ -198,12 +198,9 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
         probs = F.softmax(logits, dim=-1)
         # either sample from the distribution or take the most likely element
         if do_sample:
-            idx_next = torch.multinomial(probs, num_samples=1)
+            idx[:, i+1] = torch.multinomial(probs, num_samples=1).view(-1)
         else:
-            _, idx_next = torch.topk(probs, k=1, dim=-1)
-        # append sampled index to the running sequence and continue
-        idx = torch.cat((idx, idx_next), dim=1)
-    return idx
+            _, idx[:, i+1] = torch.topk(probs, k=1, dim=-1).view(-1)
 
 
 @torch.inference_mode()
@@ -393,10 +390,10 @@ def sample(**kwargs):
     load_model()
     model.need_reload = False
 
-    X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
+    X = torch.zeros(num_samples, config.block_size, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
-    X_samp = generate(X_init, config.block_size-1, top_k=top_k, do_sample=True).cpu()
+    generate(X, config.block_size-1, top_k=top_k, do_sample=True)
     # samples = [ crop(row[1:].tolist()) for row in X_samp ]
     # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
     # revert if encoding has variable length
-    return [string_to_array(row[1:].tolist()) for row in X_samp]
+    return [string_to_array(row[1:].tolist()) for row in X.cpu()]
