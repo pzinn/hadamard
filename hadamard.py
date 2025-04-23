@@ -8,7 +8,7 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nn, device, score_batch_size, sample_batch_size, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, device, resume_training, random_seed, is_sweep, debugging, config
 import transformer
 # logging/debugging
 import logger
@@ -194,8 +194,8 @@ def batch_score(arrays):
 def subbatch_score(arrays):  # same but in batches of score_batch_size
     total_size = len(arrays)
     updated_dict = {}
-    for start in range(0, total_size, score_batch_size):
-        end = min(start + score_batch_size, total_size)
+    for start in range(0, total_size, config.score_batch_size):
+        end = min(start + config.score_batch_size, total_size)
         updated_dict.update(batch_score(arrays[start:end]))
     return updated_dict
 
@@ -309,7 +309,7 @@ def subbatch_improve(arrays_items):
     updated_dict = {}
     it = iter(arrays_items)  # Convert dictionary to iterator
     while True:
-        batch = list(islice(it, score_batch_size))  # Take next batch_size items
+        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
         updated_dict.update(batch_improve(batch))
@@ -392,9 +392,9 @@ def main():
         # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
         start_timer = timer()
         new_arrays_dict = {}
-        for start in range(0, config.sample_size, sample_batch_size):
+        for start in range(0, config.sample_size, config.sample_batch_size):
             print('*', end=''); sys.stdout.flush()
-            b = min(sample_batch_size, config.sample_size-start)
+            b = min(config.sample_batch_size, config.sample_size-start)
             new_arrays = transformer.sample(num_samples=b)
             new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
             new_arrays_dict.update(batch_score(new_arrays))

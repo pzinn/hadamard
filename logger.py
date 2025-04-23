@@ -26,25 +26,7 @@ def init_logging():
     global record_loss, record_scores
     global stats_file, hada_file
 
-    if params.logging == 'tensorboard':
-        from torch.utils.tensorboard import SummaryWriter
-        writer = SummaryWriter(log_dir=params.work_dir)
-        layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
-                               "score": ["Multline", ["Score/sample", "Score/improved", "Score/selected"]],
-                               "zero_score": ["Multline", ["Zero_score/sample", "Zero_score/improved", "Zero_score/selected"]],
-                               }
-                  }
-        writer.add_custom_scalars(layout)
-        def record_loss(loss, step, name):
-            writer.add_scalar("Loss/"+name, norm*loss, step)
-            writer.flush()
-            print(f"{name} {loss=:.6f}", end='\t')
-        norm = 1/(math.log(2)*params.config.stacking)  # renormalise loss so it starts at 1
-        def record_scores(prefix, scores, gens, mean_score, nh):
-            writer.add_scalar("Score/"+prefix, mean_score, params.gen)
-            writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
-            writer.flush()
-    elif params.logging == 'wandb':
+    if params.logging == 'wandb':
         import wandb
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
         myname = f'{params.n}_{date}_{params.sample_size}_{params.training_size}'
@@ -86,6 +68,25 @@ def init_logging():
     hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
     with open(stats_file, 'a') as file:
         file.writelines(f"{name}={value!r}\n" for name, value in vars(config).items())
+
+    if params.logging == 'tensorboard':
+        from torch.utils.tensorboard import SummaryWriter
+        writer = SummaryWriter(log_dir=params.work_dir)
+        layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
+                               "score": ["Multline", ["Score/sample", "Score/improved", "Score/selected"]],
+                               "zero_score": ["Multline", ["Zero_score/sample", "Zero_score/improved", "Zero_score/selected"]],
+                               }
+                  }
+        writer.add_custom_scalars(layout)
+        def record_loss(loss, step, name):
+            writer.add_scalar("Loss/"+name, norm*loss, step)
+            writer.flush()
+            print(f"{name} {loss=:.6f}", end='\t')
+        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        def record_scores(prefix, scores, gens, mean_score, nh):
+            writer.add_scalar("Score/"+prefix, mean_score, params.gen)
+            writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
+            writer.flush()
 
 
 if params.is_sweep:

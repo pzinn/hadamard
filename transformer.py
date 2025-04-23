@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
 import params  # for work_dir
-from params import na, nn, nm, device, test_set_size, num_workers, config
+from params import na, nn, nm, device, config
 import logger
 
 # -----------------------------------------------------------------------------
@@ -147,7 +147,6 @@ def init_model():
     global string_length
     global segment_string_length
     global nice
-    global config
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -278,33 +277,29 @@ class CharDataset(Dataset):
 
 def train(data, **kwargs):
     torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
-    if config.training_size <= test_set_size:
-        raise SystemExit("{training_size=} must be greater than {test_set_size=}")
-
-    resume = kwargs.get("resume", False)
-    max_steps = kwargs.get("max_steps", -1)
-    # optimization -> slowly being moved to params.py
-    # batch_size = kwargs.get("batch_size", 32)
-    # weight_decay = kwargs.get("weight_decay", 0.01)
-    # num_workers = kwargs.get("num_workers", 3)
-    learning_rate = kwargs.get("learning_rate", 5e-4)
-    eval_freq = kwargs.get("eval_freq", 500)
-
+    test_set_size = config.test_set_size
     block_size = config.block_size
     vocab_size = config.vocab_size  # should one check that this is correct?
     training_batch_size = config.training_batch_size
+    data_len = len(data)
+    if test_set_size >= data_len:
+        raise SystemExit("training_size must be greater than test_set_size")
+    print(f"number of examples in the dataset: {data_len}")
+    print(f"max word length+1: {block_size}")
+    print(f"number of unique characters in the vocabulary: {vocab_size}")
 
-    # print(f"model #params: {sum(p.numel() for p in model.parameters())}")
+    # these parameters are adjusted dynamically during the run
+    resume = kwargs.get("resume", False)
+    max_steps = kwargs.get("max_steps", -1)
+    learning_rate = kwargs.get("learning_rate", 5e-4)
+    eval_freq = kwargs.get("eval_freq", 500)
+
     if resume:
         try:
             load_model()
         except FileNotFoundError:
             pass
     model.need_reload = True  # we will change the model no matter what
-    data_len = len(data)
-    print(f"number of examples in the dataset: {data_len}")
-    print(f"max word length+1: {block_size}")
-    print(f"number of unique characters in the vocabulary: {vocab_size}")
 
     # convert to torch tensors
     data = torch.tensor(list(data), dtype=torch.long).share_memory_()
@@ -324,7 +319,7 @@ def train(data, **kwargs):
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
@@ -357,7 +352,7 @@ def train(data, **kwargs):
         except torch.cuda.OutOfMemoryError:
             print('out of memory -- decreasing training_batch_size')
             training_batch_size //= 2
-            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
+            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
             batch_iter = iter(train_loader)
             next_batch = next(batch_iter)
         step += 1

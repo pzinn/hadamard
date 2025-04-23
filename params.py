@@ -29,7 +29,7 @@ n_embd = 64
 n_head = 4
 stacking = 5  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
-# the parameters below are not sweepable
+# less important parameters
 sample_batch_size = sample_size//4  # for sampling. preferably a divisor of sample_size
 score_batch_size = 2*sample_size  # for scoring/improving. one should have sample_batch_size < score_batch_size
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
@@ -75,7 +75,7 @@ import subprocess
 version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed']
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
 
 hparams = {name: globals().get(name) for name in hparams_list}
 
