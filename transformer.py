@@ -12,8 +12,8 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
-import params  # for training_batch_size, work_dir
-from params import na, nn, nm, device, weight_decay, training_size, test_set_size, num_workers
+import params  # for work_dir
+from params import na, nn, nm, device, test_set_size, num_workers, config
 import logger
 
 # -----------------------------------------------------------------------------
@@ -147,17 +147,18 @@ def init_model():
     global string_length
     global segment_string_length
     global nice
-    model = Transformer(params.config)
+    global config
+    model = Transformer(config)
     model.to(device)
     model.need_reload = True
     # model = torch.compile(model) # requires PyTorch 2.0
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(params.config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    string_length = params.config.block_size - 1
+    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    string_length = config.block_size - 1
     segment_string_length = string_length//nm
-    nice = nn % params.config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*params.config.stacking, j * segment_string_length*params.config.stacking + nn))  # list for reusability
+    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
+    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
 
 
 def load_model():
@@ -223,7 +224,7 @@ def char_to_sign(c, i):
 
 def string_to_array(s):  # really, tensor to tuple by now!
     return tuple(
-        char_to_sign(s[i // params.config.stacking] - 1, i % params.config.stacking)
+        char_to_sign(s[i // config.stacking] - 1, i % config.stacking)
         for i in my_range
     )
 
@@ -249,9 +250,9 @@ def array_to_string(tensor, rnd):  # tensor to tensor
     tensor = 1+tensor >> 1
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, segment_string_length*params.config.stacking-nn), mode='constant', value=0)
+        tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.reshape(string_length, params.config.stacking).matmul(powers_of_two)
+    return 1 + tensor.reshape(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
@@ -275,12 +276,11 @@ class CharDataset(Dataset):
         return x, y
 
 
-if training_size <= test_set_size:
-    raise SystemExit("{training_size=} must be greater than {test_set_size=}")
-
-
 def train(data, **kwargs):
     torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
+    if config.training_size <= test_set_size:
+        raise SystemExit("{training_size=} must be greater than {test_set_size=}")
+
     resume = kwargs.get("resume", False)
     max_steps = kwargs.get("max_steps", -1)
     # optimization -> slowly being moved to params.py
@@ -290,8 +290,9 @@ def train(data, **kwargs):
     learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
 
-    block_size = params.config.block_size
-    vocab_size = params.config.vocab_size  # should one check that this is correct?
+    block_size = config.block_size
+    vocab_size = config.vocab_size  # should one check that this is correct?
+    training_batch_size = config.training_batch_size
 
     # print(f"model #params: {sum(p.numel() for p in model.parameters())}")
     if resume:
@@ -319,11 +320,11 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=params.training_batch_size, pin_memory=True, num_workers=num_workers)
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
@@ -354,9 +355,9 @@ def train(data, **kwargs):
             loss.backward()
             optimizer.step()
         except torch.cuda.OutOfMemoryError:
-            print('out of memory -- decreasing params.training_batch_size')
-            params.training_batch_size //= 2
-            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=params.training_batch_size, pin_memory=True, num_workers=num_workers)
+            print('out of memory -- decreasing training_batch_size')
+            training_batch_size //= 2
+            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=num_workers)
             batch_iter = iter(train_loader)
             next_batch = next(batch_iter)
         step += 1
@@ -399,7 +400,7 @@ def sample(**kwargs):
 
     X_init = torch.zeros(num_samples, 1, dtype=torch.long).to(device)
     top_k = top_k if top_k != -1 else None
-    X_samp = generate(X_init, params.config.block_size-1, top_k=top_k, do_sample=True).cpu()
+    X_samp = generate(X_init, config.block_size-1, top_k=top_k, do_sample=True).cpu()
     # samples = [ crop(row[1:].tolist()) for row in X_samp ]
     # here we assume that the length is entirely fixed -> we don't bother cropping, if there's a zero so be it
     # revert if encoding has variable length

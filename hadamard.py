@@ -7,18 +7,14 @@ import numpy as np
 import torch
 import heapq
 from itertools import islice
-import params  # for gen, work_dir, config
-from params import n, na, nn, device, training_size, score_function, score_batch_size, sample_size, sample_batch_size, resume_training, training_steps, learning_rate, max_iterations, num_improve, random_seed, is_sweep, debugging, training_batch_size
+import params
+from params import n, na, nn, device, score_batch_size, sample_batch_size, resume_training, random_seed, is_sweep, debugging, config
 import transformer
 # logging/debugging
 import logger
 import sys
 from collections import Counter
 from timeit import default_timer as timer  # to measure exec time
-import glob
-import re
-import datetime
-import os
 
 eps = 1e-5  # scores are heavily discretised so can be made large
 
@@ -32,7 +28,7 @@ def generate_random_array():
 def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
+    smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
     return {k: v for k, v in items if k in smallest_keys or v[0] < score_threshold + eps}  # always keep H-matrices
     # doesn't
     # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
@@ -115,7 +111,7 @@ def record_stats(arrays_dict, prefix=""):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 
-if score_function != 'fft log determinant':
+if config.score_function != 'fft log determinant':
     # Generate row indices for circulant
     indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
     shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
@@ -136,13 +132,13 @@ if score_function != 'fft log determinant':
 
 # for device=='cuda', float is pretty much compulsory
 # float16 may be faster but may lead to accuracy issues
-if score_function == 'log determinant':
+if config.score_function == 'log determinant':
     score_type = torch.float32  # slogdet needs float32
     score_threshold = - n/2 * math.log(n)
     score_normalisation = 1
     def score(m):
         return -torch.linalg.slogdet(block_circulant(m))[1]
-elif score_function == 'fft log determinant':
+elif config.score_function == 'fft log determinant':
     score_type = torch.float32
     # score_threshold = - n/4 * math.log(n)
     score_threshold = 0  # see renormalisation of m below
@@ -162,14 +158,14 @@ elif score_function == 'fft log determinant':
         ff = ff * ff.conj()
         s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
         return s
-elif score_function == 'quartic':
+elif config.score_function == 'quartic':
     score_type = torch.float16
     score_threshold = n**1.5
     score_normalisation = 2*math.sqrt(n)
     def score(m):
         C = block_circulant(m)
         return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-elif score_function == 'one':
+elif config.score_function == 'one':
     score_type = torch.float16
     score_threshold = 0
     score_normalisation = n
@@ -204,13 +200,9 @@ def subbatch_score(arrays):  # same but in batches of score_batch_size
     return updated_dict
 
 
-# parameters of step 2 (can be adjusted)
-# max_k = int(math.sqrt(n))
-n_attempts = na * num_improve
-p = .3/math.sqrt(na)
-
-
 def batch_improve(arrays_items):
+    n_attempts = na * config.num_improve
+    p = .3/math.sqrt(na)
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     torch.cuda.empty_cache()  # Free memory
@@ -218,7 +210,7 @@ def batch_improve(arrays_items):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
-    for j in range(num_improve):
+    for j in range(config.num_improve):
         if debugging:
             cnt = torch.tensor(0, device=device, dtype=torch.int64)
         print(f"1({j})", end=''); sys.stdout.flush()
@@ -324,46 +316,12 @@ def subbatch_improve(arrays_items):
     return updated_dict
 
 
-# helper function
-def find_latest_gen():
-    # Get all filenames matching the pattern
-    files = glob.glob(params.work_dir+"GEN-*.txt")
-    # Extract the numerical part using regex
-    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
-    return max(indices) if indices else 0  # Return max index, or 0 if no files found
-
-
 def main():
-    # directory, gen
-    if params.resume:
-        # existing directory, default is latest
-        if not hasattr(params, "work_dir"):
-            params.work_dir = os.readlink("latest")
-        # initialise gen if necessary
-        if not hasattr(params, "gen"):
-            params.gen = find_latest_gen()
-    else:
-        # make directory
-        date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        params.work_dir = f'training/{n}/{date}_{sample_size}_{training_size}/'
-        os.makedirs(params.work_dir, exist_ok=True)
-        #
-        params.gen = 0
-    if not params.work_dir.endswith('/'):
-        params.work_dir += '/'  # add trailing /
-    try:
-        os.unlink("latest")
-    except FileNotFoundError:
-        pass
-    os.symlink(params.work_dir, "latest")
-
     # logging: text stats file + fancy (tensorboard or wandb)
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
 
     # initialise transformer
-    if is_sweep:
-        params.config=params.ModelConfig(wandb.config.n_layer, wandb.config.n_embd, wandb.config.n_head, wandb.config.stacking)
     transformer.init_model()
 
     # torch functions
@@ -387,7 +345,7 @@ def main():
     else:
         # generate initial sample
         print('***Generating initial sample***')
-        arrays = list(generate_random_array() for _ in range(sample_size))
+        arrays = list(generate_random_array() for _ in range(config.sample_size))
 
     arrays_dict = subbatch_score(arrays)
     record_stats(arrays_dict, prefix="sample" if not params.resume else "")  # who knows where the data come from if resuming
@@ -410,7 +368,7 @@ def main():
             record_stats(arrays_dict, "selected")
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
-        if params.gen == max_iterations:
+        if params.gen == config.max_iterations:
             break
         if params.skip_first_training:
             params.skip_first_training = False
@@ -420,10 +378,10 @@ def main():
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
             if debugging:
                 print(f"{coeff=}")
-            max_steps = int(training_steps*coeff)
+            max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=learning_rate*coeff)
+            save_step = transformer.train(arrays, resume=resume_training, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
             if debugging:
                 print(f"training: {timer() - start_timer}")
             with open(logger.stats_file, 'a') as file:
@@ -434,9 +392,9 @@ def main():
         # to avoid oom we do it in batches of sample_batch_size -- is it clear that samples are independent?
         start_timer = timer()
         new_arrays_dict = {}
-        for start in range(0, sample_size, sample_batch_size):
+        for start in range(0, config.sample_size, sample_batch_size):
             print('*', end=''); sys.stdout.flush()
-            b = min(sample_batch_size, sample_size-start)
+            b = min(sample_batch_size, config.sample_size-start)
             new_arrays = transformer.sample(num_samples=b)
             new_arrays = [x for x in new_arrays if x not in arrays_dict and x not in new_arrays_dict]  # remove duplicates
             new_arrays_dict.update(batch_score(new_arrays))
