@@ -26,21 +26,7 @@ def init_logging():
     global record_loss, record_scores
     global stats_file, hada_file
 
-    if params.logging == 'wandb':
-        import wandb
-        date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        myname = f'{params.n}_{date}_{params.sample_size}_{params.training_size}'
-        wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, config=config if not params.is_sweep else None, resume=params.resume)  # if sweep mode, resume not supported. if is_sweep config will be determined dynamically
-        config.update()  # for sweep
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
-        def record_loss(loss, step, name):
-            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
-            print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
-            wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
-                       "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
-
-    # directory, gen
+    # directory, gen if resume (do first to get wandb id)
     if params.resume:
         # existing directory, default is latest
         if not hasattr(params, "work_dir"):
@@ -53,15 +39,31 @@ def init_logging():
     else:
         # make directory
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        params.work_dir = f'training/{n}/{date}_{config.sample_size}_{config.training_size}/'
+        params.work_dir = f'training/{n}/{date}/'
         os.makedirs(params.work_dir, exist_ok=True)
         #
         params.gen = 0
+
     try:
         os.unlink("latest")
     except FileNotFoundError:
         pass
     os.symlink(params.work_dir, "latest")
+
+    if params.logging == 'wandb':
+        import wandb
+        myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/","_")  # ugly: get n_date out of training/n/date/
+        wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, config=config if not params.is_sweep else None, resume=params.resume)  # if sweep mode, resume not supported. if is_sweep config will be determined dynamically
+        config.update()  # for sweep
+        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        def record_loss(loss, step, name):
+            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
+            print(f"{name} {loss=:.6f}", end='\t')
+        def record_scores(prefix, scores, gens, mean_score, nh):
+            wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
+                       "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
+
+    # directory, gen if not resume
 
     # header of stats file
     stats_file = params.work_dir + 'stats.txt'  # where to save logs
@@ -70,6 +72,8 @@ def init_logging():
         file.writelines(f"{name}={value!r}\n" for name, value in vars(config).items())
 
     if params.logging == 'tensorboard':
+        if is_sweep:
+            raise SystemExit("sweeps not supported with tensorboard")
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=params.work_dir)
         layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],

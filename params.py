@@ -82,6 +82,8 @@ hparams = {name: globals().get(name) for name in hparams_list}
 is_sweep = any(isinstance(v, (list, tuple)) for v in hparams.values())
 
 if is_sweep:
+    if resume:
+        raise SystemExit("resume not supported with sweeps")
     sweep_config = {
         "method": "grid",
         "parameters": {
