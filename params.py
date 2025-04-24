@@ -36,11 +36,11 @@ test_set_size = 1024  # must be less than training_size, no more than 10% ideall
 num_workers = 3  # for cpu parallelisation
 
 resume = False  # whether to resume a previous run
+# resume = True
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
 # training parameters can be different though
 # also, for now resume is not compatible with sweep
-# resume = True
 if resume:
     pass
     # provide work_dir manually, default is latest

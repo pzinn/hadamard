@@ -45,7 +45,9 @@ def init_logging():
         # existing directory, default is latest
         if not hasattr(params, "work_dir"):
             params.work_dir = os.readlink("latest")
-            # initialise gen if necessary
+        if not params.work_dir.endswith('/'):
+            params.work_dir += '/'  # add trailing /
+        # initialise gen if necessary
         if not hasattr(params, "gen"):
             params.gen = find_latest_gen()
     else:
@@ -55,8 +57,6 @@ def init_logging():
         os.makedirs(params.work_dir, exist_ok=True)
         #
         params.gen = 0
-    if not params.work_dir.endswith('/'):
-        params.work_dir += '/'  # add trailing /
     try:
         os.unlink("latest")
     except FileNotFoundError:
