@@ -151,7 +151,7 @@ def init_model():
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
-    # model = torch.compile(model) # requires PyTorch 2.0
+    model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
@@ -274,7 +274,7 @@ class CharDataset(Dataset):
 
 
 def train(data, **kwargs):
-    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
+    torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     test_set_size = config.test_set_size
     block_size = config.block_size
     vocab_size = config.vocab_size  # should one check that this is correct?
@@ -311,8 +311,8 @@ def train(data, **kwargs):
     train_dataset = CharDataset(train_data, block_size)
     test_dataset = CharDataset(test_data, block_size)
 
-    # init optimizer
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
+    # init optimiser
+    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -346,10 +346,11 @@ def train(data, **kwargs):
                 # calculate the gradient, update the weights
                 model.zero_grad(set_to_none=True)
                 loss.backward()
-                optimizer.step()
+                optimiser.step()
             else:
-                print("no more NaN for you!")
+                print("no more NaN for you!")  # at this stage, probably too late but one can dream
                 torch.set_float32_matmul_precision('highest')
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 load_model()
         except torch.cuda.OutOfMemoryError:
             print('out of memory -- decreasing training_batch_size')
@@ -390,7 +391,7 @@ stream = torch.cuda.Stream()
 def sample():
     load_model()
     model.need_reload = False
-    torch.set_float32_matmul_precision('high')  # can also try 'medium', might be dangerous
+    torch.set_float32_matmul_precision('high')
     num_batches = config.sample_size // config.sample_batch_size
     new_arrays_set = set()
     X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long).to(device)
