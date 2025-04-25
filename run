@@ -1,3 +1,14 @@
 #!/bin/bash
+
+# Create logs directory if it doesn't exist
 mkdir -p logs
-nohup python hadamard.py > "logs/nohup-$(date +%Y-%m-%d-%H-%M-%S).out" &
+
+# Generate timestamp
+timestamp=$(date +%Y-%m-%d-%H-%M-%S)
+logfile="logs/nohup-${timestamp}.out"
+
+# Run program in background and redirect output
+nohup python hadamard.py > "$logfile" 2>&1 &
+
+# Update symlink
+ln -sf "$logfile" logs/latest.out
