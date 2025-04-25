@@ -342,10 +342,15 @@ def train(data, **kwargs):
         try:
             # feed into the model
             logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
-            # calculate the gradient, update the weights
-            model.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+            if math.isfinite(loss):
+                # calculate the gradient, update the weights
+                model.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+            else:
+                print("no more NaN for you!")
+                torch.set_float32_matmul_precision('highest')
+                load_model()
         except torch.cuda.OutOfMemoryError:
             print('out of memory -- decreasing training_batch_size')
             training_batch_size //= 2
