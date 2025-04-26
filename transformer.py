@@ -15,7 +15,7 @@ from itertools import permutations
 import params  # for work_dir
 from params import na, nn, nm, device, config, resume_training
 import logger
-from collections import deque
+# from collections import deque
 
 # -----------------------------------------------------------------------------
 
@@ -151,7 +151,7 @@ def init_model():
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
-    model = torch.compile(model)
+    #model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
@@ -391,21 +391,21 @@ def sample():
     torch.set_float32_matmul_precision('high')
     num_batches = config.sample_size // config.sample_batch_size
     new_arrays_set = set()
-    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long).to(device)
-    pipeline = deque()
+    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+    # pipeline = deque()
     for _ in range(num_batches):
         print('*', end=''); sys.stdout.flush()
-        with torch.cuda.stream(stream):
-            X.zero_()
-            generate(X, config.block_size-1, do_sample=True)
-        pipeline.append((X.to('cpu', non_blocking=True), stream.record_event()))
-        if len(pipeline) > 1:
-            X_prev, event_prev = pipeline.popleft()
-            event_prev.synchronize()  # ensures GPU is done with previous batch
-            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_prev)
+        # with torch.cuda.stream(stream):
+        X.zero_()
+        generate(X, config.block_size-1, do_sample=True)
+        # pipeline.append((X.to('cpu', non_blocking=True), stream.record_event()))
+        # if len(pipeline) > 1:
+        #    X_prev, event_prev = pipeline.popleft()
+        #    event_prev.synchronize()  # ensures GPU is done with previous batch
+        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
     # Flush remaining
-    while pipeline:
-        X_final, event_final = pipeline.popleft()
-        event_final.synchronize()
-        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_final)
+    #    while pipeline:
+    #        X_final, event_final = pipeline.popleft()
+    #        event_final.synchronize()
+    #        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_final)
     return new_arrays_set
