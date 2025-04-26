@@ -111,74 +111,73 @@ def record_stats(arrays_dict, prefix=""):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 
-if config.score_function != 'fft log determinant':
-    # Generate row indices for circulant
-    indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
-    shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
-    rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
-    V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
-    X = V[:, rolled_indices]
-    X[3] = torch.flip(X[3], dims=[1])
-    X[7] = torch.flip(X[7], dims=[1])
-    full_indices = torch.cat([
-        torch.cat((X[0], X[1], X[2], X[3]), dim=1),
-        torch.cat((X[5], X[0], X[7], X[2]), dim=1),
-        torch.cat((X[6], X[3], X[0], X[5]), dim=1),
-        torch.cat((X[7], X[6], X[1], X[0]), dim=1)
-    ], dim=0)
-    # create the n x n block circulant matrix out of the n bits
-    def block_circulant(x):
-        return torch.cat((x, -x), dim=1)[..., full_indices]
-
-# for device=='cuda', float is pretty much compulsory
-# float16 may be faster but may lead to accuracy issues
-if config.score_function == 'log determinant':
-    score_type = torch.float32  # slogdet needs float32
-    score_threshold = - n/2 * math.log(n)
-    score_normalisation = 1
-    def score(m):
-        return -torch.linalg.slogdet(block_circulant(m))[1]
-elif config.score_function == 'fft log determinant':
-    score_type = torch.float32
-    # score_threshold = - n/4 * math.log(n)
-    score_threshold = 0  # see renormalisation of m below
-    score_normalisation = .5
-    cst = 1 / math.sqrt(n)
-    def score(m):
-        f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
-        # we do separately real pieces for accuracy reasons
-        s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
-        if nn % 2 == 0:
-            s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
-            f = f[:, :, 1:-1]
-        else:
-            f = f[:, :, 1:]
-        ff = f[:, :3, :].pow(2).sum(dim=1)
-        f.mul_(f.conj())  # f = f * f.conj()
-        ff.mul_(ff.conj())  # ff = ff * ff.conj()
-        s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
-        return s
-elif config.score_function == 'quartic':
-    score_type = torch.float16
-    score_threshold = n**1.5
-    score_normalisation = 2*math.sqrt(n)
-    def score(m):
-        C = block_circulant(m)
-        return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-elif config.score_function == 'one':
-    score_type = torch.float16
-    score_threshold = 0
-    score_normalisation = n
-    Idn = n * torch.eye(n, device=device, dtype=score_type)
-    def score(m):
-        C = block_circulant(m)
-        return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
-else:
-    raise Exception('unknown score_function')
-
-
-def normalise(sc):
-    return (sc-score_threshold)/score_normalisation
+def init_score_function():
+    global score, normalise, score_type, score_threshold
+    if config.score_function != 'fft log determinant':
+        # Generate row indices for circulant
+        indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
+        shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
+        rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
+        V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
+        X = V[:, rolled_indices]
+        X[3] = torch.flip(X[3], dims=[1])
+        X[7] = torch.flip(X[7], dims=[1])
+        full_indices = torch.cat([
+            torch.cat((X[0], X[1], X[2], X[3]), dim=1),
+            torch.cat((X[5], X[0], X[7], X[2]), dim=1),
+            torch.cat((X[6], X[3], X[0], X[5]), dim=1),
+            torch.cat((X[7], X[6], X[1], X[0]), dim=1)
+        ], dim=0)
+        # create the n x n block circulant matrix out of the n bits
+        def block_circulant(x):
+            return torch.cat((x, -x), dim=1)[..., full_indices]
+        # for device=='cuda', float is pretty much compulsory
+    # float16 may be faster but may lead to accuracy issues
+    if config.score_function == 'log determinant':
+        score_type = torch.float32  # slogdet needs float32
+        score_threshold = - n/2 * math.log(n)
+        score_normalisation = 1
+        def score(m):
+            return -torch.linalg.slogdet(block_circulant(m))[1]
+    elif config.score_function == 'fft log determinant':
+        score_type = torch.float32
+        # score_threshold = - n/4 * math.log(n)
+        score_threshold = 0  # see renormalisation of m below
+        score_normalisation = .5
+        cst = 1 / math.sqrt(n)
+        def score(m):
+            f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
+            # we do separately real pieces for accuracy reasons
+            s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
+            if nn % 2 == 0:
+                s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
+                f = f[:, :, 1:-1]
+            else:
+                f = f[:, :, 1:]
+            ff = f[:, :3, :].pow(2).sum(dim=1)
+            f.mul_(f.conj())  # f = f * f.conj()
+            ff.mul_(ff.conj())  # ff = ff * ff.conj()
+            s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
+            return s
+    elif config.score_function == 'quartic':
+        score_type = torch.float16
+        score_threshold = n**1.5
+        score_normalisation = 2*math.sqrt(n)
+        def score(m):
+            C = block_circulant(m)
+            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
+    elif config.score_function == 'one':
+        score_type = torch.float16
+        score_threshold = 0
+        score_normalisation = n
+        Idn = n * torch.eye(n, device=device, dtype=score_type)
+        def score(m):
+            C = block_circulant(m)
+            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
+    else:
+        raise Exception('unknown score_function')
+    def normalise(sc):
+        return (sc-score_threshold)/score_normalisation
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
@@ -322,6 +321,9 @@ def main():
     # logging: text stats file + fancy (tensorboard or wandb)
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
+
+    # scoring
+    init_score_function()
 
     # initialise transformer
     transformer.init_model()
