@@ -384,7 +384,8 @@ def train(data, **kwargs):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
 stream = torch.cuda.Stream()
 
-
+# unoptimised version of sample
+"""
 def sample():
     load_model()
     model.need_reload = False
@@ -392,20 +393,38 @@ def sample():
     num_batches = config.sample_size // config.sample_batch_size
     new_arrays_set = set()
     X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-    # pipeline = deque()
     for _ in range(num_batches):
         print('*', end=''); sys.stdout.flush()
-        # with torch.cuda.stream(stream):
         X.zero_()
         generate(X, config.block_size-1, do_sample=True)
-        # pipeline.append((X.to('cpu', non_blocking=True), stream.record_event()))
-        # if len(pipeline) > 1:
-        #    X_prev, event_prev = pipeline.popleft()
-        #    event_prev.synchronize()  # ensures GPU is done with previous batch
         new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
-    # Flush remaining
-    #    while pipeline:
-    #        X_final, event_final = pipeline.popleft()
-    #        event_final.synchronize()
-    #        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_final)
+    return new_arrays_set
+"""
+
+# sample with CPU double buffering
+def sample():
+    load_model()
+    model.need_reload = False
+    torch.set_float32_matmul_precision('high')
+    num_batches = config.sample_size // config.sample_batch_size
+    new_arrays_set = set()
+    if num_batches == 0:
+        return new_arrays_set
+    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+    X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
+    event = [torch.cuda.Event() for _ in range(2)]
+    idx = 0
+    for i in range(num_batches):
+        print('*', end=''); sys.stdout.flush()
+        if i > 0:
+            event[idx].synchronize()
+            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
+        idx = 1 - idx
+        with torch.cuda.stream(stream):
+            X.zero_()
+            generate(X, config.block_size-1, do_sample=True)
+            X_cpu[idx].copy_(X, non_blocking=True)
+            stream.record_event(event[idx])
+    event[idx].synchronize()
+    new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
     return new_arrays_set
