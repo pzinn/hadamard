@@ -5,10 +5,10 @@ mkdir -p logs
 
 # Generate timestamp
 timestamp=$(date +%Y-%m-%d-%H-%M-%S)
-logfile="logs/nohup-${timestamp}.out"
+logfile="nohup-${timestamp}.out"
 
 # Run program in background and redirect output
-nohup python hadamard.py > "$logfile" 2>&1 &
+nohup python hadamard.py > "logs/$logfile" 2>&1 &
 
 # Update symlink
 ln -sf "$logfile" logs/latest.out
