@@ -348,10 +348,7 @@ def train(data, **kwargs):
                 loss.backward()
                 optimiser.step()
             else:
-                print("no more NaN for you!")  # at this stage, probably too late but one can dream
-                torch.set_float32_matmul_precision('highest')
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                load_model()
+                raise SystemExit("loss is NaN")
         except torch.cuda.OutOfMemoryError:
             print('out of memory -- decreasing training_batch_size')
             training_batch_size //= 2

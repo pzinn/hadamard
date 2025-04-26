@@ -154,8 +154,8 @@ elif config.score_function == 'fft log determinant':
         else:
             f = f[:, :, 1:]
         ff = f[:, :3, :].pow(2).sum(dim=1)
-        f = f * f.conj()
-        ff = ff * ff.conj()
+        f.mul_(f.conj())  # f = f * f.conj()
+        ff.mul_(ff.conj())  # ff = ff * ff.conj()
         s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
         return s
 elif config.score_function == 'quartic':
