@@ -414,17 +414,17 @@ def sample():
     X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
     event = [torch.cuda.Event() for _ in range(2)]
     idx = 0
-    for i in range(num_batches):
-        print('*', end=''); sys.stdout.flush()
+    for i in range(num_batches+1):
         if i > 0:
             event[idx].synchronize()
+        if i < num_batches:
+            print('*', end=''); sys.stdout.flush()
+            with torch.cuda.stream(stream):
+                X.zero_()
+                generate(X, config.block_size-1, do_sample=True)
+                X_cpu[1-idx].copy_(X, non_blocking=True)
+                stream.record_event(event[1-idx])
+        if i > 0:
             new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
         idx = 1 - idx
-        with torch.cuda.stream(stream):
-            X.zero_()
-            generate(X, config.block_size-1, do_sample=True)
-            X_cpu[idx].copy_(X, non_blocking=True)
-            stream.record_event(event[idx])
-    event[idx].synchronize()
-    new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
     return new_arrays_set
