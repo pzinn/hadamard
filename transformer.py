@@ -151,7 +151,7 @@ def init_model():
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
-    #model = torch.compile(model)
+    model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently

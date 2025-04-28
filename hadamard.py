@@ -192,6 +192,8 @@ def batch_score(arrays):
 
 
 def subbatch_score(arrays):  # same but in batches of score_batch_size
+    if config.score_batch_size is None:
+        return batch_score(list(arrays))
     updated_dict = {}
     it = iter(arrays)  # Convert set/list to iterator
     while True:
@@ -309,6 +311,8 @@ def batch_improve(arrays_items):
 
 
 def subbatch_improve(arrays_dict):
+    if config.score_batch_size is None:
+        return batch_improve(arrays_dict.items())
     updated_dict = {}
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:

@@ -26,7 +26,7 @@ def init_logging():
     global record_loss, record_scores
     global stats_file, hada_file
 
-    # directory, gen if resume (do first to get wandb id)
+    # directory, gen
     if params.resume:
         # existing directory, default is latest
         if not hasattr(params, "work_dir"):
@@ -52,7 +52,7 @@ def init_logging():
 
     if params.logging == 'wandb':
         import wandb
-        myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/","_")  # ugly: get n_date out of training/n/date/
+        myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
         wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
                    config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
                    resume='allow' if params.resume else 'never')  # if is_sweep, resume not supported
@@ -65,8 +65,6 @@ def init_logging():
             wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
                        "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
 
-    # directory, gen if not resume
-
     # header of stats file
     stats_file = params.work_dir + 'stats.txt'  # where to save logs
     hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
@@ -74,8 +72,6 @@ def init_logging():
         file.writelines(f"{name}={value!r}\n" for name, value in vars(config).items())
 
     if params.logging == 'tensorboard':
-        if params.is_sweep:
-            raise SystemExit("sweeps not supported with tensorboard")
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=params.work_dir)
         layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
@@ -94,7 +90,14 @@ def init_logging():
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
 
+    if params.logging == '':  # useful for testing/debugging
+        def record_loss(loss, step, name):
+            pass
+        def record_scores(prefix, scores, gens, mean_score, nh):
+            pass
+
 
 if params.is_sweep:
-    import wandb  # wandb compulsory for sweep
+    if params.logging != 'wandb':
+        raise SystemExit("sweeps only supported with wandb")   # wandb compulsory for sweep
     sweep_id = wandb.sweep(entity=wandb_entity, project=wandb_project, sweep=params.sweep_config)

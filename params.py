@@ -31,7 +31,7 @@ stacking = 5  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
 # less important parameters
 sample_batch_size = sample_size//4  # for sampling. must be a divisor of sample_size
-score_batch_size = 2*sample_size  # for scoring/improving
+score_batch_size = None  # 2*sample_size  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 3  # for cpu parallelisation
 
@@ -62,7 +62,7 @@ device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = 'wandb'
 # logging = 'tensorboard'
-
+# logging = ''
 
 import argparse
 parser = argparse.ArgumentParser(description="Script with logging levels")
