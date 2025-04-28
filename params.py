@@ -47,7 +47,7 @@ if resume:
     # provide gen, default is latest
 
 skip_first_training = False  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
-
+skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
 # array encoding -- do not change

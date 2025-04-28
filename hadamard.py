@@ -8,7 +8,7 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nn, device, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
 import transformer
 # logging/debugging
 import logger
@@ -340,7 +340,7 @@ def main():
     # STEP 0
 
     # initial info
-    if params.resume:
+    if resume:
         # use existing sample
         init_sample = params.work_dir + f'GEN-{params.gen:02d}.txt'
         try:
@@ -355,13 +355,13 @@ def main():
         arrays = list(generate_random_array() for _ in range(config.sample_size))
 
     arrays_dict = subbatch_score(arrays)
-    record_stats(arrays_dict, prefix="sample" if not params.resume else "")  # who knows where the data come from if resuming
+    record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
     # MAIN-LOOP #
 
     while True:
-        if params.resume:
-            params.resume = False
+        if params.skip_first_improve:
+            params.skip_first_improve = False
         else:
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
