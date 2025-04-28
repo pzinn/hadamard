@@ -183,7 +183,8 @@ def init_score_function():
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats
 def batch_score(arrays):
-    torch.cuda.empty_cache()  # Free memory
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('highest')
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score(arrays_tensor)  # Compute scores in parallel
@@ -206,7 +207,8 @@ def batch_improve(arrays_items):
     p = .3/math.sqrt(na)
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
-    torch.cuda.empty_cache()  # Free memory
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
@@ -329,10 +331,11 @@ def main():
     transformer.init_model()
 
     # torch functions
-    torch.cuda.set_device(0)  # Use GPU 0
-    torch.cuda.empty_cache()  # Free memory before large computation
     torch.manual_seed(random_seed)
-    torch.cuda.manual_seed_all(random_seed)
+    if device.startswith('cuda'):
+        torch.cuda.set_device(0)  # Use GPU 0
+        torch.cuda.empty_cache()  # Free memory before large computation
+        torch.cuda.manual_seed_all(random_seed)
 
     # STEP 0
 

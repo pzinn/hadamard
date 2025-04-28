@@ -274,6 +274,8 @@ class CharDataset(Dataset):
 
 
 def train(data, **kwargs):
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     test_set_size = config.test_set_size
     block_size = config.block_size
@@ -384,7 +386,7 @@ def train(data, **kwargs):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
 stream = torch.cuda.Stream()
 
-# unoptimised version of sample
+# unoptimised version of sample TODO use it if cuda not installed
 """
 def sample():
     load_model()
@@ -405,6 +407,8 @@ def sample():
 def sample():
     load_model()
     model.need_reload = False
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')
     num_batches = config.sample_size // config.sample_batch_size
     new_arrays_set = set()
