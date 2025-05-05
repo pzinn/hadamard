@@ -81,8 +81,8 @@ class Block(torch.nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = torch.nn.LayerNorm(config.n_embd)
         self.mlp = torch.nn.ModuleDict(dict(
-            c_fc    = torch.nn.Linear(config.n_embd, 4 * config.n_embd),
-            c_proj  = torch.nn.Linear(4 * config.n_embd, config.n_embd),
+            c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
+            c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
             act     = NewGELU(),
         ))
         m = self.mlp

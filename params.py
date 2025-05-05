@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 20  # size of basic block
+nn = 35  # size of basic block
 n = 4 * nn  # size of matrix
 print(f'{n=}')
 
@@ -14,23 +14,24 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 100000
+sample_size = 400000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
-training_batch_size = 256  # for training. much smaller, obviously
+training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
-max_iterations = 20
+max_iterations = 100
 training_steps = 200000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
-n_layer = 4
-n_embd = 64
+n_layer = 5
+n_embd = 256
+n_embd2 = 512  # 4*n_embd  # default choice
 n_head = 4
-stacking = 5  # [5,6,7,8,9,10]  # preferably a divisor of nn
+stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
 # less important parameters
-sample_batch_size = sample_size//4  # for sampling. must be a divisor of sample_size
+sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # 2*sample_size  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 3  # for cpu parallelisation
@@ -75,7 +76,7 @@ import subprocess
 version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
 
 hparams = {name: globals().get(name) for name in hparams_list}
 
