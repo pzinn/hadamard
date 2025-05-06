@@ -9,9 +9,9 @@ import heapq
 from itertools import islice
 import params
 from params import n, na, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
+import logger
 import transformer
 # logging/debugging
-import logger
 import sys
 from collections import Counter
 from timeit import default_timer as timer  # to measure exec time

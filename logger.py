@@ -9,8 +9,10 @@ import re
 import datetime
 import os
 
-wandb_entity = 'aiformath'
-wandb_project = 'topsekrit'
+if params.logging == 'wandb':
+    import wandb
+    wandb_entity = 'aiformath'
+    wandb_project = 'topsekrit'
 
 
 # helper function
@@ -51,7 +53,6 @@ def init_logging():
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':
-        import wandb
         myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
         wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
                    config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
