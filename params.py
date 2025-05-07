@@ -19,14 +19,14 @@ training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
-max_iterations = 100
+max_iterations = 30
 training_steps = 200000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
-n_layer = 5
-n_embd = 256
-n_embd2 = 512  # 4*n_embd  # default choice
+n_layer = 6
+n_embd = 128
+n_embd2 = [128, 384, 512]  # 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
@@ -57,7 +57,7 @@ na = nm * nn  # length of array
 
 
 import time
-random_seed = int(time.time())
+random_seed = 1746533706 # int(time.time())
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 

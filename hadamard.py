@@ -63,9 +63,13 @@ def record_stats(arrays_dict, prefix=""):
     mc_size = 1000
     s = 0
     for _ in range(mc_size):
-        a1 = random.choice(arrays)
-        a2 = random.choice(arrays)
-        s += sum(x*y for x, y in zip(a1, a2))
+        a1 = np.array(random.choice(arrays)).reshape(4,nn)
+        a2 = np.array(random.choice(arrays)).reshape(4,nn)
+        fft_a1 = np.fft.fft(a1, axis=1)
+        fft_a2 = np.fft.fft(a2, axis=1)
+        corr = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=1).real
+        s += np.max(np.sum(np.abs(corr), axis=0))
+        # s += sum(x*y for x, y in zip(a1, a2))
     s /= (mc_size * n)
     print(f"Correlation: {s}")
 
