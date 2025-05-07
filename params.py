@@ -108,6 +108,8 @@ class ModelConfig:
         if is_sweep:
             import wandb
             self.__init__(**wandb.config)
+            wandb.config.block_size = self.block_size
+            wandb.config.vocab_size = self.vocab_size
 
 
 config = ModelConfig(**hparams)
