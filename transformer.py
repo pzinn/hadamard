@@ -384,51 +384,50 @@ def train(data, **kwargs):
 
 # def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
-stream = torch.cuda.Stream()
 
-# unoptimised version of sample TODO use it if cuda not installed
-"""
-def sample():
-    load_model()
-    model.need_reload = False
-    torch.set_float32_matmul_precision('high')
-    num_batches = config.sample_size // config.sample_batch_size
-    new_arrays_set = set()
-    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-    for _ in range(num_batches):
-        print('*', end=''); sys.stdout.flush()
-        X.zero_()
-        generate(X, config.block_size-1, do_sample=True)
-        new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
-    return new_arrays_set
-"""
-
-# sample with CPU double buffering
-def sample():
-    load_model()
-    model.need_reload = False
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()  # Free memory
-    torch.set_float32_matmul_precision('high')
-    num_batches = config.sample_size // config.sample_batch_size
-    new_arrays_set = set()
-    if num_batches == 0:
-        return new_arrays_set
-    X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-    X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
-    event = [torch.cuda.Event() for _ in range(2)]
-    idx = 0
-    for i in range(num_batches+1):
-        if i > 0:
-            event[idx].synchronize()
-        if i < num_batches:
+if not device.startswith('cuda'):
+    # unoptimised version of sample if cuda not installed
+    def sample():
+        load_model()
+        model.need_reload = False
+        torch.set_float32_matmul_precision('high')
+        num_batches = config.sample_size // config.sample_batch_size
+        new_arrays_set = set()
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        for _ in range(num_batches):
             print('*', end=''); sys.stdout.flush()
-            with torch.cuda.stream(stream):
-                X.zero_()
-                generate(X, config.block_size-1, do_sample=True)
-                X_cpu[1-idx].copy_(X, non_blocking=True)
-                stream.record_event(event[1-idx])
-        if i > 0:
-            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
-        idx = 1 - idx
-    return new_arrays_set
+            X.zero_()
+            generate(X, config.block_size-1, do_sample=True)
+            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
+        return new_arrays_set
+else:
+    # sample with CPU double buffering
+    stream = torch.cuda.Stream()
+    def sample():
+        load_model()
+        model.need_reload = False
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()  # Free memory
+        torch.set_float32_matmul_precision('high')
+        num_batches = config.sample_size // config.sample_batch_size
+        new_arrays_set = set()
+        if num_batches == 0:
+            return new_arrays_set
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
+        event = [torch.cuda.Event() for _ in range(2)]
+        idx = 0
+        for i in range(num_batches+1):
+            if i > 0:
+                event[idx].synchronize()
+            if i < num_batches:
+                print('*', end=''); sys.stdout.flush()
+                with torch.cuda.stream(stream):
+                    X.zero_()
+                    generate(X, config.block_size-1, do_sample=True)
+                    X_cpu[1-idx].copy_(X, non_blocking=True)
+                    stream.record_event(event[1-idx])
+            if i > 0:
+                new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
+            idx = 1 - idx
+        return new_arrays_set
