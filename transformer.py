@@ -350,7 +350,7 @@ def train(data, **kwargs):
                 loss.backward()
                 optimiser.step()
             else:
-                raise SystemExit("loss is NaN")
+                raise RuntimeError("loss is NaN")
         except torch.cuda.OutOfMemoryError:
             print('out of memory -- decreasing training_batch_size')
             training_batch_size //= 2
