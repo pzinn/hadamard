@@ -314,7 +314,7 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimiser
-    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=True)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -378,8 +378,8 @@ def train(data, **kwargs):
         batch = next_batch
         sys.stdout.flush()
     print("")
-    if save_step > 0:
-        return save_step
+    with open(logger.stats_file, 'a') as file:
+        file.write(f'training: {best_loss=} at {save_step=}\n')
 
 
 # def crop(row):

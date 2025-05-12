@@ -93,7 +93,7 @@ def init_logging():
 
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
-            pass
+            print(f"{name} {loss=:.6f}", end='\t')
         def record_scores(prefix, scores, gens, mean_score, nh):
             pass
 
