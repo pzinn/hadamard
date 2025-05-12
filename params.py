@@ -26,7 +26,7 @@ num_improve = 5  # number of times data get improved per generation
 # transformer parameters
 n_layer = 6
 n_embd = 128
-n_embd2 = [128, 384, 512]  # 4*n_embd  # default choice
+n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
@@ -57,7 +57,7 @@ na = nm * nn  # length of array
 
 
 import time
-random_seed = 1746533706 # int(time.time())
+random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
