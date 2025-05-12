@@ -10,8 +10,8 @@ Use `check.py` to check that they are indeed hadamard matrices, e.g.,
 ```
 python check.py < latest/hada.txt | uniq
 ```
-Logging is in two files
-* there is a `tfevents` file which can be visualised with `tensorboard`, and summarises three types of information:
+Logging is in two forms:
+* there is wandb or tensorboard logging, which summarises three types of information:
    * Loss in the training process.
    * Mean scores of each generation.
    * Proportion of Hadamard matrices in each generation.
