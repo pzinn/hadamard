@@ -19,8 +19,8 @@ from timeit import default_timer as timer  # to measure exec time
 eps = 1e-5  # scores are heavily discretised so can be made large
 
 
-def generate_random_array():
-    return tuple((2 * torch.randint(2, (na,)) - 1).tolist())
+def generate_random_arrays():
+    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size,na), device=device) - 1).tolist()]
 
 # MAIN-DEFINITIONS #
 
@@ -360,7 +360,10 @@ def main():
     else:
         # generate initial sample
         print('***Generating initial sample***')
-        arrays = list(generate_random_array() for _ in range(config.sample_size))
+        start_timer = timer()
+        arrays = generate_random_arrays()
+        if debugging:
+            print(f"generating: {timer() - start_timer}")
 
     arrays_dict = subbatch_score(arrays)
     record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
