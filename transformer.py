@@ -230,19 +230,21 @@ def string_to_array(s):  # really, tensor to tuple by now!
 perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
 
 
-def array_to_string(tensor, rnd):  # tensor to tensor
+rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2])
+nrnd = rndmod.shape
+
+
+def array_to_string(tensor):  # tensor to tensor
+    rnd = (torch.rand(nrnd) * rndmod).to(torch.int64)
     tensor = tensor.reshape(nm, nn)
     # symmetry: random permute A/B/D
-    rnd, rnd4 = divmod(rnd, perms.shape[0])
-    tensor = tensor[perms[rnd4]]
+    tensor = tensor[perms[rnd[0]]]
     # symmetry: random rotation/flip
-    rnd, rnd1 = divmod(rnd, 2*nn)
-    tensor = torch.roll(tensor if rnd1 < nn else torch.flip(tensor, (1,)), shifts=rnd1, dims=1)
+    tensor = torch.roll(tensor if rnd[1] < nn else torch.flip(tensor, (1,)), shifts=rnd[1].item(), dims=1)
     # symmetry: second rotation/flip
-    rnd, rnd2 = divmod(rnd, 2*nn)
-    tensor[3] = torch.roll(tensor[3] if rnd2 < nn else torch.flip(tensor[3], (0,)), shifts=rnd2, dims=0)
+    tensor[3] = torch.roll(tensor[3] if rnd[2] < nn else torch.flip(tensor[3], (0,)), shifts=rnd[2].item(), dims=0)
     # symmetry: random signs
-    tensor.mul_(torch.tensor([((rnd >> i) & 1)*2-1 for i in range(nm)]).unsqueeze(1))
+    tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
     # Convert -1 → 0, +1 → 1
     tensor = 1+tensor >> 1
     # pad if necessary
@@ -260,14 +262,12 @@ class CharDataset(Dataset):
     def __init__(self, words, block_size):
         self.words = words
         self.block_size = block_size
-        self.rnd = torch.empty((), dtype=torch.int64).random_().item()  # lightweight random
     def __len__(self):
         return len(self.words)
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx], self.rnd)
-        self.rnd += 86477 + idx
+        ix = array_to_string(self.words[idx])
         x = torch.cat([torch.tensor([0], dtype=torch.long), ix])
         y = torch.cat([ix, torch.tensor([-1], dtype=torch.long)])  # index -1 will mask the loss at the inactive locations
         return x, y
