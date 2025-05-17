@@ -328,35 +328,24 @@ def train(data, **kwargs):
     save_step = 0
     best_loss = evaluate(test_sample)
     logger.record_loss(best_loss, step, "test")
-    batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
     while True:
         # get the next batch, ship to device, and unpack it to input and target
         try:
-            next_batch = next(batch_iter)
+            batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
         except StopIteration:
             # Restart iterator if at end of epoch
             batch_iter = iter(train_loader)
-            next_batch = next(batch_iter)
-        # disabled early transfer to GPU to save memory space
-        # gpu_next_batch = tuple(t.to(device, non_blocking=True) for t in next_batch)
-
+            batch = next(batch_iter)
         # Train on the current batch
-        try:
-            # feed into the model
-            logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
-            if math.isfinite(loss):
-                # calculate the gradient, update the weights
-                model.zero_grad(set_to_none=True)
-                loss.backward()
-                optimiser.step()
-            else:
-                raise RuntimeError("loss is NaN")
-        except torch.cuda.OutOfMemoryError:
-            print('out of memory -- decreasing training_batch_size')
-            training_batch_size //= 2
-            train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
-            batch_iter = iter(train_loader)
-            next_batch = next(batch_iter)
+        # feed into the model
+        logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
+        if not math.isfinite(loss):
+            raise RuntimeError("loss is NaN")
+        # calculate the gradient, update the weights
+        model.zero_grad(set_to_none=True)
+        loss.backward()
+        optimiser.step()
+        # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
             print(f"{step=} ", end='\t')
@@ -375,7 +364,6 @@ def train(data, **kwargs):
                     max_steps += eval_freq  # don't quit on a winning streak
             elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
                 break
-        batch = next_batch
         sys.stdout.flush()
     print("")
     with open(logger.stats_file, 'a') as file:
