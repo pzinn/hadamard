@@ -230,13 +230,13 @@ def string_to_array(s):  # really, tensor to tuple by now!
 perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
 
 
-rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2])
+rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 
 
-def array_to_string(tensor):  # tensor to tensor
-    rnd = (torch.rand(nrnd) * rndmod).to(torch.int64)
-    tensor = tensor.reshape(nm, nn)
+def array_to_string(tensor0):  # tensor to tensor
+    rnd = torch.remainder(torch.empty((), dtype=torch.int64).random_(),rndmod)
+    tensor = tensor0.view(nm, nn)
     # symmetry: random permute A/B/D
     tensor = tensor[perms[rnd[0]]]
     # symmetry: random rotation/flip
@@ -246,12 +246,12 @@ def array_to_string(tensor):  # tensor to tensor
     # symmetry: random signs
     tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
     # Convert -1 → 0, +1 → 1
-    tensor = 1+tensor >> 1
+    tensor.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
     if not nice:
         tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.reshape(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + tensor.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
