@@ -232,12 +232,13 @@ perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtyp
 
 rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
+print("order of symmetry: ", rndmod.prod().item())
 
 
 def array_to_string(tensor0):  # tensor to tensor
     rnd = torch.remainder(torch.empty((), dtype=torch.int64).random_(),rndmod)
     tensor = tensor0.view(nm, nn)
-    # symmetry: random permute A/B/D
+    # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]
     # symmetry: random rotation/flip
     tensor = torch.roll(tensor if rnd[1] < nn else torch.flip(tensor, (1,)), shifts=rnd[1].item(), dims=1)
