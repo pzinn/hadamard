@@ -236,7 +236,7 @@ print("order of symmetry: ", rndmod.prod().item())
 
 
 def array_to_string(tensor0):  # tensor to tensor
-    rnd = torch.remainder(torch.empty((), dtype=torch.int64).random_(),rndmod)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(),rndmod)
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]
