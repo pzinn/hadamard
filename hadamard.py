@@ -45,10 +45,13 @@ def best_from(arrays_dict):
     """
 
 
+def fmt_array(s):
+    return "".join("+" if x > 0 else "-" for x in s)
+
 def write_arrays(file_path, arrays):
     with open(file_path, 'w') as file:
         for s in arrays:
-            file.write("".join(map(lambda x: "+" if x == 1 else "-", s)) + "\n")
+            file.write(fmt_array(s) + "\n")
 
 
 # for keeping track of stats
@@ -101,7 +104,10 @@ def record_stats(arrays_dict, prefix=""):
     if hasattr(record_stats, "total_hada_dict"):
         hada_dict.update(record_stats.total_hada_dict)
     record_stats.total_hada_dict = hada_dict
-    print(f"Total number of Hadamard: {len(record_stats.total_hada_dict)}")
+    total_nh = len(record_stats.total_hada_dict)
+    print(f"Total number of Hadamard: {total_nh}")
+    if total_nh>0:
+        print(f"Here's one: {fmt_array(next(iter(record_stats.total_hada_dict)))}")
 
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
