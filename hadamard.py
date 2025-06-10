@@ -153,21 +153,32 @@ def init_score_function():
         score_type = torch.float32
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
-        score_normalisation = .5
+        score_normalisation = 1  # let's not bother
         cst = 1 / math.sqrt(n)
         def score(m):
             f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
             # we do separately real pieces for accuracy reasons
-            s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
+            s = -2 * torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
             if nn % 2 == 0:
-                s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
+                s -= 2*torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
                 f = f[:, :, 1:-1]
             else:
                 f = f[:, :, 1:]
-            ff = f[:, :3, :].pow(2).sum(dim=1)
-            f.mul_(f.conj())  # f = f * f.conj()
-            ff.mul_(ff.conj())  # ff = ff * ff.conj()
-            s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
+            ff = torch.imag(f[:, 1, :] * torch.conj(f[:, 0, :]) + f[:, 2, :] * torch.conj(f[:, 3, :]));  # ! note symmetries
+            f.mul_(f.conj())
+            s -= torch.log(torch.real(f).sum(dim=1).pow(2)-4*ff.pow(2)).sum(dim=1)
+            """
+            f1 = f[:, 0, :] + 1j * f[:, 1, :]
+            f2 = f[:, 3, :] + 1j * f[:, 2, :]
+            f3 = f[:, 0, :] - 1j * f[:, 1, :]
+            f4 = f[:, 3, :] - 1j * f[:, 2, :]
+            f1.mul_(f1.conj())
+            f2.mul_(f2.conj())
+            f3.mul_(f3.conj())
+            f4.mul_(f4.conj())
+            f = torch.real((f1 + f2)*(f3 + f4))
+            s -= torch.log(f).sum(dim=1)
+            """
             return s
     elif config.score_function == 'quartic':
         score_type = torch.float16

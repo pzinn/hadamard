@@ -57,13 +57,13 @@ na = nm * nn  # length of array
 
 
 import time
-random_seed = int(time.time())  # 1746533706
+random_seed = 1749560818 # int(time.time())  # 1746533706
 
-device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+device = 'cpu'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'
+# logging = 'wandb'
 # logging = 'tensorboard'
-# logging = ''
+logging = ''
 
 import argparse
 parser = argparse.ArgumentParser(description="Script with logging levels")

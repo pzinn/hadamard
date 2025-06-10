@@ -232,7 +232,7 @@ perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtyp
 
 rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
-print("order of symmetry: ", rndmod.prod().item())
+print(f"order of symmetry: {rndmod.prod().item()}")
 
 
 def array_to_string(tensor0):  # tensor to tensor
