@@ -130,6 +130,8 @@ def init_score_function():
         rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
         V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
         X = V[:, rolled_indices]
+        X[2] = torch.flip(X[2], dims=[1])
+        X[6] = torch.flip(X[6], dims=[1])
         X[3] = torch.flip(X[3], dims=[1])
         X[7] = torch.flip(X[7], dims=[1])
         full_indices = torch.cat([

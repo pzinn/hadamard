@@ -227,10 +227,10 @@ def string_to_array(s):  # really, tensor to tuple by now!
 
 
 # Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
+#perms = torch.tensor(list(p for p in permutations(range(nm)) if p[0]==0 and p[1]==1), dtype=torch.long)
+perms = torch.tensor([[0,1,2,3],[2,3,0,1],[1,0,3,2],[3,2,1,0]], dtype=torch.long)
 
-
-rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+rndmod = torch.tensor([len(perms), nn, nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print(f"order of symmetry: {rndmod.prod().item()}")
 
@@ -240,12 +240,22 @@ def array_to_string(tensor0):  # tensor to tensor
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]
-    # symmetry: random rotation/flip
-    tensor = torch.roll(tensor if rnd[1] < nn else torch.flip(tensor, (1,)), shifts=rnd[1].item(), dims=1)
-    # symmetry: second rotation/flip
-    tensor[3] = torch.roll(tensor[3] if rnd[2] < nn else torch.flip(tensor[3], (0,)), shifts=rnd[2].item(), dims=0)
+    # symmetry: random rotation
+    tensor = torch.roll(tensor, shifts=rnd[1].item(), dims=1)
+    # symmetry: second rotation
+    tensor[2] = torch.roll(tensor[2], shifts=rnd[2].item(), dims=0)
+    tensor[3] = torch.roll(tensor[3], shifts=rnd[2].item(), dims=0)
+    # flip separate now
+    if rnd[3]:
+        tensor = torch.flip(tensor, (1,))
     # symmetry: random signs
-    tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
+    p = 1
+    for i in range(nm-1):
+        if rnd[4+i]:
+            p *= -1
+            tensor[i]*=-1
+    if p == -1:
+        tensor[nm-1]*=-1
     # Convert -1 → 0, +1 → 1
     tensor.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
