@@ -230,7 +230,7 @@ def string_to_array(s):  # really, tensor to tuple by now!
 #perms = torch.tensor(list(p for p in permutations(range(nm)) if p[0]==0 and p[1]==1), dtype=torch.long)
 perms = torch.tensor([[0,1,2,3],[2,3,0,1],[1,0,3,2],[3,2,1,0]], dtype=torch.long)
 
-rndmod = torch.tensor([len(perms), nn, nn, 2, 2, 2, 2], dtype=torch.int64)
+rndmod = torch.tensor([len(perms), nn, nn, 2, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print(f"order of symmetry: {rndmod.prod().item()}")
 
@@ -247,11 +247,15 @@ def array_to_string(tensor0):  # tensor to tensor
     tensor[3] = torch.roll(tensor[3], shifts=rnd[2].item(), dims=0)
     # flip separate now
     if rnd[3]:
+        tensor = tensor[[1,0,2,3]]  # lame
+        tensor[0] = torch.flip(tensor[0], (0,))
+        tensor[1] = torch.flip(tensor[1], (0,))
+    if rnd[4]:
         tensor = torch.flip(tensor, (1,))
     # symmetry: random signs
     p = 1
     for i in range(nm-1):
-        if rnd[4+i]:
+        if rnd[5+i]:
             p *= -1
             tensor[i]*=-1
     if p == -1:
