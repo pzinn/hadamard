@@ -128,17 +128,21 @@ def init_score_function():
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
         shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
         rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
-        V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
-        X = V[:, rolled_indices]
-        X[2] = torch.flip(X[2], dims=[1])
-        X[6] = torch.flip(X[6], dims=[1])
-        X[3] = torch.flip(X[3], dims=[1])
-        X[7] = torch.flip(X[7], dims=[1])
+        antirolled_indices = (indices + shifts) % nn  # Shape: (nn, nn)
+        V = torch.arange(8*nn, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
+        A = V[0, rolled_indices]
+        B = V[1, rolled_indices]
+        C = V[2, antirolled_indices]
+        D = V[3, antirolled_indices]
+        An = V[4, rolled_indices]
+        Bn = V[5, rolled_indices]
+        Cn = V[6, antirolled_indices]
+        Dn = V[7, antirolled_indices]
         full_indices = torch.cat([
-            torch.cat((X[0], X[1], X[2], X[3]), dim=1),
-            torch.cat((X[5], X[0], X[7], X[2]), dim=1),
-            torch.cat((X[6], X[3], X[0], X[5]), dim=1),
-            torch.cat((X[7], X[6], X[1], X[0]), dim=1)
+            torch.cat((A, B, C, D), dim=1),
+            torch.cat((Bn, A, Dn, C), dim=1),
+            torch.cat((Cn, D, A, Bn), dim=1),
+            torch.cat((Dn, Cn, B, A), dim=1)
         ], dim=0)
         # create the n x n block circulant matrix out of the n bits
         def block_circulant(x):
@@ -155,14 +159,14 @@ def init_score_function():
         score_type = torch.float32
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
-        score_normalisation = 1  # let's not bother
+        score_normalisation = .5  # let's not bother
         cst = 1 / math.sqrt(n)
         def score(m):
             f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
             # we do separately real pieces for accuracy reasons
-            s = -2 * torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
+            s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
             if nn % 2 == 0:
-                s -= 2*torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
+                s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
                 f = f[:, :, 1:-1]
             else:
                 f = f[:, :, 1:]
