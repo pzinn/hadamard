@@ -52,6 +52,8 @@ skip_first_training = False  # only meaningful if resume: start by sampling from
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
+test_randomisation = True  # for debugging purposes, test whether randomisation of arrays (rotation, etc) preserves score
+
 # array encoding -- do not change
 nm = 4  # number of blocks
 na = nm * nn  # length of array
@@ -62,9 +64,9 @@ random_seed = 1749560818 # int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'
+# logging = 'wandb'
 # logging = 'tensorboard'
-# logging = ''
+logging = ''
 
 import argparse
 parser = argparse.ArgumentParser(description="Script with logging levels")
