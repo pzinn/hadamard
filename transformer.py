@@ -237,6 +237,8 @@ print("order of symmetry: ", rndmod.prod().item())
 
 def array_to_string(tensor0):  # tensor to tensor
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(),rndmod)
+    if score:  # for testing purposes: does the randomisation respect score?
+        old_score = score(tensor0.view(1,na))
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]
@@ -246,6 +248,10 @@ def array_to_string(tensor0):  # tensor to tensor
     tensor[3] = torch.roll(tensor[3] if rnd[2] < nn else torch.flip(tensor[3], (0,)), shifts=rnd[2].item(), dims=0)
     # symmetry: random signs
     tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
+    if score:  # for testing purposes: does the randomisation respect score?
+        new_score = score(tensor.view(1,na))
+        if torch.abs(new_score-old_score).item()>1e-5:
+            raise RuntimeError("score not preserved by randomisation",new_score.item(),old_score.item(),torch.abs(new_score-old_score).item())
     # Convert -1 → 0, +1 → 1
     tensor.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
@@ -294,6 +300,10 @@ def train(data, **kwargs):
     learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
 
+    # for testing purposes only: scoring function
+    global score
+    score = kwargs.get("score", None)
+
     if resume_training:
         try:
             load_model()
@@ -323,6 +333,7 @@ def train(data, **kwargs):
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
+    score = None  # stop testing for training phase
 
     # training loop
     step = 0

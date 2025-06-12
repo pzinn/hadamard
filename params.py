@@ -51,6 +51,8 @@ skip_first_training = False  # only meaningful if resume: start by sampling from
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
+test_randomisation = False  # for debugging purposes, test whether randomisation of arrays (rotation, etc) preserves score
+
 # array encoding -- do not change
 nm = 4  # number of blocks
 na = nm * nn  # length of array

@@ -405,7 +405,7 @@ def main():
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
+            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data
