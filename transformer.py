@@ -15,7 +15,6 @@ from itertools import permutations
 import params  # for work_dir
 from params import na, nn, nm, device, config, resume_training
 import logger
-# from collections import deque
 
 # -----------------------------------------------------------------------------
 
@@ -236,9 +235,9 @@ print("order of symmetry: ", rndmod.prod().item())
 
 
 def array_to_string(tensor0):  # tensor to tensor
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(),rndmod)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     if score:  # for testing purposes: does the randomisation respect score?
-        old_score = score(tensor0.view(1,na))
+        old_score = score(tensor0.view(1, na))
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]
@@ -249,9 +248,9 @@ def array_to_string(tensor0):  # tensor to tensor
     # symmetry: random signs
     tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
     if score:  # for testing purposes: does the randomisation respect score?
-        new_score = score(tensor.view(1,na))
-        if torch.abs(new_score-old_score).item()>1e-5:
-            raise RuntimeError("score not preserved by randomisation",new_score.item(),old_score.item(),torch.abs(new_score-old_score).item())
+        new_score = score(tensor.view(1, na))
+        if torch.abs(new_score-old_score).item() > 1e-5:
+            raise RuntimeError("score not preserved by randomisation", new_score.item(), old_score.item(), torch.abs(new_score-old_score).item())
     # Convert -1 → 0, +1 → 1
     tensor.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary

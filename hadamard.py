@@ -8,7 +8,7 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nm, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
 import logger
 import transformer
 # logging/debugging
@@ -20,7 +20,7 @@ eps = 1e-5  # scores are heavily discretised so can be made large
 
 
 def generate_random_arrays():
-    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size,na), device=device) - 1).tolist()]
+    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size, na), device=device) - 1).tolist()]
 
 # MAIN-DEFINITIONS #
 
@@ -66,8 +66,8 @@ def record_stats(arrays_dict, prefix=""):
     mc_size = 1000
     s = 0
     for _ in range(mc_size):
-        a1 = np.array(random.choice(arrays)).reshape(4,nn)
-        a2 = np.array(random.choice(arrays)).reshape(4,nn)
+        a1 = np.array(random.choice(arrays)).reshape(nm,nn)
+        a2 = np.array(random.choice(arrays)).reshape(nm,nn)
         fft_a1 = np.fft.fft(a1, axis=1)
         fft_a2 = np.fft.fft(a2, axis=1)
         corr = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=1).real
@@ -156,7 +156,7 @@ def init_score_function():
         score_normalisation = .5
         cst = 1 / math.sqrt(n)
         def score(m):
-            f = cst * torch.fft.rfft(m.view(-1, 4, nn), dim=2)  # cst improves accuracy
+            f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst improves accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
             if nn % 2 == 0:
