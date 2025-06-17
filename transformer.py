@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 from itertools import permutations
 import params  # for work_dir
-from params import na, nn, nm, device, config, resume_training
+# from params import na, nn, nm, device, resume_training
 import logger
 # from collections import deque
 
@@ -148,17 +148,17 @@ def init_model():
     global string_length
     global segment_string_length
     global nice
-    model = Transformer(config)
-    model.to(device)
+    model = Transformer(params.config)
+    model.to(params.device)
     model.need_reload = True
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    string_length = config.block_size - 1
-    segment_string_length = string_length//nm
-    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
+    powers_of_two = 2 ** torch.arange(params.config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    string_length = params.config.block_size - 1
+    segment_string_length = string_length//params.nm
+    nice = params.nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
+    my_range = range(params.na) if nice else list(i for j in range(params.nm) for i in range(j * segment_string_length*params.config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
 
 
 def load_model():
@@ -227,15 +227,18 @@ def string_to_array(s):  # really, tensor to tuple by now!
 
 
 # Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
+perms = torch.tensor(list(p for p in permutations(range(params.nm)) if p[3] == 3), dtype=torch.long)
 
-
+nn = params.nn
 rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
 
 def array_to_string(tensor0):  # tensor to tensor
+    nm = params.nm
+    nn = params.nn
+    config =params.config
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(),rndmod)
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
@@ -275,6 +278,8 @@ class CharDataset(Dataset):
 
 
 def train(data, **kwargs):
+    device= params.device
+    config = params.config
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
@@ -294,7 +299,9 @@ def train(data, **kwargs):
     learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
 
-    if resume_training:
+    print(f"training transfomer with max_steps={max_steps}, learning_rate={learning_rate} and eval_freq={eval_freq}")
+
+    if params.resume_training:
         try:
             load_model()
         except FileNotFoundError:
@@ -315,7 +322,7 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimiser
-    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=False if device == 'cpu' else True)
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -348,6 +355,9 @@ def train(data, **kwargs):
         optimiser.step()
         # periodically test/save the model
         step += 1
+
+        
+
         if step % eval_freq == 0 or step == max_steps:
             print(f"{step=} ", end='\t')
             if device.startswith('cuda'):
@@ -357,6 +367,7 @@ def train(data, **kwargs):
             test_loss = evaluate(test_sample)
             logger.record_loss(test_loss, step, "test")
             # save the model to disk if it has improved
+
             if test_loss < best_loss:
                 save_model()
                 best_loss = test_loss
@@ -374,13 +385,18 @@ def train(data, **kwargs):
 # def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
 
-if not device.startswith('cuda'):
+
+config = params.config
+device = params.device
+
+if not params.device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
     def sample():
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
+        print(f'num_batches={num_batches}')
         new_arrays_set = set()
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
         for _ in range(num_batches):

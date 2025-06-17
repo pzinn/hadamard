@@ -14,8 +14,8 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400000
-training_size = sample_size//10  # must be > test_set_size
+sample_size = 1_000_000
+training_size = sample_size//20  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
@@ -64,52 +64,27 @@ device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 logging = 'wandb'
 # logging = 'tensorboard'
 # logging = ''
+logging_mode = 'offline' # 'online' | 'offline'
 
-import argparse
-parser = argparse.ArgumentParser(description="Script with logging levels")
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-args = parser.parse_args()
-debugging = args.debug
+# GW 10/6: don't like argparse in called file, commenting out for now.
+#import argparse
+#parser = argparse.ArgumentParser(description="Script with logging levels")
+
+#args = parser.parse_args()
+#debugging = args.debug
 
 
+# version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
 import subprocess
-version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
+
+try:
+    version = subprocess.check_output(
+        ["git", "show", "-s", "--pretty=%D %h"], stderr=subprocess.DEVNULL
+    ).strip().decode()
+except subprocess.CalledProcessError:
+    version = "git not available"
+except FileNotFoundError:
+    version = "git not available"
 
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
 
-hparams = {name: globals().get(name) for name in hparams_list}
-
-is_sweep = any(isinstance(v, (list, tuple)) for v in hparams.values())
-
-if is_sweep:
-    if resume:
-        raise SystemExit("resume not supported with sweeps")
-    sweep_config = {
-        "method": "grid",
-        "parameters": {
-            k: {"values": list(v)} if isinstance(v, (list, tuple)) else {"value": v}
-            for k, v in hparams.items()
-            }
-        }
-
-
-class ModelConfig:
-    def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-        # Automatically computed values
-        if isinstance(self.stacking, int):
-            # string_length = n//stacking  # only works if stacking | n
-            string_length = (1+(nn-1)//self.stacking)*nm  # including padding if stacking doesn't divide nn
-            self.block_size = string_length + 1  # block_size : <START> token followed by string
-            nchars = 1 << self.stacking
-            self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
-    def update(self):
-        if is_sweep:
-            import wandb
-            self.__init__(**wandb.config)
-            wandb.config.block_size = self.block_size
-            wandb.config.vocab_size = self.vocab_size
-
-
-config = ModelConfig(**hparams)

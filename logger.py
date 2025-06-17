@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 import params
-from params import config, n
+from params import n
 import math
 import glob
 import re
@@ -53,12 +53,17 @@ def init_logging():
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':
+
+        if params.logging_mode == 'offline':
+            os.environ["WANDB_MODE"] = "offline"
+
         myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
         wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
-                   config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
-                   resume='allow' if params.resume else 'never')  # if is_sweep, resume not supported
-        config.update()  # for sweep
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+                   config=params.config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
+                   resume='allow' if params.resume else 'never', # if is_sweep, resume not supported
+                   mode = params.logging_mode)  
+        params.config.update()  # for sweep
+        norm = 1/(math.log(2)*params.config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
             print(f"{name} {loss=:.6f}", end='\t')
@@ -70,7 +75,7 @@ def init_logging():
     stats_file = params.work_dir + 'stats.txt'  # where to save logs
     hada_file = params.work_dir + 'hada.txt'  # where to save Hadamard matrices
     with open(stats_file, 'a') as file:
-        file.writelines(f"{name}={value!r}\n" for name, value in vars(config).items())
+        file.writelines(f"{name}={value!r}\n" for name, value in vars(params.config).items())
 
     if params.logging == 'tensorboard':
         from torch.utils.tensorboard import SummaryWriter

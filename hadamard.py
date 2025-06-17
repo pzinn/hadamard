@@ -8,19 +8,18 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
-import logger
-import transformer
+from params import n, na, nn, device, resume, resume_training, random_seed
 # logging/debugging
 import sys
 from collections import Counter
 from timeit import default_timer as timer  # to measure exec time
+import argparse
 
 eps = 1e-5  # scores are heavily discretised so can be made large
-
+debugging = True
 
 def generate_random_arrays():
-    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size,na), device=device) - 1).tolist()]
+    return [tuple(row) for row in (2 * torch.randint(2, (params.config.sample_size,na), device=device) - 1).tolist()]
 
 # MAIN-DEFINITIONS #
 
@@ -28,7 +27,7 @@ def generate_random_arrays():
 def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
+    smallest_keys = {k for k, _ in heapq.nsmallest(params.config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
     return {k: v for k, v in items if k in smallest_keys or v[0] < score_threshold + eps}  # always keep H-matrices
     # doesn't
     # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
@@ -52,7 +51,7 @@ def write_arrays(file_path, arrays):
 
 
 # for keeping track of stats
-def record_stats(arrays_dict, prefix=""):
+def record_stats(logger, arrays_dict, prefix=""):
     if len(arrays_dict) == 0:
         return
     arrays_items = arrays_dict.items()
@@ -117,7 +116,8 @@ def record_stats(arrays_dict, prefix=""):
 
 def init_score_function():
     global score, normalise, score_type, score_threshold
-    if config.score_function != 'fft log determinant':
+    params.config = params.config
+    if params.config.score_function != 'fft log determinant':
         # Generate row indices for circulant
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
         shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
@@ -137,13 +137,13 @@ def init_score_function():
             return torch.cat((x, -x), dim=1)[..., full_indices]
         # for device=='cuda', float is pretty much compulsory
     # float16 may be faster but may lead to accuracy issues
-    if config.score_function == 'log determinant':
+    if params.config.score_function == 'log determinant':
         score_type = torch.float32  # slogdet needs float32
         score_threshold = - n/2 * math.log(n)
         score_normalisation = 1
         def score(m):
             return -torch.linalg.slogdet(block_circulant(m))[1]
-    elif config.score_function == 'fft log determinant':
+    elif params.config.score_function == 'fft log determinant':
         score_type = torch.float32
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
@@ -163,14 +163,14 @@ def init_score_function():
             ff.mul_(ff.conj())  # ff = ff * ff.conj()
             s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
             return s
-    elif config.score_function == 'quartic':
+    elif params.config.score_function == 'quartic':
         score_type = torch.float16
         score_threshold = n**1.5
         score_normalisation = 2*math.sqrt(n)
         def score(m):
             C = block_circulant(m)
             return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-    elif config.score_function == 'one':
+    elif params.config.score_function == 'one':
         score_type = torch.float16
         score_threshold = 0
         score_normalisation = n
@@ -196,12 +196,12 @@ def batch_score(arrays):
 
 
 def subbatch_score(arrays):  # same but in batches of score_batch_size
-    if config.score_batch_size is None:
+    if params.config.score_batch_size is None:
         return batch_score(list(arrays))
     updated_dict = {}
     it = iter(arrays)  # Convert set/list to iterator
     while True:
-        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
+        batch = list(islice(it, params.config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
         updated_dict.update(batch_score(batch))
@@ -209,7 +209,7 @@ def subbatch_score(arrays):  # same but in batches of score_batch_size
 
 
 def batch_improve(arrays_items):
-    n_attempts = na * config.num_improve
+    n_attempts = na * params.config.num_improve
     p = .3/math.sqrt(na)
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
@@ -219,7 +219,7 @@ def batch_improve(arrays_items):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step 1: this is the analogue of my old "simple_search2"
-    for j in range(config.num_improve):
+    for j in range(params.config.num_improve):
         if debugging:
             cnt = torch.tensor(0, device=device, dtype=torch.int64)
         print(f"1({j})", end=''); sys.stdout.flush()
@@ -315,20 +315,97 @@ def batch_improve(arrays_items):
 
 
 def subbatch_improve(arrays_dict):
-    if config.score_batch_size is None:
+    if params.config.score_batch_size is None:
         return batch_improve(arrays_dict.items())
     updated_dict = {}
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
-        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
+        batch = list(islice(it, params.config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
         updated_dict.update(batch_improve(batch))
     return updated_dict
 
+class ModelConfig:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+        # Automatically computed values
+        if isinstance(self.stacking, int):
+            # string_length = n//stacking  # only works if stacking | n
+            string_length = (1+(nn-1)//self.stacking)*params.nm  # including padding if stacking doesn't divide nn
+            self.block_size = string_length + 1  # block_size : <START> token followed by string
+            nchars = 1 << self.stacking
+            self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
+    def update(self):
+        if is_sweep:
+            import wandb
+            self.__init__(**wandb.config)
+            wandb.config.block_size = self.block_size
+            wandb.config.vocab_size = self.vocab_size
+
+# geordie modifications 10/6:
+# for sweeps on NCI, Geordie needs to be able to modify parameters from the command line.
+# add parameters you might potentially want to sweep here
+# (note the idea is that this overwrites params.py)
+# note to self: be careful not to touch any of the variables imported from params above, currently they are:
+#
+# n, na, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--sample_size", type=int) #current default 400000
+    parser.add_argument("--n_embd", type=int) # current default 128
+    parser.add_argument("--n_head", type=int) # current deafault 4
+    parser.add_argument("--n_layer", type=int) # current default 6
+    parser.add_argument("--weight_decay", type=float) # current default 0.01
+    parser.add_argument("--num_improve", type=int) #current default 5
+    parser.add_argument("--num_workers", type=int)
+    parser.add_argument("--test_set_size", type=int)
+    parser.add_argument("--training_steps",type=int) # current default 200000
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--bignum", action="store_true", help="Enable debug logging")
+
+    return parser.parse_args()
 
 def main():
+
     # logging: text stats file + fancy (tensorboard or wandb)
+
+    args = parse_args()
+    for k, v in vars(args).items():
+        if v is not None:
+            setattr(params, k, v)
+    params.is_sweep = is_sweep
+
+    params.training_size = params.sample_size//20  # must be > test_set_size
+    params.n_embd2 = 4*params.n_embd  # default choice
+    params.sample_batch_size = params.sample_size//10
+
+    if is_sweep:
+
+        assert params.logging_mode == 'online', 'sweep only possible with in online mode, i.e. with internet connection to wandb servers.'
+
+        if resume:
+            raise SystemExit("resume not supported with sweeps")
+        sweep_config = {
+            "method": "grid",
+            "parameters": {
+                k: {"values": list(v)} if isinstance(v, (list, tuple)) else {"value": v}
+                for k, v in hparams.items()
+                }
+            }
+
+    hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+    hparams = {key: getattr(params, key) for key in hparams_list}
+    print(hparams)
+
+    print(f'nn={nn},params.nn={params.nn}')
+
+    params.config = ModelConfig(**hparams)
+
+    import logger
+    import transformer
+
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
 
@@ -366,7 +443,7 @@ def main():
             print(f"generating: {timer() - start_timer}")
 
     arrays_dict = subbatch_score(arrays)
-    record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
+    record_stats(logger, arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
     # MAIN-LOOP #
 
@@ -380,13 +457,13 @@ def main():
             arrays_dict = subbatch_improve(arrays_dict)
             if debugging:
                 print(f"improving: {timer() - start_timer}")
-            record_stats(arrays_dict, "improved")
+            record_stats(logger, arrays_dict, "improved")
             print('\n***Selecting***')
             arrays_dict = best_from(arrays_dict)
-            record_stats(arrays_dict, "selected")
+            record_stats(logger, arrays_dict, "selected")
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
-        if params.gen == config.max_iterations:
+        if params.gen == params.config.max_iterations:
             break
         if params.skip_first_training:
             params.skip_first_training = False
@@ -396,10 +473,10 @@ def main():
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
             if debugging:
                 print(f"{coeff=}")
-            max_steps = int(config.training_steps*coeff)
+            max_steps = int(params.config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
+            transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, learning_rate=params.config.learning_rate*coeff)
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data
@@ -408,12 +485,17 @@ def main():
         start_timer = timer()
         new_arrays = transformer.sample()
         new_arrays_dict = subbatch_score(new_arrays)
-        record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
+        record_stats(logger, new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
         new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
         arrays_dict = new_arrays_dict
         if debugging:
             print(f"sampling: {timer() - start_timer}")
 
+
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+hparams = {key: getattr(params, key) for key in hparams_list}
+
+is_sweep = any(isinstance(v, (list, tuple)) for v in hparams.values())
 
 if is_sweep:
     import wandb
