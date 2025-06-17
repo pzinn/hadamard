@@ -15,7 +15,6 @@ from itertools import permutations
 import params  # for work_dir
 from params import na, nn, nm, device, config, resume_training
 import logger
-# from collections import deque
 
 # -----------------------------------------------------------------------------
 
@@ -236,9 +235,9 @@ print(f"order of symmetry: {rndmod.prod().item()}")
 
 
 def array_to_string(tensor0):  # tensor to tensor
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(),rndmod)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     if score:  # for testing purposes: does the randomisation respect score?
-        old_score = score(tensor0.view(1,na))
+        old_score = score(tensor0.view(1, na))
     tensor = tensor0.view(nm, nn)
     # symmetry: random permute
     tensor = tensor[perms[rnd[0]]]

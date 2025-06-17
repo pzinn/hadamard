@@ -4,7 +4,6 @@ if __name__ == "__main__":
 # hadamard matrix parameters
 nn = 35  # size of basic block
 n = 4 * nn  # size of matrix
-print(f'{n=}')
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -15,13 +14,13 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400000
+sample_size = 1000000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 200000  # will be adjusted dynamically (to be less than that)
+training_steps = 400000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
@@ -52,11 +51,7 @@ skip_first_training = False  # only meaningful if resume: start by sampling from
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
-test_randomisation = True  # for debugging purposes, test whether randomisation of arrays (rotation, etc) preserves score
-
-# array encoding -- do not change
-nm = 4  # number of blocks
-na = nm * nn  # length of array
+test_randomisation = False  # for debugging purposes, test whether randomisation of arrays (rotation, etc) preserves score
 
 
 import time
@@ -64,22 +59,46 @@ random_seed = 1749560818 # int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-# logging = 'wandb'
-# logging = 'tensorboard'
-logging = ''
+logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
-parser = argparse.ArgumentParser(description="Script with logging levels")
+parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-args = parser.parse_args()
-debugging = args.debug
-
+parser.add_argument("--bignum", action="store_true", help="Enable debug logging")  # PZJ: what is this for?
 
 import subprocess
-version = subprocess.check_output(["git", "show", "-s", "--pretty='%D %h'"]).strip().decode()
+try:
+    version = subprocess.check_output(
+        ["git", "show", "-s", "--pretty=%D %h"], stderr=subprocess.DEVNULL
+    ).strip().decode()
+except subprocess.CalledProcessError:
+    version = "git not available"
+except FileNotFoundError:
+    version = "git not available"
 
+import ast
 
 hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+
+# hparams can be updated in command line
+for param in hparams_list:
+    parser.add_argument(f"--{param}")
+args = parser.parse_args()
+debugging = args.debug
+for param in hparams_list:
+    val = getattr(args, param)
+    if val is not None:
+        globals()[param] = ast.literal_eval(val)
+
+# special cases: coupled default values
+if getattr(args,"sample_size") and not getattr(args,"training_size"):
+    training_size = sample_size//20
+if getattr(args,"n_embd") and not getattr(args,"n_embd2"):
+    n_embd2 = 4*n_embd
+if getattr(args,"sample_size") and not getattr(args,"sample_batch_size"):
+    sample_batch_size = sample_size//10
+
 
 hparams = {name: globals().get(name) for name in hparams_list}
 
@@ -95,6 +114,16 @@ if is_sweep:
             for k, v in hparams.items()
             }
         }
+
+if n % 4 != 0:
+    raise SystemExit("good luck!")
+
+print(f'{n=}')
+
+# array encoding -- do not change
+nn = n // 4
+nm = 4  # number of blocks
+na = nm * nn  # length of array, happens to be n here
 
 
 class ModelConfig:
