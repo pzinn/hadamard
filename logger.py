@@ -53,10 +53,13 @@ def init_logging():
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':
+        if params.logging_mode == 'offline':
+            os.environ["WANDB_MODE"] = "offline"
         myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
         wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
                    config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
-                   resume='allow' if params.resume else 'never')  # if is_sweep, resume not supported
+                   resume='allow' if params.resume else 'never',  # if is_sweep, resume not supported
+                   mode = params.logging_mode)
         config.update()  # for sweep
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
@@ -99,6 +102,5 @@ def init_logging():
 
 
 if params.is_sweep:
-    if params.logging != 'wandb':
-        raise SystemExit("sweeps only supported with wandb")   # wandb compulsory for sweep
+    assert params.logging == 'wandb' and params.logging_mode == 'online', 'sweep only possible with wandb in online mode, i.e. with internet connection to wandb servers.'
     sweep_id = wandb.sweep(entity=wandb_entity, project=wandb_project, sweep=params.sweep_config)
