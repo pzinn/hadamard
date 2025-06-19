@@ -371,9 +371,9 @@ def train(data, **kwargs):
                 save_model()
                 best_loss = test_loss
                 save_step = step
-                if step == max_steps:
-                    max_steps += eval_freq  # don't quit on a winning streak
-            elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
+            elif test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
+                break
+            if step == max_steps:  # termination condition 2: hard cutoff
                 break
         sys.stdout.flush()
     print("")
