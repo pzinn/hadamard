@@ -234,30 +234,30 @@ nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
 
-def array_to_string(tensor0):  # tensor to tensor
+def array_to_string(array):  # tensor to tensor
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     if score:  # for testing purposes: does the randomisation respect score?
-        old_score = score(tensor0.view(1, na))
-    tensor = tensor0.view(nm, nn)
+        old_score = score(array.view(1, na))
+    array = array.view(nm, nn)
     # symmetry: random permute
-    tensor = tensor[perms[rnd[0]]]
+    array = array[perms[rnd[0]]]
     # symmetry: random rotation/flip
-    tensor = torch.roll(tensor if rnd[1] < nn else torch.flip(tensor, (1,)), shifts=rnd[1].item(), dims=1)
+    array = torch.roll(array if rnd[1] < nn else torch.flip(array, (1,)), shifts=rnd[1].item(), dims=1)
     # symmetry: second rotation/flip
-    tensor[3] = torch.roll(tensor[3] if rnd[2] < nn else torch.flip(tensor[3], (0,)), shifts=rnd[2].item(), dims=0)
+    array[3] = torch.roll(array[3] if rnd[2] < nn else torch.flip(array[3], (0,)), shifts=rnd[2].item(), dims=0)
     # symmetry: random signs
-    tensor.mul_((rnd[3:7]*2-1).unsqueeze(1))
+    array.mul_((rnd[3:7]*2-1).unsqueeze(1))
     if score:  # for testing purposes: does the randomisation respect score?
-        new_score = score(tensor.view(1, na))
+        new_score = score(array.view(1, na))
         if torch.abs(new_score-old_score).item() > 1e-5:
             raise RuntimeError("score not preserved by randomisation", new_score.item(), old_score.item(), torch.abs(new_score-old_score).item())
     # Convert -1 → 0, +1 → 1
-    tensor.add_(1).div_(2, rounding_mode='trunc')
+    array.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+        array = F.pad(array, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.view(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + array.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
