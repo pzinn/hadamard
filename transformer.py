@@ -332,7 +332,6 @@ def train(data, **kwargs):
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
-    score = None  # stop testing for training phase
 
     # training loop
     step = 0
