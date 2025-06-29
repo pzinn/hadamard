@@ -397,6 +397,7 @@ def main():
         if params.skip_first_training:
             params.skip_first_training = False
         else:
+            torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
@@ -409,6 +410,7 @@ def main():
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data
+        torch.cuda.empty_cache()
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
         start_timer = timer()
