@@ -19,8 +19,8 @@ from timeit import default_timer as timer  # to measure exec time
 eps = 1e-5  # scores are heavily discretised so can be made large
 
 
-def generate_random_arrays():
-    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size, na), device=device) - 1).tolist()]
+def generate_random_arrays(batch_size):
+    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
 
 # MAIN-DEFINITIONS #
 
@@ -191,30 +191,49 @@ def init_score_function():
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
-# but useful for logging/stats
-def batch_score(arrays):
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()  # Free memory
-    torch.set_float32_matmul_precision('highest')
-    arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
+# but useful for logging/stats. also generates random data at gen 0
+def parallel_score(arrays):
+    if isinstance(arrays,torch.Tensor):
+        arrays_tensor = arrays
+        arrays = [tuple(row) for row in torch.where(arrays_tensor > 0, 1, -1).tolist()]
+    else:
+        arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score(arrays_tensor)  # Compute scores in parallel
     return {x: (s, params.gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
-
-def subbatch_score(arrays):  # same but in batches of score_batch_size
-    if config.score_batch_size is None:
-        return batch_score(list(arrays))
-    updated_dict = {}
-    it = iter(arrays)  # Convert set/list to iterator
+def batch_generator(arrays):
+    it = iter(arrays)
     while True:
-        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
+        batch = list(islice(it, config.score_batch_size))
         if not batch:
             break
-        updated_dict.update(batch_score(batch))
+        yield batch
+
+def random_batch_generator():
+    n_full_batches = config.sample_size // config.score_batch_size
+    remainder = config.sample_size % config.score_batch_size
+    for _ in range(n_full_batches):
+        yield generate_random_arrays(config.score_batch_size)
+    if remainder:
+        yield generate_random_arrays(remainder)
+
+def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
+    torch.set_float32_matmul_precision('highest')
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
+    if config.score_batch_size is None:
+        return parallel_score(list(arrays) if arrays is not None else generate_random_arrays(config.sample_size))
+    updated_dict = {}
+    if arrays is None:
+        batches = random_batch_generator()
+    else:
+        batches = batch_generator(arrays)
+    for batch in batches:
+        updated_dict.update(parallel_score(batch))
     return updated_dict
 
 
-def batch_improve(arrays_items):
+def parallel_improve(arrays_items):
     n_attempts = na * config.num_improve
     p = .3/math.sqrt(na)
     arrays, values = zip(*arrays_items)
@@ -320,16 +339,16 @@ def batch_improve(arrays_items):
     return {tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
 
 
-def subbatch_improve(arrays_dict):
+def batch_improve(arrays_dict):
     if config.score_batch_size is None:
-        return batch_improve(arrays_dict.items())
+        return parallel_improve(arrays_dict.items())
     updated_dict = {}
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
-        updated_dict.update(batch_improve(batch))
+        updated_dict.update(parallel_improve(batch))
     return updated_dict
 
 
@@ -364,14 +383,9 @@ def main():
         except FileNotFoundError:
             arrays = []
     else:
-        # generate initial sample
-        print('***Generating initial sample***')
-        start_timer = timer()
-        arrays = generate_random_arrays()
-        if debugging:
-            print(f"generating: {timer() - start_timer}")
+        arrays = None
 
-    arrays_dict = subbatch_score(arrays)
+    arrays_dict = batch_score(arrays)
     record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
     # MAIN-LOOP #
@@ -383,7 +397,7 @@ def main():
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
             print('\n***Improving***')
-            arrays_dict = subbatch_improve(arrays_dict)
+            arrays_dict = batch_improve(arrays_dict)
             if debugging:
                 print(f"improving: {timer() - start_timer}")
             record_stats(arrays_dict, "improved")
@@ -397,7 +411,8 @@ def main():
         if params.skip_first_training:
             params.skip_first_training = False
         else:
-            torch.cuda.empty_cache()
+            if device.startswith('cuda'):
+                torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
@@ -410,12 +425,13 @@ def main():
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data
-        torch.cuda.empty_cache()
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
         start_timer = timer()
         new_arrays = transformer.sample()
-        new_arrays_dict = subbatch_score(new_arrays)
+        new_arrays_dict = batch_score(new_arrays)
         record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
         new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
         arrays_dict = new_arrays_dict
