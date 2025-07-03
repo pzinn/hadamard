@@ -296,8 +296,10 @@ def train(data, **kwargs):
 
     # these parameters are adjusted dynamically during the run
     max_steps = kwargs.get("max_steps", -1)
-    learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
+
+    # learning rate is now a function of steps
+    lr_sched = kwargs.get("lr_sched", lambda step: 5e-4)
 
     # for testing purposes only: scoring function
     global score
@@ -324,7 +326,10 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimiser
-    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    if device.startswith('cuda'):
+        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    else:
+        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -353,13 +358,17 @@ def train(data, **kwargs):
         if not math.isfinite(loss):
             raise RuntimeError("loss is NaN")
         # calculate the gradient, update the weights
+
+        for param_group in optimiser.param_groups:
+            param_group['lr'] = lr_sched(step)
+
         model.zero_grad(set_to_none=True)
         loss.backward()
         optimiser.step()
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            print(f"{step=} ", end='\t')
+            print(f"{step=}, {lr_sched(step)=} ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
@@ -371,10 +380,12 @@ def train(data, **kwargs):
                 save_model()
                 best_loss = test_loss
                 save_step = step
-            elif test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
-                break
-            if step == max_steps:  # termination condition 2: hard cutoff
-                break
+            else:
+                print("\n") # to have nicely aligned test / train stats :)
+                if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
+                    break
+                if step == max_steps:  # termination condition 2: hard cutoff
+                    break
         sys.stdout.flush()
     print("")
     with open(logger.stats_file, 'a') as file:
