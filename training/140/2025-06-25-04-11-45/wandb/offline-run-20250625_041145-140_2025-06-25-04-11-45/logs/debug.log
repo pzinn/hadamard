@@ -1,0 +1,43 @@
+2025-06-25 04:11:45,665 INFO    MainThread:57774 [wandb_setup.py:_flush():81] Current SDK version is 0.20.1
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_setup.py:_flush():81] Configure stats pid to 57774
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_setup.py:_flush():81] Loading settings from /Users/geordiewilliamson/.config/wandb/settings
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_setup.py:_flush():81] Loading settings from /Users/geordiewilliamson/Library/CloudStorage/GoogleDrive-geordw@gmail.com/My Drive/code/hadamard/wandb/settings
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_setup.py:_flush():81] Loading settings from environment variables
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_init.py:setup_run_log_directory():703] Logging user logs to training/140/2025-06-25-04-11-45/wandb/offline-run-20250625_041145-140_2025-06-25-04-11-45/logs/debug.log
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_init.py:setup_run_log_directory():704] Logging internal logs to training/140/2025-06-25-04-11-45/wandb/offline-run-20250625_041145-140_2025-06-25-04-11-45/logs/debug-internal.log
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_init.py:init():831] calling init triggers
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_init.py:init():836] wandb.init called with sweep_config: {}
+config: {'n': 140, 'n_layer': 6, 'n_embd': 128, 'n_embd2': 512, 'n_head': 4, 'stacking': 7, 'sample_size': 4000, 'training_size': 1000, 'learning_rate': 0.002, 'max_iterations': 30, 'training_steps': 200000, 'training_batch_size': 50, 'score_function': 'fft log determinant', 'num_improve': 5, 'weight_decay': 0.01, 'version': 'HEAD -> main, origin/main, origin/HEAD e63ab6f', 'random_seed': 1750788704, 'sample_batch_size': 400, 'score_batch_size': None, 'test_set_size': 10, 'num_workers': 3, 'block_size': 21, 'vocab_size': 129, '_wandb': {}}
+2025-06-25 04:11:45,666 INFO    MainThread:57774 [wandb_init.py:init():872] starting backend
+2025-06-25 04:11:45,674 INFO    MainThread:57774 [wandb_init.py:init():875] sending inform_init request
+2025-06-25 04:11:45,744 INFO    MainThread:57774 [wandb_init.py:init():883] backend started and connected
+2025-06-25 04:11:45,747 INFO    MainThread:57774 [wandb_init.py:init():956] updated telemetry
+2025-06-25 04:11:45,823 INFO    MainThread:57774 [wandb_init.py:init():980] communicating run to backend with 90.0 second timeout
+2025-06-25 04:11:45,826 INFO    MainThread:57774 [wandb_init.py:init():1032] starting run threads in backend
+2025-06-25 04:11:45,960 INFO    MainThread:57774 [wandb_run.py:_console_start():2453] atexit reg
+2025-06-25 04:11:45,961 INFO    MainThread:57774 [wandb_run.py:_redirect():2301] redirect: wrap_raw
+2025-06-25 04:11:45,961 INFO    MainThread:57774 [wandb_run.py:_redirect():2370] Wrapping output streams.
+2025-06-25 04:11:45,961 INFO    MainThread:57774 [wandb_run.py:_redirect():2393] Redirects installed.
+2025-06-25 04:11:45,963 INFO    MainThread:57774 [wandb_init.py:init():1078] run started, returning control to user process
+2025-06-25 04:11:47,054 WARNING MsgRouterThr:57774 [router.py:message_loop():63] [no run ID] message_loop has been closed
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/wandb/sdk/interface/router_sock.py", line 27, in _read_message
+    return self._sock_client.read_server_response(timeout=1)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/wandb/sdk/lib/sock_client.py", line 235, in read_server_response
+    data = self._read_packet_bytes(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/wandb/sdk/lib/sock_client.py", line 220, in _read_packet_bytes
+    raise SockClientClosedError
+wandb.sdk.lib.sock_client.SockClientClosedError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.11/site-packages/wandb/sdk/interface/router.py", line 56, in message_loop
+    msg = self._read_message()
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/wandb/sdk/interface/router_sock.py", line 29, in _read_message
+    raise MessageRouterClosedError from e
+wandb.sdk.interface.router.MessageRouterClosedError
+2025-06-25 04:11:47,056 INFO    MsgRouterThr:57774 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 0 handles.

@@ -1,0 +1,27 @@
+n=140
+n_layer=6
+n_embd=128
+n_embd2=512
+n_head=4
+stacking=7
+sample_size=4000
+training_size=1000
+learning_rate=0.002
+max_iterations=30
+training_steps=200000
+training_batch_size=50
+score_function='fft log determinant'
+num_improve=5
+weight_decay=0.01
+version='HEAD -> main, origin/main, origin/HEAD e63ab6f'
+random_seed=1750788813
+sample_batch_size=400
+score_batch_size=None
+test_set_size=10
+num_workers=1
+block_size=21
+vocab_size=129
+gen           :  min score mean score  max score autocorrel    H-ratio   H-number tally / H-tally
+  0 sample    :   9.075421  23.987265  44.673950   0.253586   0.000000          0 {0: 4000} {}
+  0 improved  :   1.397740   2.777103   5.186416   0.256800   0.000000          0 {0: 4000} {}
+  0 selected  :   1.397740   2.250380   2.478901   0.258029   0.000000          0 {0: 1000} {}

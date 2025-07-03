@@ -416,12 +416,17 @@ def main():
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
+            # linear warmup with fixed base learning rate afterwards:
+            def get_lr(step, warmup_steps=5000):
+                if step < warmup_steps and params.gen == 0:
+                    return config.learning_rate * step / warmup_steps
+                return config.learning_rate*coeff
             if debugging:
                 print(f"{coeff=}")
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
+            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data

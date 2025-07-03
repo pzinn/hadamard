@@ -1,0 +1,55 @@
+{
+  "os":  "macOS-13.4-x86_64-i386-64bit",
+  "python":  "CPython 3.11.2",
+  "startedAt":  "2025-06-24T18:13:34.892335Z",
+  "args":  [
+    "--sample_size",
+    "4000",
+    "--training_size",
+    "1000",
+    "--training_batch_size",
+    "50",
+    "--test_set_size",
+    "10",
+    "--num_workers",
+    "1"
+  ],
+  "program":  "/Users/geordiewilliamson/Library/CloudStorage/GoogleDrive-geordw@gmail.com/My Drive/code/hadamard/hadamard.py",
+  "codePath":  "hadamard.py",
+  "git":  {
+    "remote":  "https://github.com/pzinn/hadamard.git",
+    "commit":  "e63ab6f0712a46cd19891cb4883cf918b0cea544"
+  },
+  "root":  "training/140/2025-06-25-04-13-34/",
+  "host":  "ADR6JN7V91P",
+  "executable":  "/usr/local/opt/python@3.11/bin/python3.11",
+  "codePathLocal":  "hadamard.py",
+  "cpu_count":  10,
+  "cpu_count_logical":  10,
+  "disk":  {
+    "/":  {
+      "total":  "994662584320",
+      "used":  "321492819968"
+    },
+    "/System/Volumes/Data":  {
+      "total":  "994662584320",
+      "used":  "321492819968"
+    }
+  },
+  "memory":  {
+    "total":  "17179869184"
+  },
+  "cpu":  {
+    "count":  10,
+    "countLogical":  10
+  },
+  "apple":  {
+    "name":  "Unknown",
+    "ecpuCores":  2,
+    "pcpuCores":  8,
+    "gpuCores":  16,
+    "memoryGb":  16,
+    "swapTotalBytes":  "10737418240",
+    "ramTotalBytes":  "17179869184"
+  }
+}
