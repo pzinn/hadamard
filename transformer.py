@@ -368,7 +368,8 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            print(f"{step=}, {lr_sched(step)=} ", end='\t')
+#            print(f"{step=}, {lr_sched(step)=} ", end='\t')
+            print(f"{step=}, ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
