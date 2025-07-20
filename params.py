@@ -59,7 +59,7 @@ random_seed = int(time.time())  # 1746533706
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()

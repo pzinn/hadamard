@@ -233,11 +233,8 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
     return updated_dict
 
 
-new_arrays = {}  # global = ugly, fix later
-
-def parallel_improve(arrays_items):
-    global new_arrays
-    p = .3/math.sqrt(na)
+def parallel_improve(arrays_items,new_arrays):
+    p = 1/math.sqrt(na)  # what's the optimum value?
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     if device.startswith('cuda'):
@@ -268,7 +265,7 @@ def parallel_improve(arrays_items):
         if debugging:
             cnt.zero_()
         print('2', end=''); sys.stdout.flush()
-        for i in range(na):
+        for i in range(na):  # used to be na * num_improve
             a = torch.randint(na, ()).item()
             b = torch.randint(na, ()).item()
             if a > b:
@@ -305,19 +302,20 @@ def parallel_improve(arrays_items):
         scores = score(arrays_tensor)
     if not debugging:
         print('')
+    return new_arrays  # convenient
 
-def batch_improve(arrays_dict):
+def batch_improve(arrays_dict,new_arrays):
     if config.score_batch_size is None:
-        return parallel_improve(arrays_dict.items())
+        return parallel_improve(arrays_dict.items(),new_arrays)
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
-        parallel_improve(batch)
+        parallel_improve(batch,new_arrays)
+    return new_arrays  # convenient
 
 def main():
-    global new_arrays
     # logging: text stats file + fancy (tensorboard or wandb)
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
@@ -362,9 +360,7 @@ def main():
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
             print('\n***Improving/selecting***')
-            new_arrays={}
-            batch_improve(arrays_dict)
-            arrays_dict = new_arrays
+            arrays_dict = batch_improve(arrays_dict,{})
             if debugging:
                 print(f"improving: {timer() - start_timer}")
             record_stats(arrays_dict, "selected")
