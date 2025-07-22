@@ -385,8 +385,8 @@ def train(data, **kwargs):
                 print('') # to have nicely aligned test / train stats :)
                 if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
-                if step == max_steps:  # termination condition 2: hard cutoff
-                    break
+            if step == max_steps:  # termination condition 2: hard cutoff
+                break
     print('')
     with open(logger.stats_file, 'a') as file:
         file.write(f'training: {best_loss=} at {save_step=}\n')
