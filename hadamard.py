@@ -300,9 +300,9 @@ def parallel_improve(arrays_items,new_arrays):
         arrays_tensor[:, flip_indices] *= -1
         # Compute new scores after flipping k bits
         scores = score(arrays_tensor)
-    if not debugging:
-        print('')
-    return new_arrays  # convenient
+        if not debugging:
+            print('')
+    return new_arrays
 
 def batch_improve(arrays_dict,new_arrays):
     if config.score_batch_size is None:
@@ -312,8 +312,8 @@ def batch_improve(arrays_dict,new_arrays):
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
-        parallel_improve(batch,new_arrays)
-    return new_arrays  # convenient
+        new_arrays = parallel_improve(batch,new_arrays)
+    return new_arrays
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
