@@ -233,7 +233,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
     return updated_dict
 
 
-def parallel_improve(arrays_items,new_arrays):
+def parallel_improve(arrays_items,new_arrays_dict):
     p = 1/math.sqrt(na)  # what's the optimum value?
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
@@ -285,13 +285,13 @@ def parallel_improve(arrays_items,new_arrays):
         if debugging:
             print(f' improve success rate: {cnt/len(arrays_items)}')
         # update
-        # new_arrays.update({tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)})
+        # new_arrays_dict.update({tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)})
         temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
         if debugging:
             record_stats(temp_arrays, "improved")
-        new_arrays.update(temp_arrays)
+        new_arrays_dict.update(temp_arrays)
         # select
-        new_arrays=best_from(new_arrays)
+        new_arrays_dict=best_from(new_arrays_dict)
         # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
         # Choose k unique bits to flip, same for entire batch
         # variation
@@ -302,18 +302,18 @@ def parallel_improve(arrays_items,new_arrays):
         scores = score(arrays_tensor)
         if not debugging:
             print('')
-    return new_arrays
+    return new_arrays_dict
 
-def batch_improve(arrays_dict,new_arrays):
+def batch_improve(arrays_dict,new_arrays_dict):
     if config.score_batch_size is None:
-        return parallel_improve(arrays_dict.items(),new_arrays)
+        return parallel_improve(arrays_dict.items(),new_arrays_dict)
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
-        new_arrays = parallel_improve(batch,new_arrays)
-    return new_arrays
+        new_arrays_dict = parallel_improve(batch,new_arrays_dict)
+    return new_arrays_dict
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
