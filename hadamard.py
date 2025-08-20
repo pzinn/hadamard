@@ -242,7 +242,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    for _ in range(config.num_improve):
+    for k in range(config.num_improve):
         # step 1: this is the analogue of my old "simple_search2"
         for j in range(config.num_improve):
             if debugging:
@@ -292,14 +292,15 @@ def parallel_improve(arrays_items,new_arrays_dict):
         new_arrays_dict.update(temp_arrays)
         # select
         new_arrays_dict=best_from(new_arrays_dict)
-        # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
-        # Choose k unique bits to flip, same for entire batch
-        # variation
-        flip_indices = torch.rand(na, device=device) < p
-        # Flip selected bits for all arrays in batch
-        arrays_tensor[:, flip_indices] *= -1
-        # Compute new scores after flipping k bits
-        scores = score(arrays_tensor)
+        if k<config.num_improve-1:
+            # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
+            # Choose k unique bits to flip, same for entire batch
+            # variation
+            flip_indices = torch.rand(na, device=device) < p
+            # Flip selected bits for all arrays in batch
+            arrays_tensor[:, flip_indices] *= -1
+            # Compute new scores after flipping k bits
+            scores = score(arrays_tensor)
         if not debugging:
             print('')
     return new_arrays_dict
