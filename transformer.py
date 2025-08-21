@@ -234,44 +234,44 @@ nrnd = rndmod.shape
 print(f"order of symmetry: {rndmod.prod().item()}")
 
 
-def array_to_string(tensor0):  # tensor to tensor
+def array_to_string(array):  # tensor to tensor
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     if score:  # for testing purposes: does the randomisation respect score?
-        old_score = score(tensor0.view(1, na))
-    tensor = tensor0.view(nm, nn)
+        old_score = score(array.view(1, na))
+    array = array.view(nm, nn)
     # symmetry: random permute
-    tensor = tensor[perms[rnd[0]]]
+    array = array[perms[rnd[0]]]
     # symmetry: random rotation
-    tensor = torch.roll(tensor, shifts=rnd[1].item(), dims=1)
+    array = torch.roll(array, shifts=rnd[1].item(), dims=1)
     # symmetry: second rotation
-    tensor[2] = torch.roll(tensor[2], shifts=rnd[2].item(), dims=0)
-    tensor[3] = torch.roll(tensor[3], shifts=rnd[2].item(), dims=0)
+    array[2] = torch.roll(array[2], shifts=rnd[2].item(), dims=0)
+    array[3] = torch.roll(array[3], shifts=rnd[2].item(), dims=0)
     # flip separate now
     if rnd[3]:
-        tensor = tensor[[1,0,2,3]]  # lame
-        tensor[0] = torch.flip(tensor[0], (0,))
-        tensor[1] = torch.flip(tensor[1], (0,))
+        array = array[[1,0,2,3]]  # lame
+        array[0] = torch.flip(array[0], (0,))
+        array[1] = torch.flip(array[1], (0,))
     if rnd[4]:
-        tensor = torch.flip(tensor, (1,))
+        array = torch.flip(array, (1,))
     # symmetry: random signs
     p = 1
     for i in range(nm-1):
         if rnd[5+i]:
             p *= -1
-            tensor[i]*=-1
+            array[i]*=-1
     if p == -1:
-        tensor[nm-1]*=-1
+        array[nm-1]*=-1
     if score:  # for testing purposes: does the randomisation respect score?
-        new_score = score(tensor.view(1,na))
-        if torch.abs(new_score-old_score).item()>1e-5:
-            raise RuntimeError("score not preserved by randomisation",new_score.item(),old_score.item(),torch.abs(new_score-old_score).item())
+        new_score = score(array.view(1, na))
+        if torch.abs(new_score-old_score).item() > 1e-5:
+            raise RuntimeError("score not preserved by randomisation", new_score.item(), old_score.item(), torch.abs(new_score-old_score).item())
     # Convert -1 → 0, +1 → 1
-    tensor.add_(1).div_(2, rounding_mode='trunc')
+    array.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
     if not nice:
-        tensor = F.pad(tensor, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+        array = F.pad(array, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + tensor.view(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + array.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
@@ -310,8 +310,10 @@ def train(data, **kwargs):
 
     # these parameters are adjusted dynamically during the run
     max_steps = kwargs.get("max_steps", -1)
-    learning_rate = kwargs.get("learning_rate", 5e-4)
     eval_freq = kwargs.get("eval_freq", 500)
+
+    # learning rate is now a function of steps
+    lr_sched = kwargs.get("lr_sched", lambda step: 5e-4)
 
     # for testing purposes only: scoring function
     global score
@@ -338,7 +340,10 @@ def train(data, **kwargs):
     test_dataset = CharDataset(test_data, block_size)
 
     # init optimiser
-    optimiser = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    if device.startswith('cuda'):
+        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    else:
+        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
 
     # init sampler, dataloader
     train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
@@ -346,7 +351,6 @@ def train(data, **kwargs):
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
     test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
-    score = None  # stop testing for training phase
 
     # training loop
     step = 0
@@ -366,6 +370,11 @@ def train(data, **kwargs):
         logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
         if not math.isfinite(loss):
             raise RuntimeError("loss is NaN")
+        
+        for param_group in optimiser.param_groups:
+            param_group['lr'] = lr_sched(step)
+
+
         # calculate the gradient, update the weights
         model.zero_grad(set_to_none=True)
         loss.backward()
@@ -373,6 +382,7 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
+#            print(f"{step=}, {lr_sched(step)=} ", end='\t')
             print(f"{step=} ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
@@ -385,12 +395,13 @@ def train(data, **kwargs):
                 save_model()
                 best_loss = test_loss
                 save_step = step
-                if step == max_steps:
-                    max_steps += eval_freq  # don't quit on a winning streak
-            elif test_loss - best_loss + (step-save_step)/max_steps > .3 or step == max_steps:  # termination conditions: done, or we've probably massively overfitted
+            else:
+                print('') # to have nicely aligned test / train stats :)
+                if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
+                    break
+            if step == max_steps:  # termination condition 2: hard cutoff
                 break
-        sys.stdout.flush()
-    print("")
+    print('')
     with open(logger.stats_file, 'a') as file:
         file.write(f'training: {best_loss=} at {save_step=}\n')
 

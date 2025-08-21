@@ -19,8 +19,8 @@ from timeit import default_timer as timer  # to measure exec time
 eps = 1e-5  # scores are heavily discretised so can be made large
 
 
-def generate_random_arrays():
-    return [tuple(row) for row in (2 * torch.randint(2, (config.sample_size, na), device=device) - 1).tolist()]
+def generate_random_arrays(batch_size):
+    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
 
 # MAIN-DEFINITIONS #
 
@@ -162,7 +162,7 @@ def init_score_function():
         score_normalisation = .5  # let's not bother
         cst = 1 / math.sqrt(n)
         def score(m):
-            f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst improves accuracy
+            f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
             if nn % 2 == 0:
@@ -208,32 +208,50 @@ def init_score_function():
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
-# but useful for logging/stats
-def batch_score(arrays):
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()  # Free memory
-    torch.set_float32_matmul_precision('highest')
-    arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
+# but useful for logging/stats. also generates random data at gen 0
+def parallel_score(arrays):
+    if isinstance(arrays,torch.Tensor):
+        arrays_tensor = arrays
+        arrays = [tuple(row) for row in torch.where(arrays_tensor > 0, 1, -1).tolist()]
+    else:
+        arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
     scores = score(arrays_tensor)  # Compute scores in parallel
     return {x: (s, params.gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
 
-
-def subbatch_score(arrays):  # same but in batches of score_batch_size
-    if config.score_batch_size is None:
-        return batch_score(list(arrays))
-    updated_dict = {}
-    it = iter(arrays)  # Convert set/list to iterator
+def batch_generator(arrays):
+    it = iter(arrays)
     while True:
-        batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
+        batch = list(islice(it, config.score_batch_size))
         if not batch:
             break
-        updated_dict.update(batch_score(batch))
+        yield batch
+
+def random_batch_generator():
+    n_full_batches = config.sample_size // config.score_batch_size
+    remainder = config.sample_size % config.score_batch_size
+    for _ in range(n_full_batches):
+        yield generate_random_arrays(config.score_batch_size)
+    if remainder:
+        yield generate_random_arrays(remainder)
+
+def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
+    torch.set_float32_matmul_precision('highest')
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
+    if config.score_batch_size is None:
+        return parallel_score(list(arrays) if arrays is not None else generate_random_arrays(config.sample_size))
+    updated_dict = {}
+    if arrays is None:
+        batches = random_batch_generator()
+    else:
+        batches = batch_generator(arrays)
+    for batch in batches:
+        updated_dict.update(parallel_score(batch))
     return updated_dict
 
 
-def batch_improve(arrays_items):
-    n_attempts = na * config.num_improve
-    p = .3/math.sqrt(na)
+def parallel_improve(arrays_items,new_arrays_dict):
+    p = 1/math.sqrt(na)  # what's the optimum value?
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     if device.startswith('cuda'):
@@ -241,114 +259,79 @@ def batch_improve(arrays_items):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    # step 1: this is the analogue of my old "simple_search2"
-    for j in range(config.num_improve):
-        if debugging:
-            cnt = torch.tensor(0, device=device, dtype=torch.int64)
-        print(f"1({j})", end=''); sys.stdout.flush()
-        for i in range(na):
-            arrays_tensor[:, i] *= -1  # Flip only the i-th bit
-            # Compute new scores for all batch elements in parallel
-            new_scores = score(arrays_tensor)
-            # Identify which flips improved the score
-            mask = new_scores < scores  # True where improvement happens
+    for k in range(config.num_improve):
+        # step 1: this is the analogue of my old "simple_search2"
+        for j in range(config.num_improve):
             if debugging:
-                cnt += torch.sum(mask)
-            # Apply successful bit flips
-            arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
-            scores[mask] = new_scores[mask]  # Update scores accordingly
-        if debugging:
-            print(f' improve success rate: {cnt/len(arrays_items)}')
-    # step 2
-    if debugging:
-        cnt.zero_()
-    print('2', end=''); sys.stdout.flush()
-    for i in range(n_attempts):
-        a = torch.randint(na, ()).item()
-        b = torch.randint(na, ()).item()
-        if a > b:
-            a, b = b, a
-        # Flip selected bits for all arrays in batch
-        arrays_tensor[:, a:b+1] *= -1
-        # Compute new scores after flipping
-        new_scores = score(arrays_tensor)
-        # Identify improvements
-        mask = new_scores < scores
-        if debugging:
-            cnt += torch.sum(mask)
-        # Revert changes for arrays where score did not improve
-        arrays_tensor[~mask, a:b+1] *= -1
-        # Update scores where improvements occurred
-        scores[mask] = new_scores[mask]
-        """
-        # step 3
-        batch_size = arrays_tensor.shape[0]
-        arrays_view = arrays_tensor.view(batch_size,nm,nn)  # reshape, forcing view
-        base = torch.arange(nn, device=device).repeat(batch_size, 1)
-        for j in range(2):
-            shifts = torch.zeros(batch_size, dtype=torch.int64, device=device)
-            for i in range(1,nn):
-                arrays_view[:,j]=torch.roll(arrays_view[:,j], shifts=1, dims=1)
+                cnt = torch.tensor(0, device=device, dtype=torch.int64)
+            print(f"1({j})", end=''); sys.stdout.flush()
+            for i in range(na):
+                arrays_tensor[:, i] *= -1  # Flip only the i-th bit
+                # Compute new scores for all batch elements in parallel
                 new_scores = score(arrays_tensor)
+                # Identify which flips improved the score
                 mask = new_scores < scores  # True where improvement happens
                 if debugging:
-                    cnt3 += torch.sum(mask)
-                shifts[mask] = i
+                    cnt += torch.sum(mask)
+                # Apply successful bit flips
+                arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
                 scores[mask] = new_scores[mask]  # Update scores accordingly
-            # slightly annoying: re-roll according to shifts
-            rolled_indices = (base - 1 - shifts.unsqueeze(1)) % nn
-            arrays_view[:, j] = arrays_view[: ,j].gather(1, rolled_indices)
-        """
-    if debugging:
-        print(f' improve success rate: {cnt/len(arrays_items)}')
-    # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
-    if debugging:
-        cnt.zero_()
-    print('3', end=''); sys.stdout.flush()
-    for i in range(n_attempts):
-        # Choose k unique bits to flip, same for entire batch
-        # flip_indices = torch.randperm(n, device=device)[:random.randint(2,max_k)]
-        # variation
-        flip_indices = torch.rand(na, device=device) < p
-        flip_indices[i % na] = True  # just because
-        # Flip selected bits for all arrays in batch
-        arrays_tensor[:, flip_indices] *= -1
-        # Compute new scores after flipping k bits
-        new_scores = score(arrays_tensor)
-        # Identify improvements
-        mask = new_scores < scores
+            if debugging:
+                print(f' improve success rate: {cnt/len(arrays_items)}')
+        # step 2
         if debugging:
-            cnt += torch.sum(mask)
+            cnt.zero_()
+        print('2', end=''); sys.stdout.flush()
+        for i in range(na):  # used to be na * num_improve
+            a = torch.randint(na, ()).item()
+            b = torch.randint(na, ()).item()
+            if a > b:
+                a, b = b, a
+            # Flip selected bits for all arrays in batch
+            arrays_tensor[:, a:b+1] *= -1
+            # Compute new scores after flipping
+            new_scores = score(arrays_tensor)
+            # Identify improvements
+            mask = new_scores < scores
+            if debugging:
+                cnt += torch.sum(mask)
             # Revert changes for arrays where score did not improve
-            # arrays_tensor[(~mask).nonzero(), flip_indices] *= -1  # ugly... especially cause most of the mask will be False
-        arrays_tensor[:, flip_indices] *= -1
-        arrays_tensor[mask.nonzero(), flip_indices] *= -1  # this might be faster?
-        # arrays_tensor[~mask, flip_indices] *= -1  # that doesn't work, left to remember: can't mix masks and tensors of indices
-        # Update scores where improvements occurred
-        scores[mask] = new_scores[mask]
-    if debugging:
-        print(f' improve success rate: {cnt/len(arrays_items)}')
-    else:
-        print('')
-    # Convert back to dict
-    # return {tuple(map(int,x.cpu().numpy())): (s.item(),g) for x, s, g in zip(arrays_tensor, scores, gens) if torch.isfinite(s)}
-    # return {tuple(1 if b>0 else -1 for b in x): (s.item(),g) for x, s, g in zip(arrays_tensor.cpu(), scores.cpu(), gens) if torch.isfinite(s)}
-    # return {tuple(x): (s,g) for x, s, g in zip(arrays_tensor.int().tolist(), scores.tolist(), gens) if math.isfinite(s)}
-    return {tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+            arrays_tensor[~mask, a:b+1] *= -1
+            # Update scores where improvements occurred
+            scores[mask] = new_scores[mask]
+        if debugging:
+            print(f' improve success rate: {cnt/len(arrays_items)}')
+        # update
+        # new_arrays_dict.update({tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)})
+        temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+        if debugging:
+            record_stats(temp_arrays, "improved")
+        new_arrays_dict.update(temp_arrays)
+        # select
+        new_arrays_dict=best_from(new_arrays_dict)
+        if k<config.num_improve-1:
+            # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
+            # Choose k unique bits to flip, same for entire batch
+            # variation
+            flip_indices = torch.rand(na, device=device) < p
+            # Flip selected bits for all arrays in batch
+            arrays_tensor[:, flip_indices] *= -1
+            # Compute new scores after flipping k bits
+            scores = score(arrays_tensor)
+        if not debugging:
+            print('')
+    return new_arrays_dict
 
-
-def subbatch_improve(arrays_dict):
+def batch_improve(arrays_dict,new_arrays_dict):
     if config.score_batch_size is None:
-        return batch_improve(arrays_dict.items())
-    updated_dict = {}
+        return parallel_improve(arrays_dict.items(),new_arrays_dict)
     it = iter(arrays_dict.items())  # Convert dictionary to iterator
     while True:
         batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
         if not batch:
             break
-        updated_dict.update(batch_improve(batch))
-    return updated_dict
-
+        new_arrays_dict = parallel_improve(batch,new_arrays_dict)
+    return new_arrays_dict
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
@@ -381,14 +364,9 @@ def main():
         except FileNotFoundError:
             arrays = []
     else:
-        # generate initial sample
-        print('***Generating initial sample***')
-        start_timer = timer()
-        arrays = generate_random_arrays()
-        if debugging:
-            print(f"generating: {timer() - start_timer}")
+        arrays = None
 
-    arrays_dict = subbatch_score(arrays)
+    arrays_dict = batch_score(arrays)
     record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
     # MAIN-LOOP #
@@ -399,13 +377,10 @@ def main():
         else:
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
-            print('\n***Improving***')
-            arrays_dict = subbatch_improve(arrays_dict)
+            print('\n***Improving/selecting***')
+            arrays_dict = batch_improve(arrays_dict,{})
             if debugging:
                 print(f"improving: {timer() - start_timer}")
-            record_stats(arrays_dict, "improved")
-            print('\n***Selecting***')
-            arrays_dict = best_from(arrays_dict)
             record_stats(arrays_dict, "selected")
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
@@ -414,23 +389,30 @@ def main():
         if params.skip_first_training:
             params.skip_first_training = False
         else:
+            if device.startswith('cuda'):
+                torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
             coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
+            # linear warmup with fixed base learning rate afterwards:
+            def get_lr(step, warmup_steps=10000):
+                return config.learning_rate * coeff * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
             if debugging:
                 print(f"{coeff=}")
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, learning_rate=config.learning_rate*coeff)
+            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
                 print(f"training: {timer() - start_timer}")
         # sample from model to get new data
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
         start_timer = timer()
         new_arrays = transformer.sample()
-        new_arrays_dict = subbatch_score(new_arrays)
+        new_arrays_dict = batch_score(new_arrays)
         record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
         new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
         arrays_dict = new_arrays_dict

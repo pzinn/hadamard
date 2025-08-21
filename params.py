@@ -32,7 +32,7 @@ stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
-score_batch_size = None # sample_size//4  # 2*sample_size  # for scoring/improving. None means no batching
+score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 3  # for cpu parallelisation
 
