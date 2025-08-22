@@ -121,8 +121,8 @@ print(f'{n=}')
 
 # array encoding -- do not change
 nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array, happens to be n here
+nm = 2  # number of blocks
+na = nm * nn  # length of array
 
 
 class ModelConfig:

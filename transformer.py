@@ -225,11 +225,7 @@ def string_to_array(s):  # really, tensor to tuple by now!
     )
 
 
-# Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
-
-
-rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+rndmod = torch.tensor([2*nn, 2*nn, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
@@ -239,14 +235,12 @@ def array_to_string(array):  # tensor to tensor
     if score:  # for testing purposes: does the randomisation respect score?
         old_score = score(array.view(1, na))
     array = array.view(nm, nn)
-    # symmetry: random permute
-    array = array[perms[rnd[0]]]
     # symmetry: random rotation/flip
-    array = torch.roll(array if rnd[1] < nn else torch.flip(array, (1,)), shifts=rnd[1].item(), dims=1)
+    array[0] = torch.roll(array[0] if rnd[0] < nn else torch.flip(array[0], (0,)), shifts=rnd[0].item(), dims=0)
     # symmetry: second rotation/flip
-    array[3] = torch.roll(array[3] if rnd[2] < nn else torch.flip(array[3], (0,)), shifts=rnd[2].item(), dims=0)
+    array[1] = torch.roll(array[1] if rnd[1] < nn else torch.flip(array[1], (0,)), shifts=rnd[1].item(), dims=0)
     # symmetry: random signs
-    array.mul_((rnd[3:7]*2-1).unsqueeze(1))
+    array.mul_((rnd[2:4]*2-1).unsqueeze(1))
     if score:  # for testing purposes: does the randomisation respect score?
         new_score = score(array.view(1, na))
         if torch.abs(new_score-old_score).item() > 1e-5:
