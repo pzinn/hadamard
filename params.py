@@ -13,7 +13,7 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400000
+sample_size = 500000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
@@ -59,7 +59,7 @@ random_seed = int(time.time())  # 1746533706
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()

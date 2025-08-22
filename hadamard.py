@@ -155,9 +155,10 @@ def init_score_function():
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = .5
         cst = 1 / math.sqrt(n)
-        def score(m0):
-            m0 = m0.view(-1, nm, nn)
+        def score(m1):
+            m0 = m1.view(-1, nm, nn)
             m = torch.cat([m0[:, 0:1].expand(-1, 3, -1), m0[:, 1:2]], dim=1)  # lame, of course -- should redo calc
+            #m = torch.stack((m0[:,0,:],m0[:,0,:],m0[:,0,:],m0[:,1,:]),dim=1)
             f = cst * torch.fft.rfft(m, dim=2)  # cst improves accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
