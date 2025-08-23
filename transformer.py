@@ -248,13 +248,13 @@ def array_to_string(array):  # tensor to tensor
         if torch.abs((new_score-old_score)/(new_score+old_score+1)).item() > 1e-3:
             raise RuntimeError("score not preserved by randomisation", array, new_score.item(), old_score.item(), torch.abs(new_score-old_score).item())
     # Convert -1 → 0, +1 → 1
-    #array.add_(1).div_(2, rounding_mode='trunc')
-    array1 = 1+array>>1
+    #array.add_(1).div_(2, rounding_mode='trunc')  # too clever, this shouldn't be in place, we don't wanna mess up the data
+    array = 1+array>>1
     # pad if necessary
     if not nice:
-        array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+        array = F.pad(array, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + array.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
