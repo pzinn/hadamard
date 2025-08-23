@@ -234,11 +234,10 @@ nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
 
-def array_to_string(array):  # tensor to tensor
+def array_to_string(array0):  # tensor to tensor
+    # code updated to make it clearer that we probably don't want to change the original array!
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    if score:  # for testing purposes: does the randomisation respect score?
-        old_score = score(array.view(1, na))
-    array = array.view(nm, nn)
+    array = array0.view(nm, nn).clone()  # cloning to keep original array intact
     # symmetry: random permute
     array = array[perms[rnd[0]]]
     # symmetry: random rotation/flip
@@ -248,9 +247,11 @@ def array_to_string(array):  # tensor to tensor
     # symmetry: random signs
     array.mul_((rnd[3:7]*2-1).unsqueeze(1))
     if score:  # for testing purposes: does the randomisation respect score?
-        new_score = score(array.view(1, na))
-        if torch.abs(new_score-old_score).item() > 1e-5:
-            raise RuntimeError("score not preserved by randomisation", new_score.item(), old_score.item(), torch.abs(new_score-old_score).item())
+        if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
+            raise RuntimeError("array not +-1",array)
+        scores = score(torch.stack((array0,array.view(na))))
+        if torch.abs(scores[0]-scores[1]) > 1e-5:
+            raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
     # Convert -1 → 0, +1 → 1
     array.add_(1).div_(2, rounding_mode='trunc')
     # pad if necessary
