@@ -233,6 +233,8 @@ print("order of symmetry: ", rndmod.prod().item())
 def array_to_string(array):  # tensor to tensor
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     if score:  # for testing purposes: does the randomisation respect score?
+        if torch.all(array.abs()!=1):
+            raise RuntimeError("array not +-1",array)
         old_score = score(array.view(1, na))
     array = array.view(nm, nn)
     # symmetry: random rotation/flip
