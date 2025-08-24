@@ -70,7 +70,9 @@ def record_stats(arrays_dict, prefix=""):
         a2 = np.array(random.choice(arrays)).reshape(nm,nn)
         fft_a1 = np.fft.fft(a1, axis=1)
         fft_a2 = np.fft.fft(a2, axis=1)
-        corr = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=1).real
+        corr1 = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=1).real
+        corr2 = np.fft.ifft(fft_a1 * fft_a2, axis=1).real
+        corr = np.stack([corr1,corr2],axis=1)
         s += np.max(np.sum(np.abs(corr), axis=0))
         # s += sum(x*y for x, y in zip(a1, a2))
     s /= (mc_size * n)
