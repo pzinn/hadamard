@@ -53,7 +53,6 @@ def write_arrays(file_path, arrays):
         for s in arrays:
             file.write(fmt_array(s) + "\n")
 
-
 # for keeping track of stats
 def record_stats(arrays_dict, prefix=""):
     if len(arrays_dict) == 0:
@@ -64,18 +63,24 @@ def record_stats(arrays_dict, prefix=""):
 
     # compute autocorrelation by MC
     mc_size = 1000
+    perms = params.perms.tolist()
     s = 0
     for _ in range(mc_size):
         a1 = np.array(random.choice(arrays)).reshape(nm,nn)
         a2 = np.array(random.choice(arrays)).reshape(nm,nn)
         fft_a1 = np.fft.fft(a1, axis=1)
         fft_a2 = np.fft.fft(a2, axis=1)
-        corr1 = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=1).real
-        corr2 = np.fft.ifft(fft_a1 * fft_a2, axis=1).real
-        corr = np.stack([corr1,corr2],axis=1)
-        s += np.max(np.sum(np.abs(corr), axis=0))
-        # s += sum(x*y for x, y in zip(a1, a2))
-    s /= (mc_size * n)
+        ss = 0
+        for p in perms:
+            corr1 = np.fft.ifft(fft_a1[p] * np.conj(fft_a2), axis=1).real
+            corr2 = np.fft.ifft(fft_a1[p] * fft_a2, axis=1).real
+            corr = np.stack([corr1,corr2],axis=1)
+            corr = np.abs(corr)
+            sss = np.max(np.sum(np.abs(corr[:3,:]), axis=0))+np.max(corr[3,:])
+            if sss>ss:
+                ss=sss
+        s += ss
+    s /= (mc_size * na)
     print(f"Correlation: {s}")
 
     # now scores
