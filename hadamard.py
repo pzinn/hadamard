@@ -239,9 +239,10 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         updated_dict.update(parallel_score(batch))
     return updated_dict
 
-
+# range of #s of random flips. optimum value?
+r1=int(.5*math.sqrt(na))
+r2=int(2*math.sqrt(na))
 def parallel_improve(arrays_items,new_arrays_dict):
-    p = 1/math.sqrt(na)  # what's the optimum value?
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     if device.startswith('cuda'):
@@ -250,7 +251,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     for k in range(config.num_improve):
-        # step 1: this is the analogue of my old "simple_search2"
+        # step 1: flip a single bit
         for j in range(config.num_improve):
             if debugging:
                 cnt = torch.tensor(0, device=device, dtype=torch.int64)
@@ -268,7 +269,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
                 scores[mask] = new_scores[mask]  # Update scores accordingly
             if debugging:
                 print(f' improve success rate: {cnt/len(arrays_items)}')
-        # step 2
+        # step 2: flip contiguous sequences of bits
         if debugging:
             cnt.zero_()
         print('2', end=''); sys.stdout.flush()
@@ -300,13 +301,12 @@ def parallel_improve(arrays_items,new_arrays_dict):
         # select
         new_arrays_dict=best_from(new_arrays_dict)
         if k<config.num_improve-1:
-            # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
-            # Choose k unique bits to flip, same for entire batch
-            # variation
-            flip_indices = torch.rand(na, device=device) < p
+            # step 3: choose r bits to flip (same for entire batch)
+            r = torch.randint(r1,r2,())
+            flip_indices = torch.randint(0, na, size=(r,), device=device, dtype=torch.int64)  # not worried about repeats, r << n ...
             # Flip selected bits for all arrays in batch
-            arrays_tensor[:, flip_indices] *= -1
-            # Compute new scores after flipping k bits
+            arrays_tensor[:, flip_indices] *= -1  # ... though technically this is undefined behaviour if repeats, so maybe I should be?
+            # Compute new scores after flipping r bits
             scores = score(arrays_tensor)
         if not debugging:
             print('')
