@@ -355,7 +355,7 @@ def train(data, **kwargs):
         # Train on the current batch
         # feed into the model
         logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
-        if not math.isfinite(loss):
+        if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
         
         for param_group in optimiser.param_groups:
