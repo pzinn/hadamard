@@ -11,18 +11,17 @@ import torch.nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
-from itertools import permutations
 import params  # for work_dir
-from params import na, nn, nm, device, config, resume_training
+from params import na, nn, nm, device, config, resume_training, rotate
 import logger
 
 # -----------------------------------------------------------------------------
 
 
 # -----------------------------------------------------------------------------
-# Transformer Language Model (*exactly* as used in GPT-2)
+# Transformer Language Model
 
-class NewGELU(torch.nn.Module):
+class MyGELU(torch.nn.Module):
     """
     Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
     Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
@@ -82,7 +81,7 @@ class Block(torch.nn.Module):
         self.mlp = torch.nn.ModuleDict(dict(
             c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
-            act     = NewGELU(),
+            act     = MyGELU(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
@@ -225,27 +224,10 @@ def string_to_array(s):  # really, tensor to tuple by now!
     )
 
 
-# Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
-
-
-rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
-nrnd = rndmod.shape
-print("order of symmetry: ", rndmod.prod().item())
-
-
-def array_to_string(array0):  # tensor to tensor
-    # code updated to make it clearer that we probably don't want to change the original array!
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    array = array0.view(nm, nn).clone()  # cloning to keep original array intact
-    # symmetry: random permute
-    array = array[perms[rnd[0]]]
-    # symmetry: random rotation/flip
-    array = torch.roll(array if rnd[1] < nn else torch.flip(array, (1,)), shifts=rnd[1].item(), dims=1)
-    # symmetry: second rotation/flip
-    array[3] = torch.roll(array[3] if rnd[2] < nn else torch.flip(array[3], (0,)), shifts=rnd[2].item(), dims=0)
-    # symmetry: random signs
-    array.mul_((rnd[3:7]*2-1).unsqueeze(1))
+def array_to_string(array0):  # (dtype=long) tensor to tensor
+    # code updated to make it clearer that we don't want to change the original array!
+    array = array0.clone()
+    rotate(array)
     if score:  # for testing purposes: does the randomisation respect score?
         if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
             raise RuntimeError("array not +-1",array)
@@ -253,12 +235,12 @@ def array_to_string(array0):  # tensor to tensor
         if torch.abs(scores[0]-scores[1]) > 1e-5:
             raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
     # Convert -1 → 0, +1 → 1
-    array.add_(1).div_(2, rounding_mode='trunc')
+    array1 = (1+array>>1).view(nm,nn)
     # pad if necessary
     if not nice:
-        array = F.pad(array, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+        array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + array.view(string_length, config.stacking).matmul(powers_of_two)
+    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
@@ -414,6 +396,7 @@ if not device.startswith('cuda'):
 else:
     # sample with CPU double buffering
     stream = torch.cuda.Stream()
+    @torch.no_grad()
     def sample():
         load_model()
         model.need_reload = False

@@ -63,7 +63,7 @@ def record_stats(arrays_dict, prefix=""):
 
     # compute autocorrelation by MC
     mc_size = 1000
-    perms = transformer.perms.tolist()
+    perms = params.perms.tolist()
     s = 0
     for _ in range(mc_size):
         a1 = np.array(random.choice(arrays)).reshape(nm,nn)

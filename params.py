@@ -124,7 +124,6 @@ nn = n // 4
 nm = 4  # number of blocks
 na = nm * nn  # length of array, happens to be n here
 
-
 class ModelConfig:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -144,3 +143,28 @@ class ModelConfig:
 
 
 config = ModelConfig(**hparams)
+
+# symmetries
+from itertools import permutations
+import torch
+
+# Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
+perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
+rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+nrnd = rndmod.shape
+print("order of symmetry: ", rndmod.prod().item())
+
+def rotate(array):
+    array=array.view(-1,nm,nn)  # can do batches too (not currently used)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    # symmetry: random permute
+    array.copy_(array[:,perms[rnd[0]]])
+    # symmetry: random rotation/flip
+    array.copy_(torch.roll(array if rnd[1] < nn else torch.flip(array, (2,)), shifts=rnd[1].item(), dims=2))
+    # symmetry: second rotation/flip
+    array[:,3] = torch.roll(array[:,3] if rnd[2] < nn else torch.flip(array[:,3], (1,)), shifts=rnd[2].item(), dims=1)
+    # symmetry: random signs
+    array.mul_((rnd[3:7]*2-1).unsqueeze(1))
+
+
+
