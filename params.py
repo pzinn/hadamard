@@ -13,7 +13,7 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400000
+sample_size = 800_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
@@ -56,7 +56,7 @@ test_randomisation = False  # for debugging purposes, test whether randomisation
 import time
 random_seed = int(time.time())  # 1746533706
 
-device = 'cpu'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
@@ -155,6 +155,7 @@ nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array):
+    array=array.view(-1,na)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     array3=array[:,:3*nn2].view(-1,3,nn2)
     array1=array[:,3*nn2:]
