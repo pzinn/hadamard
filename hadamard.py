@@ -61,30 +61,32 @@ def record_stats(arrays_dict, prefix=""):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
 
-    """
     # compute autocorrelation by MC
     mc_size = 1000
     perms = params.perms.tolist()
     s = 0
     for _ in range(mc_size):
-        a1 = np.array(random.choice(arrays)).reshape(nm,nn)
-        a2 = np.array(random.choice(arrays)).reshape(nm,nn)
-        fft_a1 = np.fft.fft(a1, axis=1)
-        fft_a2 = np.fft.fft(a2, axis=1)
+        a1 = np.array(random.choice(arrays))
+        a2 = np.array(random.choice(arrays))
+        a13 = a1[:3*nn2].reshape(3,nn2)
+        a23 = a1[:3*nn2].reshape(3,nn2)
+        a11 = a1[3*nn2:]
+        a21 = a2[3*nn2:]
+        fft_a1 = np.fft.fft(a11, axis=0)
+        fft_a2 = np.fft.fft(a21, axis=0)
+        corr1 = np.fft.ifft(fft_a1 * np.conj(fft_a2), axis=0).real
+        corr2 = np.fft.ifft(fft_a1 * fft_a2, axis=0).real
+        corr = np.stack([corr1,corr2],axis=0)
+        corr = np.abs(corr)
+        s += np.max(corr)
         ss = 0
         for p in perms:
-            corr1 = np.fft.ifft(fft_a1[p] * np.conj(fft_a2), axis=1).real
-            corr2 = np.fft.ifft(fft_a1[p] * fft_a2, axis=1).real
-            corr = np.stack([corr1,corr2],axis=1)
-            corr = np.abs(corr)
-            sss = np.max(np.sum(np.abs(corr[:3,:]), axis=0))+np.max(corr[3,:])
+            sss = np.sum(a13[p]*a23,axis=(0,1))
             if sss>ss:
                 ss=sss
         s += ss
     s /= (mc_size * na)
     print(f"Correlation: {s}")
-    """
-    s=0
 
     # now scores
     scores = normalise(np.array(scores, dtype=float))
