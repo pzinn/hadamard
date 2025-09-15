@@ -13,18 +13,18 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 800_000
+sample_size = 200_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 200000  # will be adjusted dynamically (to be less than that)
+training_steps = 30000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
-n_layer = 6
-n_embd = 128
+n_layer = 4
+n_embd = 32
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -130,7 +130,7 @@ class ModelConfig:
         if isinstance(self.stacking, int):
             # string_length = n//stacking  # only works if stacking | n
             # string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2 TODO
-            string_length = na
+            string_length = (na-1)//self.stacking+1
             self.block_size = string_length + 1  # block_size : <START> token followed by string
             nchars = 1 << self.stacking
             self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
