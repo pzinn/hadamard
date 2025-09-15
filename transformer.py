@@ -366,10 +366,12 @@ def train(data, **kwargs):
             # save the model to disk if it has improved
             if test_loss < best_loss:
                 save_model()
+                sys.stdout.flush()
                 best_loss = test_loss
                 save_step = step
             else:
                 print('') # to have nicely aligned test / train stats :)
+                sys.stdout.flush()
                 if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
             if step == max_steps:  # termination condition 2: hard cutoff
