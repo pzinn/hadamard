@@ -8,7 +8,7 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nm, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config
 import logger
 import transformer
 # logging/debugging
@@ -61,6 +61,7 @@ def record_stats(arrays_dict, prefix=""):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
 
+    """
     # compute autocorrelation by MC
     mc_size = 1000
     perms = params.perms.tolist()
@@ -82,6 +83,8 @@ def record_stats(arrays_dict, prefix=""):
         s += ss
     s /= (mc_size * na)
     print(f"Correlation: {s}")
+    """
+    s=0
 
     # now scores
     scores = normalise(np.array(scores, dtype=float))
@@ -162,7 +165,14 @@ def init_score_function():
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = .5
         cst = 1 / math.sqrt(n)
-        def score(m):
+        def score(m0):
+            # TEMP reduce to non sym case
+            nm=4
+            ones=torch.ones((m0.size(0),1),device=device,dtype=score_type)
+            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
+                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
+                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
+                         m0[:,3*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))

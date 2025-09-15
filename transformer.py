@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nm, device, config, resume_training, rotate
+from params import na, nn, device, config, resume_training, rotate
 import logger
 
 # -----------------------------------------------------------------------------
@@ -145,7 +145,7 @@ def init_model():
     global my_range
     global string_length
     global segment_string_length
-    global nice
+    #global nice
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -154,9 +154,9 @@ def init_model():
     # stuff for coding/decoding arrays
     powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
     string_length = config.block_size - 1
-    segment_string_length = string_length//nm
-    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
+    # segment_string_length = string_length//nm
+    # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
+    my_range = range(na) # if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
 
 
 def load_model():
@@ -235,10 +235,11 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
         if torch.abs(scores[0]-scores[1]) > 1e-5:
             raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
     # Convert -1 → 0, +1 → 1
-    array1 = (1+array>>1).view(nm,nn)
+    #array1 = (1+array>>1).view(nm,nn)
+    array1 = 1+array>>1
     # pad if necessary
-    if not nice:
-        array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+    #if not nice:
+    #    array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
     return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
 

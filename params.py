@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 35  # size of basic block
+nn = 35  # size of basic block. must be odd for this version!
 n = 4 * nn  # size of matrix
 
 # the parameters below are sweepable: use values, or lists for a sweep
@@ -56,9 +56,9 @@ test_randomisation = False  # for debugging purposes, test whether randomisation
 import time
 random_seed = int(time.time())  # 1746533706
 
-device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+device = 'cpu'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -120,9 +120,8 @@ if n % 4 != 0:
 print(f'{n=}')
 
 # array encoding -- do not change
-nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array, happens to be n here
+nn2 = (nn-1)//2
+na = 3*nn2 + nn  # length of array
 
 class ModelConfig:
     def __init__(self, **kwargs):
@@ -130,7 +129,8 @@ class ModelConfig:
         # Automatically computed values
         if isinstance(self.stacking, int):
             # string_length = n//stacking  # only works if stacking | n
-            string_length = (1+(nn-1)//self.stacking)*nm  # including padding if stacking doesn't divide nn
+            # string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2 TODO
+            string_length = na
             self.block_size = string_length + 1  # block_size : <START> token followed by string
             nchars = 1 << self.stacking
             self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
@@ -149,22 +149,21 @@ from itertools import permutations
 import torch
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
-rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
+rndmod = torch.tensor([len(perms), 2*nn, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array):
-    array=array.view(-1,nm,nn)  # can do batches too (not currently used)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    array3=array[:,:3*nn2].view(-1,3,nn2)
+    array1=array[:,3*nn2:]
     # symmetry: random permute
-    array.copy_(array[:,perms[rnd[0]]])
-    # symmetry: random rotation/flip
-    array.copy_(torch.roll(array if rnd[1] < nn else torch.flip(array, (2,)), shifts=rnd[1].item(), dims=2))
+    array3.copy_(array3[:,perms[rnd[0]]])
     # symmetry: second rotation/flip
-    array[:,3] = torch.roll(array[:,3] if rnd[2] < nn else torch.flip(array[:,3], (1,)), shifts=rnd[2].item(), dims=1)
+    array1.copy_(torch.roll(array1 if rnd[1] < nn else torch.flip(array1, (1,)), shifts=rnd[1].item(), dims=1))
     # symmetry: random signs
-    array.mul_((rnd[3:7]*2-1).unsqueeze(1))
+    array1 *= rnd[2]*2-1
 
 
 
