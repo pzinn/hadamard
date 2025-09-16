@@ -253,6 +253,49 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         updated_dict.update(parallel_score(batch))
     return updated_dict
 
+def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single bit
+    if debugging:
+        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    print(f"1", end=''); sys.stdout.flush()
+    p = torch.randperm(na)  # should it be on device?
+    for i in range(na):
+        arrays_tensor[:, p[i]] *= -1  # Flip only the i-th bit
+        # Compute new scores for all batch elements in parallel
+        new_scores = score(arrays_tensor)
+        # Identify which flips improved the score
+        mask = new_scores < scores  # True where improvement happens
+        if debugging:
+            cnt += torch.sum(mask)
+        # Apply successful bit flips
+        arrays_tensor[~mask, p[i]] *= -1  # Only revert for elements where no improvement
+        scores[mask] = new_scores[mask]  # Update scores accordingly
+    if debugging:
+        print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
+
+def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous sequences of bits
+    if debugging:
+        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    print('2', end=''); sys.stdout.flush()
+    for i in range(na*config.num_improve//2):
+        a = torch.randint(na, ()).item()
+        b = torch.randint(na, ()).item()
+        if a > b:
+            a, b = b, a
+        # Flip selected bits for all arrays in batch
+        arrays_tensor[:, a:b+1] *= -1
+        # Compute new scores after flipping
+        new_scores = score(arrays_tensor)
+        # Identify improvements
+        mask = new_scores < scores
+        if debugging:
+            cnt += torch.sum(mask)
+        # Revert changes for arrays where score did not improve
+        arrays_tensor[~mask, a:b+1] *= -1
+        # Update scores where improvements occurred
+        scores[mask] = new_scores[mask]
+    if debugging:
+        print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
+
 # range of #s of random flips. optimum value?
 r1=int(.5*math.sqrt(na))
 r2=int(2*math.sqrt(na))
@@ -265,68 +308,42 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    for k in range(config.num_improve+1):
-        # step 1: flip a single bit
-        for j in range(config.num_improve):
-            if debugging:
-                cnt = torch.tensor(0, device=device, dtype=torch.int64)
-            print(f"1({j})", end=''); sys.stdout.flush()
-            p = torch.randperm(na)
-            for i in range(na):
-                arrays_tensor[:, p[i]] *= -1  # Flip only the i-th bit
-                # Compute new scores for all batch elements in parallel
-                new_scores = score(arrays_tensor)
-                # Identify which flips improved the score
-                mask = new_scores < scores  # True where improvement happens
-                if debugging:
-                    cnt += torch.sum(mask)
-                # Apply successful bit flips
-                arrays_tensor[~mask, p[i]] *= -1  # Only revert for elements where no improvement
-                scores[mask] = new_scores[mask]  # Update scores accordingly
-            if debugging:
-                print(f' improve success rate: {cnt/len(arrays_items)}')
-        # step 2: flip contiguous sequences of bits
-        if debugging:
-            cnt.zero_()
-        print('2', end=''); sys.stdout.flush()
-        for i in range(na*config.num_improve//2):
-            a = torch.randint(na, ()).item()
-            b = torch.randint(na, ()).item()
-            if a > b:
-                a, b = b, a
-            # Flip selected bits for all arrays in batch
-            arrays_tensor[:, a:b+1] *= -1
-            # Compute new scores after flipping
-            new_scores = score(arrays_tensor)
-            # Identify improvements
-            mask = new_scores < scores
-            if debugging:
-                cnt += torch.sum(mask)
-            # Revert changes for arrays where score did not improve
-            arrays_tensor[~mask, a:b+1] *= -1
-            # Update scores where improvements occurred
-            scores[mask] = new_scores[mask]
-        if debugging:
-            print(f' improve success rate: {cnt/len(arrays_items)}')
-        # update
-        # new_arrays_dict.update({tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)})
-        temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
-        if debugging:
-            record_stats(temp_arrays, "improved")
-        new_arrays_dict.update(temp_arrays)
-        # select
-        new_arrays_dict=best_from(new_arrays_dict)
-        if k<config.num_improve:
-            # step 3: choose r bits to flip (same for entire batch)
-            r = torch.randint(r1,r2,())
-            flip_indices = torch.randint(0, na, size=(r,), device=device, dtype=torch.int64)  # not worried about repeats, r << n ...
-            # Flip selected bits for all arrays in batch
-            arrays_tensor[:, flip_indices] *= -1  # ... though technically this is undefined behaviour if repeats, so maybe I should be?
-            # Compute new scores after flipping r bits
-            scores = score(arrays_tensor)
-        if not debugging:
-            print('')
-    return new_arrays_dict
+    # step A
+    improve2(arrays_tensor, scores)
+    for _ in range(config.num_improve):
+        improve1(arrays_tensor, scores)
+    temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+    if debugging:
+        record_stats(temp_arrays, "improved A")
+    new_arrays_dict.update(temp_arrays)
+    # step B: demultiply data
+    nr = config.num_improve  # number of repeats
+    arrays_tensor = arrays_tensor.unsqueeze(0).repeat(nr,1,1)
+    # modify randomly
+    for i in range(nr):
+        r = torch.randint(r1,r2,())
+        flip_indices = torch.randint(0, na, size=(r,), device=device, dtype=torch.int64)  # not worried about repeats, r << n ...
+        # Flip selected bits for all arrays in batch
+        arrays_tensor[i, :, flip_indices] *= -1  # ... though technically this is undefined behaviour if repeats, so maybe I should be?
+    #
+    arrays_tensor = arrays_tensor.view(-1,na)
+    scores = score(arrays_tensor)
+    improve2(arrays_tensor, scores)
+    for _ in range(config.num_improve):
+        improve1(arrays_tensor, scores)
+    # keep only best version
+    scores = scores.view(nr,-1)
+    arrays_tensor = arrays_tensor.view(nr,-1,na)
+    scores, inds = torch.min(scores, dim=0)
+    rows = torch.arange(inds.shape[0], device=device)
+    arrays_tensor = arrays_tensor[inds,rows]
+    temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
+    if debugging:
+        record_stats(temp_arrays, "improved B")
+    new_arrays_dict.update(temp_arrays)
+    # select
+    new_arrays_dict=best_from(new_arrays_dict)  # how often should I do this?
+    return new_arrays_dict  # needed because of best_from
 
 def batch_improve(arrays_dict,new_arrays_dict):
     if config.score_batch_size is None:
@@ -337,7 +354,7 @@ def batch_improve(arrays_dict,new_arrays_dict):
         if not batch:
             break
         new_arrays_dict = parallel_improve(batch,new_arrays_dict)
-    return new_arrays_dict
+    return new_arrays_dict  # needed because of best_from
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
