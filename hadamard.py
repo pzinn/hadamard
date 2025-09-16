@@ -250,7 +250,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    for k in range(config.num_improve):
+    for k in range(config.num_improve+1):
         # step 1: flip a single bit
         for j in range(config.num_improve):
             if debugging:
@@ -273,7 +273,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
         if debugging:
             cnt.zero_()
         print('2', end=''); sys.stdout.flush()
-        for i in range(na):  # used to be na * num_improve
+        for i in range(na*config.num_improve//2):
             a = torch.randint(na, ()).item()
             b = torch.randint(na, ()).item()
             if a > b:
@@ -300,7 +300,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
         new_arrays_dict.update(temp_arrays)
         # select
         new_arrays_dict=best_from(new_arrays_dict)
-        if k<config.num_improve-1:
+        if k<config.num_improve:
             # step 3: choose r bits to flip (same for entire batch)
             r = torch.randint(r1,r2,())
             flip_indices = torch.randint(0, na, size=(r,), device=device, dtype=torch.int64)  # not worried about repeats, r << n ...
