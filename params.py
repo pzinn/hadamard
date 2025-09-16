@@ -13,18 +13,18 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 200_000
+sample_size = 400_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 30000  # will be adjusted dynamically (to be less than that)
+training_steps = 100_000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4
-n_embd = 32
+n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -58,7 +58,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = ''  # '' | 'tensorboard' | 'wandb'
+logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse

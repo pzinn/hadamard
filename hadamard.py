@@ -268,8 +268,9 @@ def parallel_improve(arrays_items,new_arrays_dict):
             if debugging:
                 cnt = torch.tensor(0, device=device, dtype=torch.int64)
             print(f"1({j})", end=''); sys.stdout.flush()
+            p = torch.randperm(na)
             for i in range(na):
-                arrays_tensor[:, i] *= -1  # Flip only the i-th bit
+                arrays_tensor[:, p[i]] *= -1  # Flip only the i-th bit
                 # Compute new scores for all batch elements in parallel
                 new_scores = score(arrays_tensor)
                 # Identify which flips improved the score
@@ -277,7 +278,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
                 if debugging:
                     cnt += torch.sum(mask)
                 # Apply successful bit flips
-                arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
+                arrays_tensor[~mask, p[i]] *= -1  # Only revert for elements where no improvement
                 scores[mask] = new_scores[mask]  # Update scores accordingly
             if debugging:
                 print(f' improve success rate: {cnt/len(arrays_items)}')
