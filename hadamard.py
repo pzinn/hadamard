@@ -170,7 +170,7 @@ def init_score_function():
         def score(m0):
             # TEMP reduce to non sym case
             nm=4
-            ones=torch.ones((m0.size(0),1),device=device,dtype=score_type)
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
             m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
                          m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
                          m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
