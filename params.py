@@ -145,3 +145,40 @@ class ModelConfig:
 
 
 config = ModelConfig(**hparams)
+
+# symmetries
+from itertools import permutations
+import torch
+
+# Prepare permutations
+perms = torch.tensor([[0,1,2,3],[2,3,0,1],[1,0,3,2],[3,2,1,0]], dtype=torch.long)
+
+rndmod = torch.tensor([len(perms), nn, nn, 2, 2, 2, 2, 2], dtype=torch.int64)
+nrnd = rndmod.shape
+print(f"order of symmetry: {rndmod.prod().item()}")
+
+def rotate(array):
+    array = array.view(nm, nn)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    # symmetry: random permute
+    array.copy_(array[perms[rnd[0]]])
+    # symmetry: random rotation
+    array.copy_(torch.roll(array, shifts=rnd[1].item(), dims=1))
+    # symmetry: second rotation
+    array[2] = torch.roll(array[2], shifts=rnd[2].item(), dims=0)
+    array[3] = torch.roll(array[3], shifts=rnd[2].item(), dims=0)
+    # flip separate now
+    if rnd[3]:
+        array.copy_(array[[1,0,2,3]])  # lame
+        array[0] = torch.flip(array[0], (0,))
+        array[1] = torch.flip(array[1], (0,))
+    if rnd[4]:
+        array.copy_(torch.flip(array, (1,)))
+    # symmetry: random signs
+    p = 1
+    for i in range(nm-1):
+        if rnd[5+i]:
+            p *= -1
+            array[i]*=-1
+    if p == -1:
+        array[nm-1]*=-1
