@@ -59,7 +59,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = ''  # '' | 'tensorboard' | 'wandb'
+logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -123,7 +123,7 @@ print(f'{n=}')
 # array encoding -- do not change
 nn = n // 4
 nn2 = (nn-1)//2
-na = 4*nn2  # length of array
+na = 2*nn2 + nn  # length of array
 
 
 class ModelConfig:
@@ -149,9 +149,21 @@ config = ModelConfig(**hparams)
 from itertools import permutations
 import torch
 
-rndmod = torch.tensor([2, 2], dtype=torch.int64)
+rndmod = torch.tensor([2, nn, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print(f"order of symmetry: {rndmod.prod().item()}")
 
 def rotate(array):
-    pass  # TODO
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    array2=array[:2*nn2]
+    array1=array[2*nn2:]
+    # symmetry: random permute
+    if rnd[0]:
+        array2.copy_(torch.roll(array2, shifts=nn2, dims=0))
+    # symmetry: random rotation
+    array1.copy_(torch.roll(array1, shifts=rnd[1].item(), dims=0))
+    # flip separate now
+    if rnd[2]:
+        array1.copy_(torch.flip(array1, (0,)))
+    if rnd[3]:
+        array1 *= -1

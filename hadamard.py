@@ -167,15 +167,11 @@ def init_score_function():
         def score(m0):
             # reduce to nonsym case
             nm=4
-            ones=torch.ones((m0.size(0),nm,1),device=m0.device,dtype=score_type)
-            """
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
             m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
                          m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
                          m0[:,2*nn2:],m0[:,2*nn2:]),dim=1)
-            """
-            m0=m0.view(-1,nm,nn2)
-            m=torch.cat((m0,ones,torch.flip(m0,(2,))),dim=2)
-            f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+            f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
             if nn % 2 == 0:
