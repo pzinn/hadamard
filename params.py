@@ -14,7 +14,7 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 1000000
+sample_size = 800_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
@@ -24,8 +24,8 @@ training_steps = 400000  # will be adjusted dynamically (to be less than that)
 num_improve = 5  # number of times data get improved per generation
 
 # transformer parameters
-n_layer = 6
-n_embd = 128
+n_layer = 4
+n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -55,7 +55,7 @@ test_randomisation = False  # for debugging purposes, test whether randomisation
 
 
 import time
-random_seed = 1749560818 # int(time.time())  # 1746533706
+random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
@@ -122,8 +122,8 @@ print(f'{n=}')
 
 # array encoding -- do not change
 nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array, happens to be n here
+nn2 = (nn-1)//2
+na = 2*nn2 + nn  # length of array
 
 
 class ModelConfig:
@@ -131,8 +131,7 @@ class ModelConfig:
         self.__dict__.update(kwargs)
         # Automatically computed values
         if isinstance(self.stacking, int):
-            # string_length = n//stacking  # only works if stacking | n
-            string_length = (1+(nn-1)//self.stacking)*nm  # including padding if stacking doesn't divide nn
+            string_length = (na-1)//self.stacking+1  # including padding if stacking doesn't divide na
             self.block_size = string_length + 1  # block_size : <START> token followed by string
             nchars = 1 << self.stacking
             self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
@@ -150,35 +149,21 @@ config = ModelConfig(**hparams)
 from itertools import permutations
 import torch
 
-# Prepare permutations
-perms = torch.tensor([[0,1,2,3],[2,3,0,1],[1,0,3,2],[3,2,1,0]], dtype=torch.long)
-
-rndmod = torch.tensor([len(perms), nn, nn, 2, 2, 2, 2, 2], dtype=torch.int64)
+rndmod = torch.tensor([2, nn, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print(f"order of symmetry: {rndmod.prod().item()}")
 
 def rotate(array):
-    array = array.view(nm, nn)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    array2=array[:2*nn2]
+    array1=array[2*nn2:]
     # symmetry: random permute
-    array.copy_(array[perms[rnd[0]]])
+    if rnd[0]:
+        array2.copy_(torch.roll(array2, shifts=nn2, dims=0))
     # symmetry: random rotation
-    array.copy_(torch.roll(array, shifts=rnd[1].item(), dims=1))
-    # symmetry: second rotation
-    array[2] = torch.roll(array[2], shifts=rnd[2].item(), dims=0)
-    array[3] = torch.roll(array[3], shifts=rnd[2].item(), dims=0)
+    array1.copy_(torch.roll(array1, shifts=rnd[1].item(), dims=0))
     # flip separate now
+    if rnd[2]:
+        array1.copy_(torch.flip(array1, (0,)))
     if rnd[3]:
-        array.copy_(array[[1,0,2,3]])  # lame
-        array[0] = torch.flip(array[0], (0,))
-        array[1] = torch.flip(array[1], (0,))
-    if rnd[4]:
-        array.copy_(torch.flip(array, (1,)))
-    # symmetry: random signs
-    p = 1
-    for i in range(nm-1):
-        if rnd[5+i]:
-            p *= -1
-            array[i]*=-1
-    if p == -1:
-        array[nm-1]*=-1
+        array1 *= -1

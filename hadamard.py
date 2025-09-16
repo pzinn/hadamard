@@ -8,7 +8,7 @@ import torch
 import heapq
 from itertools import islice
 import params
-from params import n, na, nm, nn, device, resume, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config
 import logger
 import transformer
 # logging/debugging
@@ -62,6 +62,7 @@ def record_stats(arrays_dict, prefix=""):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
 
+    """
     # compute autocorrelation by MC
     mc_size = 1000
     s = 0
@@ -75,6 +76,8 @@ def record_stats(arrays_dict, prefix=""):
         # s += sum(x*y for x, y in zip(a1, a2))
     s /= (mc_size * n)
     print(f"Correlation: {s}")
+    """
+    s=0
 
     # now scores
     scores = normalise(np.array(scores, dtype=float))
@@ -161,7 +164,13 @@ def init_score_function():
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = .5  # let's not bother
         cst = 1 / math.sqrt(n)
-        def score(m):
+        def score(m0):
+            # reduce to nonsym case
+            nm=4
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
+            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
+                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
+                         m0[:,2*nn2:],m0[:,2*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             # we do separately real pieces for accuracy reasons
             s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
@@ -251,7 +260,6 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 
 
 def parallel_improve(arrays_items,new_arrays_dict):
-    p = 1/math.sqrt(na)  # what's the optimum value?
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
     if device.startswith('cuda'):
@@ -260,13 +268,14 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     for k in range(config.num_improve):
-        # step 1: this is the analogue of my old "simple_search2"
+        # step 1: flip a single bit
         for j in range(config.num_improve):
             if debugging:
                 cnt = torch.tensor(0, device=device, dtype=torch.int64)
             print(f"1({j})", end=''); sys.stdout.flush()
+            p = torch.randperm(na)
             for i in range(na):
-                arrays_tensor[:, i] *= -1  # Flip only the i-th bit
+                arrays_tensor[:, p[i]] *= -1  # Flip only the i-th bit
                 # Compute new scores for all batch elements in parallel
                 new_scores = score(arrays_tensor)
                 # Identify which flips improved the score
@@ -274,11 +283,11 @@ def parallel_improve(arrays_items,new_arrays_dict):
                 if debugging:
                     cnt += torch.sum(mask)
                 # Apply successful bit flips
-                arrays_tensor[~mask, i] *= -1  # Only revert for elements where no improvement
+                arrays_tensor[~mask, p[i]] *= -1  # Only revert for elements where no improvement
                 scores[mask] = new_scores[mask]  # Update scores accordingly
             if debugging:
                 print(f' improve success rate: {cnt/len(arrays_items)}')
-        # step 2
+        # step 2: flip contiguous sequences of bits
         if debugging:
             cnt.zero_()
         print('2', end=''); sys.stdout.flush()
@@ -313,6 +322,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
             # step 3: this is the analogue of my old "simple_search3" except it doesn't stop at first success
             # Choose k unique bits to flip, same for entire batch
             # variation
+            p = 1/math.sqrt(na)  # what's the optimum value?
             flip_indices = torch.rand(na, device=device) < p
             # Flip selected bits for all arrays in batch
             arrays_tensor[:, flip_indices] *= -1
