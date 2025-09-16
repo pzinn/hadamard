@@ -19,6 +19,7 @@ from timeit import default_timer as timer  # to measure exec time
 eps = 1e-5  # scores are heavily discretised so can be made large
 
 
+@torch.inference_mode()
 def generate_random_arrays(batch_size):
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
 
@@ -167,6 +168,7 @@ def init_score_function():
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = .5
         cst = 1 / math.sqrt(n)
+        @torch.inference_mode()
         def score(m0):
             # TEMP reduce to non sym case
             nm=4
@@ -254,6 +256,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 # range of #s of random flips. optimum value?
 r1=int(.5*math.sqrt(na))
 r2=int(2*math.sqrt(na))
+@torch.inference_mode()
 def parallel_improve(arrays_items,new_arrays_dict):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
