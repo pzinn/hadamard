@@ -20,9 +20,9 @@ import logger
 
 
 # -----------------------------------------------------------------------------
-# Transformer Language Model (*exactly* as used in GPT-2)
+# Transformer Language Model
 
-class NewGELU(torch.nn.Module):
+class MyGELU(torch.nn.Module):
     """
     Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
     Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
@@ -82,7 +82,7 @@ class Block(torch.nn.Module):
         self.mlp = torch.nn.ModuleDict(dict(
             c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
-            act     = NewGELU(),
+            act     = MyGELU(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
@@ -368,7 +368,7 @@ def train(data, **kwargs):
         # Train on the current batch
         # feed into the model
         logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
-        if not math.isfinite(loss):
+        if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
         
         for param_group in optimiser.param_groups:
@@ -427,6 +427,7 @@ if not device.startswith('cuda'):
 else:
     # sample with CPU double buffering
     stream = torch.cuda.Stream()
+    @torch.no_grad()
     def sample():
         load_model()
         model.need_reload = False
