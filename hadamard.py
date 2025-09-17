@@ -294,12 +294,12 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
 def mod_score(m):
-    return score(torch.tanh(.4*m))+.25*torch.sum(m**2,dim=1)  # the coeff inside tanh might be crucial
+    return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
 
 def improve3(arrays_tensor,score_fn,steps=1000,lr=.01,mixed_precision=True):
     eps = 1e-6 * arrays_tensor.shape[0]
     x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
-    scaler = torch.amp.GradScaler('cuda',enabled=mixed_precision)
+    scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
     # opt = torch.optim.SGD([x], lr=lr)
     opt = torch.optim.AdamW([x], lr=lr)
@@ -308,7 +308,7 @@ def improve3(arrays_tensor,score_fn,steps=1000,lr=.01,mixed_precision=True):
 
     for t in range(steps):
         opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast('cuda',enabled=mixed_precision):
+        with torch.amp.autocast(device,enabled=mixed_precision):
             scores = score_fn(x)
             prev_loss = loss
             loss = scores.sum()
@@ -329,7 +329,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
-    arrays_tensor1 = improve3(arrays_tensor,mod_score)
+    arrays_tensor1 = improve3((0.2+0.4*torch.rand((1,na),device=device))*arrays_tensor,mod_score)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
