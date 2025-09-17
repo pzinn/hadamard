@@ -168,7 +168,6 @@ def init_score_function():
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = .5
         cst = 1 / math.sqrt(n)
-        @torch.inference_mode()
         def score(m0):
             # TEMP reduce to non sym case
             nm=4
@@ -296,9 +295,33 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
     if debugging:
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
-# range of #s of random flips. optimum value?
-r1=int(.5*math.sqrt(na))
-r2=int(2*math.sqrt(na))
+def mod_score(m):
+    return score(torch.tanh(.4*m))+.25*torch.sum(m**2,dim=1)  # the coeff inside tanh might be crucial
+
+def improve3(arrays_tensor,score_fn,steps=10000,lr=.01,mixed_precision=True):
+    eps = 1e-6 * arrays_tensor.shape[0]
+    x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
+    scaler = torch.amp.GradScaler('cuda',enabled=mixed_precision)
+
+    # opt = torch.optim.SGD([x], lr=lr)
+    opt = torch.optim.AdamW([x], lr=lr)
+
+    loss = 1e10
+
+    for t in range(steps):
+        opt.zero_grad(set_to_none=True)
+        with torch.amp.autocast('cuda',enabled=mixed_precision):
+            scores = score_fn(x)
+            prev_loss = loss
+            loss = scores.sum()
+            if loss - prev_loss > -eps:
+                break
+        scaler.scale(loss).backward()
+        scaler.step(opt)
+        scaler.update()
+
+    return x.detach(), scores
+
 @torch.inference_mode()
 def parallel_improve(arrays_items,new_arrays_dict):
     arrays, values = zip(*arrays_items)
@@ -308,38 +331,15 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    # step A
+    # step A: demultiply data
+    arrays_tensor1, scores1 = improve3(arrays_tensor,mod_score)
+    arrays_tensor = torch.cat((arrays_tensor,arrays_tensor1),dim=0)
+    scores = torch.cat((scores,scores1),dim=0)
+    # step B
     improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
     temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
-    if debugging:
-        record_stats(temp_arrays, "improved A")
-    new_arrays_dict.update(temp_arrays)
-    # step B: demultiply data
-    nr = config.num_improve  # number of repeats
-    arrays_tensor = arrays_tensor.unsqueeze(0).repeat(nr,1,1)
-    # modify randomly
-    for i in range(nr):
-        r = torch.randint(r1,r2,())
-        flip_indices = torch.randint(0, na, size=(r,), device=device, dtype=torch.int64)  # not worried about repeats, r << n ...
-        # Flip selected bits for all arrays in batch
-        arrays_tensor[i, :, flip_indices] *= -1  # ... though technically this is undefined behaviour if repeats, so maybe I should be?
-    #
-    arrays_tensor = arrays_tensor.view(-1,na)
-    scores = score(arrays_tensor)
-    improve2(arrays_tensor, scores)
-    for _ in range(config.num_improve):
-        improve1(arrays_tensor, scores)
-    # keep only best version
-    scores = scores.view(nr,-1)
-    arrays_tensor = arrays_tensor.view(nr,-1,na)
-    scores, inds = torch.min(scores, dim=0)
-    rows = torch.arange(inds.shape[0], device=device)
-    arrays_tensor = arrays_tensor[inds,rows]
-    temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
-    if debugging:
-        record_stats(temp_arrays, "improved B")
     new_arrays_dict.update(temp_arrays)
     # select
     new_arrays_dict=best_from(new_arrays_dict)  # how often should I do this?
