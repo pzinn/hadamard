@@ -178,17 +178,13 @@ def init_score_function():
                          m0[:,3*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             # we do separately real pieces for accuracy reasons
-            s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
-            if nn % 2 == 0:
-                s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
-                f = f[:, :, 1:-1]
-            else:
-                f = f[:, :, 1:]
+            s1 = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
+            f = f[:, :, 1:]
             ff = f[:, :3, :].pow(2).sum(dim=1)
-            f.mul_(f.conj())  # f = f * f.conj()
-            ff.mul_(ff.conj())  # ff = ff * ff.conj()
-            s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
-            return s
+            f = f * f.conj() # f.mul_(f.conj())
+            ff = ff * ff.conj() # ff.mul_(ff.conj())
+            s2 = -torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
+            return s1+s2
     elif config.score_function == 'quartic':
         score_type = torch.float16
         score_threshold = n**1.5
@@ -252,6 +248,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         updated_dict.update(parallel_score(batch))
     return updated_dict
 
+@torch.inference_mode()
 def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single bit
     if debugging:
         cnt = torch.tensor(0, device=device, dtype=torch.int64)
@@ -271,6 +268,7 @@ def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single b
     if debugging:
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
+@torch.inference_mode()
 def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous sequences of bits
     if debugging:
         cnt = torch.tensor(0, device=device, dtype=torch.int64)
@@ -298,7 +296,7 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
 def mod_score(m):
     return score(torch.tanh(.4*m))+.25*torch.sum(m**2,dim=1)  # the coeff inside tanh might be crucial
 
-def improve3(arrays_tensor,score_fn,steps=10000,lr=.01,mixed_precision=True):
+def improve3(arrays_tensor,score_fn,steps=1000,lr=.01,mixed_precision=True):
     eps = 1e-6 * arrays_tensor.shape[0]
     x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
     scaler = torch.amp.GradScaler('cuda',enabled=mixed_precision)
@@ -320,9 +318,8 @@ def improve3(arrays_tensor,score_fn,steps=10000,lr=.01,mixed_precision=True):
         scaler.step(opt)
         scaler.update()
 
-    return x.detach(), scores
+    return torch.where(x > 0, 1., -1.).detach()
 
-@torch.inference_mode()
 def parallel_improve(arrays_items,new_arrays_dict):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
@@ -332,13 +329,27 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
-    arrays_tensor1, scores1 = improve3(arrays_tensor,mod_score)
+    arrays_tensor1 = improve3(arrays_tensor,mod_score)
     arrays_tensor = torch.cat((arrays_tensor,arrays_tensor1),dim=0)
-    scores = torch.cat((scores,scores1),dim=0)
+    scores = torch.cat((scores,score(arrays_tensor1)),dim=0)
+    if debugging:
+        # analyse two batches separately
+        arrays_tensor2 = arrays_tensor.view(2,-1,na)
+        scores2 = scores.view(2,-1)
+        for i in range(2):
+            temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
+            record_stats(temp_arrays)
     # step B
     improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
+    if debugging:
+        # analyse two batches separately
+        arrays_tensor2 = arrays_tensor.view(2,-1,na)
+        scores2 = scores.view(2,-1)
+        for i in range(2):
+            temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
+            record_stats(temp_arrays)
     temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
     new_arrays_dict.update(temp_arrays)
     # select
