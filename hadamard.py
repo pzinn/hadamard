@@ -330,12 +330,12 @@ def parallel_improve(arrays_items,new_arrays_dict):
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
     arrays_tensor1 = improve3(arrays_tensor,mod_score)
-    arrays_tensor = torch.cat((arrays_tensor,arrays_tensor1),dim=0)
-    scores = torch.cat((scores,score(arrays_tensor1)),dim=0)
+    arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
+    scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
+    arrays_tensor = arrays_tensor2.view(-1,na)
+    scores = scores2.view(-1)
     if debugging:
         # analyse two batches separately
-        arrays_tensor2 = arrays_tensor.view(2,-1,na)
-        scores2 = scores.view(2,-1)
         for i in range(2):
             temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
             record_stats(temp_arrays)
@@ -343,15 +343,12 @@ def parallel_improve(arrays_items,new_arrays_dict):
     improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
-    if debugging:
-        # analyse two batches separately
-        arrays_tensor2 = arrays_tensor.view(2,-1,na)
-        scores2 = scores.view(2,-1)
-        for i in range(2):
-            temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
+    # update
+    for i in range(2):
+        temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
+        new_arrays_dict.update(temp_arrays)
+        if debugging:
             record_stats(temp_arrays)
-    temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
-    new_arrays_dict.update(temp_arrays)
     # select
     new_arrays_dict=best_from(new_arrays_dict)  # how often should I do this?
     return new_arrays_dict  # needed because of best_from
