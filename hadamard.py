@@ -296,8 +296,8 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
 def mod_score(m):
     return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
 
-def improve3(arrays_tensor,steps=1000,lr=.01,mixed_precision=True):
-    x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
+def improve3(x,steps=1000,lr=.01,mixed_precision=True):
+    x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
     # opt = torch.optim.SGD([x], lr=lr)
@@ -322,7 +322,8 @@ def improve3(arrays_tensor,steps=1000,lr=.01,mixed_precision=True):
     return torch.where(x > 0, 1., -1.).detach()
 
 # simpler version. not used
-def improve3b(arrays_tensor,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
+def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
+    x.requires_grad_(True)
     lo, hi = box
     x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
