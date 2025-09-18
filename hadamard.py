@@ -359,7 +359,8 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
-    arrays_tensor1 = improve3((0.2+0.4*torch.rand((1,na),device=device))*arrays_tensor)
+    arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
+    arrays_tensor1 = improve3(arrays_tensor1)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
