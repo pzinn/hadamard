@@ -293,30 +293,31 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
     if debugging:
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
-def mod_score(m):
-    return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
-
-def improve3(arrays_tensor,score_fn,steps=1000,lr=.01,mixed_precision=True):
-    eps = 1e-6 * arrays_tensor.shape[0]
+def improve3(arrays_tensor,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
+    lo, hi = box
     x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
     # opt = torch.optim.SGD([x], lr=lr)
     opt = torch.optim.AdamW([x], lr=lr)
 
-    loss = 1e10
-
+    prev_scores = None
     for t in range(steps):
         opt.zero_grad(set_to_none=True)
         with torch.amp.autocast(device,enabled=mixed_precision):
-            scores = score_fn(x)
-            prev_loss = loss
+            scores = score(x)
             loss = scores.sum()
-            if loss - prev_loss > -eps:
-                break
+            if prev_scores is not None:
+                not_improved = (scores - prev_scores) > -1e-6
+                if not_improved.all():
+                    print(f"stop at {t}")
+                    break
+            prev_scores = scores.detach()
         scaler.scale(loss).backward()
         scaler.step(opt)
         scaler.update()
+        with torch.no_grad():
+            x.clamp_(min=lo, max=hi)
 
     return torch.where(x > 0, 1., -1.).detach()
 
@@ -329,7 +330,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
-    arrays_tensor1 = improve3((0.2+0.4*torch.rand((1,na),device=device))*arrays_tensor,mod_score)
+    arrays_tensor1 = improve3((0.1+0.8*torch.rand((1,na),device=device))*arrays_tensor)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
