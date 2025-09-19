@@ -353,7 +353,11 @@ def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
 
 vec = torch.rand((nn,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
+fft_conj_vec = torch.conj(fft_vec)
+base = torch.arange(nn, device=device)
 def mysort(arrays_tensor):
+    if params.test_randomisation:
+        s1 = score(arrays_tensor)
     # 1st phase: permute the 3xnn2 parts
     B = arrays_tensor.shape[0]
     m=3
@@ -369,22 +373,24 @@ def mysort(arrays_tensor):
     # apply permutation to rows
     sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn2))
     a.copy_(sorted_a)
-    # 2nd phase: cyclically permute the remaining nn parts
+    # 2nd phase: cyclically permute/reflect/negate the remaining length nn part
     a=arrays_tensor[:,m*nn2:]
-    fft_a = torch.fft.rfft(a, dim=1)
-    corr  = torch.fft.irfft(torch.conj(fft_vec)[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
-    abs_corr = corr.abs()
-    # For each row, pick the shift with minimal score
-    shifts = torch.argmin(abs_corr, dim=1)              # (B,)
-    # Build per-row rotation indices and gather from the original a
-    base = torch.arange(nn, device=device)
-    idx  = (base.unsqueeze(0) + shifts.unsqueeze(1)) % nn   # left-rotation by 'shifts'
-    rot  = a.gather(1, idx)                                # (B, nn)
-    # Decide whether to negate so the final dot is <= 0
-    chosen_corr = corr.gather(1, shifts.view(-1, 1)).squeeze(1)    # (B,)
-    negated = (chosen_corr > 0)                                      # prefer non-positive final dot
-    a.copy_(torch.where(negated.view(-1, 1), -rot, rot))
-    # only reversal missing TODO
+    fft_a = torch.fft.rfft(a, dim=1)  # use fft to quickly compute scalar product with some random vector for ordering
+    sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
+    sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
+    sps = torch.cat([sp_rot, sp_rev], dim=1)   # (B, 2 * nn)
+    flat_idx = sps.abs().argmax(dim=1)         # (B,) over 2*nn options
+    # Gather the chosen transform from the original 'a'
+    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(1) * base.unsqueeze(0)
+    idx = ( signed_base + flat_idx.unsqueeze(1)) % nn
+    transformed = a.gather(1, idx)  # (B, nn)
+    # negate if the chosen scalar product is > 0
+    chosen_sps = sps.gather(1, flat_idx.unsqueeze(1)).squeeze(1)  # (B,)
+    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(1) * transformed)
+    if params.test_randomisation:
+        s2 = score(arrays_tensor)
+        if (s1-s2).abs().max() > 1e-5:
+            raise RuntimeError("score not preserved by sort", s1, s2, (s1-s2).abs().max().item())
 
 def parallel_improve(arrays_items,new_arrays_dict):
     arrays, values = zip(*arrays_items)
