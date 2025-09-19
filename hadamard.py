@@ -351,6 +351,41 @@ def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
 
     return torch.where(x > 0, 1., -1.).detach()
 
+vec = torch.rand((nn,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
+fft_vec = torch.fft.rfft(vec)
+def mysort(arrays_tensor):
+    # 1st phase: permute the 3xnn2 parts
+    B = arrays_tensor.shape[0]
+    m=3
+    a=arrays_tensor[:,:m*nn2].view(B,m,nn2)
+    # start with identity permutation for each batch
+    perm = torch.arange(m, device=device).expand(B, m).clone()
+    # stable sort by last key first, then previous..., up to first column
+    for k in range(nn2):
+        key = a[:, :, k]                 # (B, m)
+        key_in_curr_order = key.gather(1, perm)
+        ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
+        perm = perm.gather(1, ordk)
+    # apply permutation to rows
+    sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn2))
+    a.copy_(sorted_a)
+    # 2nd phase: cyclically permute the remaining nn parts
+    a=arrays_tensor[:,m*nn2:]
+    fft_a = torch.fft.rfft(a, dim=1)
+    corr  = torch.fft.irfft(torch.conj(fft_vec)[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
+    abs_corr = corr.abs()
+    # For each row, pick the shift with minimal score
+    shifts = torch.argmin(abs_corr, dim=1)              # (B,)
+    # Build per-row rotation indices and gather from the original a
+    base = torch.arange(nn, device=device)
+    idx  = (base.unsqueeze(0) + shifts.unsqueeze(1)) % nn   # left-rotation by 'shifts'
+    rot  = a.gather(1, idx)                                # (B, nn)
+    # Decide whether to negate so the final dot is <= 0
+    chosen_corr = corr.gather(1, shifts.view(-1, 1)).squeeze(1)    # (B,)
+    negated = (chosen_corr > 0)                                      # prefer non-positive final dot
+    a.copy_(torch.where(negated.view(-1, 1), -rot, rot))
+    # only reversal missing TODO
+
 def parallel_improve(arrays_items,new_arrays_dict):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
@@ -375,6 +410,8 @@ def parallel_improve(arrays_items,new_arrays_dict):
     improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
+    # step C: do some sorting
+    mysort(arrays_tensor)
     # update
     for i in range(2):
         temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
