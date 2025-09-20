@@ -172,25 +172,20 @@ def init_score_function():
         score_type = torch.float32
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
-        score_normalisation = .5
+        score_normalisation = 1
         cst = 1 / math.sqrt(n)
         def score(m0):
-            # TEMP reduce to non sym case
+            # reduce to non sym case but simplify due to phase alignment of first 3 fft
             nm=4
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
             m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
                          m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
                          m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
                          m0[:,3*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-            # we do separately real pieces for accuracy reasons
-            s1 = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
-            f = f[:, :, 1:]
-            ff = f[:, :3, :].pow(2).sum(dim=1)
-            f = f * f.conj() # f.mul_(f.conj())
-            ff = ff * ff.conj() # ff.mul_(ff.conj())
-            s2 = -torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
-            return s1+s2
+            ff = torch.real(f*f.conj())
+            s = torch.log(ff.sum(dim=1))
+            return -2*s[:,0]-4*s[:,1:].sum(dim=1)
     elif config.score_function == 'quartic':
         score_type = torch.float16
         score_threshold = n**1.5
