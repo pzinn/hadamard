@@ -302,8 +302,42 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
 def mod_score(m):
     return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
 
-
+# optimisation of improve3a
 def improve3(x,steps=1000,lr=.01,mixed_precision=True):
+    x.requires_grad_(True)
+    scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
+
+    # opt = torch.optim.SGD([x], lr=lr)
+    opt = torch.optim.AdamW([x], lr=lr)
+
+    not_improved = None
+    active_mask = torch.ones(x.shape[0], device=device, dtype=torch.bool)
+
+    for t in range(steps):
+        opt.zero_grad(set_to_none=True)
+        with torch.amp.autocast(device,enabled=mixed_precision):
+            scores = mod_score(x[active_mask])
+            loss = scores.sum()
+        scaler.scale(loss).backward()
+        scaler.step(opt)
+        scaler.update()
+        with torch.no_grad():
+            if t==0:
+                prev_scores = scores
+            else:
+                new_active_mask = active_mask.clone()
+                improve = (scores - prev_scores[active_mask]) < -eps
+                if not improve.any():
+                    print(f"All rows converged. Stopping at step {t}.")
+                    break
+                new_active_mask[active_mask] = improve
+                prev_scores[active_mask] = scores
+                active_mask=new_active_mask
+
+    return torch.where(x > 0, 1., -1.).detach()
+
+"""
+def improve3a(x,steps=1000,lr=.01,mixed_precision=True):
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
@@ -345,7 +379,7 @@ def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
             scores = score(x)
             loss = scores.sum()
             if prev_scores is not None:
-                not_improved = (scores - prev_scores) > -1e-6
+                not_improved = (scores - prev_scores) > -eps
                 if not_improved.all():
                     print(f"stop at {t}")
                     break
@@ -357,6 +391,7 @@ def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
             x.clamp_(min=lo, max=hi)
 
     return torch.where(x > 0, 1., -1.).detach()
+"""
 
 vec = torch.rand((nn,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
