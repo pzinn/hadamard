@@ -302,6 +302,7 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
 def mod_score(m):
     return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
 
+
 def improve3(x,steps=1000,lr=.01,mixed_precision=True):
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
@@ -316,7 +317,7 @@ def improve3(x,steps=1000,lr=.01,mixed_precision=True):
             scores = mod_score(x)
             loss = scores.sum()
             if prev_scores is not None:
-                not_improved = (scores - prev_scores) > -1e-6
+                not_improved = (scores - prev_scores) > -eps
                 if not_improved.all():
                     print(f"stop at {t}")
                     break
@@ -508,12 +509,10 @@ def main():
                 torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
-            coeff = 1 if params.gen == 0 or not resume_training else .01+.99*math.sqrt(sum(1 for v in arrays_dict.values() if v[1] == params.gen)/len(arrays_dict))  # decrease training steps depending on how much new stuff added
+            coeff = 1 if params.gen == 0 or not resume_training else .1
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
-                return config.learning_rate * coeff * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
-            if debugging:
-                print(f"{coeff=}")
+                return config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
