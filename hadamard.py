@@ -160,7 +160,13 @@ def init_score_function():
         score_type = torch.float32  # slogdet needs float32
         score_threshold = - n/2 * math.log(n)
         score_normalisation = 1
-        def score(m):
+        def score(m0):
+            # TEMP reduce to non sym case
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
+            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
+                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
+                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
+                         m0[:,3*nn2:]),dim=1)
             return -torch.linalg.slogdet(block_circulant(m))[1]
     elif config.score_function == 'fft log determinant':
         score_type = torch.float32
@@ -411,6 +417,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
         # analyse two batches separately
         for i in range(2):
             temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
+            print(f"pre -improve batch {i}:")
             record_stats(temp_arrays)
     # step B
     improve2(arrays_tensor, scores)
@@ -423,6 +430,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
         temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
         new_arrays_dict.update(temp_arrays)
         if debugging:
+            print(f"post-improve batch {i}:")
             record_stats(temp_arrays)
     # select
     new_arrays_dict=best_from(new_arrays_dict)  # how often should I do this?
@@ -483,10 +491,11 @@ def main():
         else:
             # improve existing data, write to GEN-(gen)
             start_timer = timer()
-            print('\n***Improving/selecting***')
+            print('\n***Improving***')
             arrays_dict = batch_improve(arrays_dict,{})
             if debugging:
-                print(f"improving: {timer() - start_timer}")
+                print(f"improving time: {timer() - start_timer}")
+            print('\n***Selecting***')  # technically already done, but left for clarity of output
             record_stats(arrays_dict, "selected")
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
@@ -510,7 +519,7 @@ def main():
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
-                print(f"training: {timer() - start_timer}")
+                print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
         if device.startswith('cuda'):
             torch.cuda.empty_cache()
@@ -523,7 +532,7 @@ def main():
         new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
         arrays_dict = new_arrays_dict
         if debugging:
-            print(f"sampling: {timer() - start_timer}")
+            print(f"sampling time: {timer() - start_timer}")
 
 
 if is_sweep:
