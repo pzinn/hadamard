@@ -295,10 +295,11 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
 def mod_score(m):
-    return score(torch.tanh(m))#+.25*torch.sum(m**2,dim=1)
+    #return score(torch.tanh(m))
+    return score(m) + torch.sum(m**2,dim=1)
 
 # optimisation of improve3a
-def improve3(x,steps=1000,lr=.01,mixed_precision=True):
+def improve3(x,steps=10000,lr=.01,mixed_precision=True):
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
@@ -317,6 +318,7 @@ def improve3(x,steps=1000,lr=.01,mixed_precision=True):
         scaler.step(opt)
         scaler.update()
         with torch.no_grad():
+            x.clamp_(min=-1, max=1)  # projection
             if t==0:
                 prev_scores = scores
             else:
@@ -354,36 +356,6 @@ def improve3a(x,steps=1000,lr=.01,mixed_precision=True):
         scaler.scale(loss).backward()
         scaler.step(opt)
         scaler.update()
-
-    return torch.where(x > 0, 1., -1.).detach()
-
-# simpler version. not used
-def improve3b(x,steps=1000,lr=.01,mixed_precision=True,box=(-1,1)):
-    x.requires_grad_(True)
-    lo, hi = box
-    x = arrays_tensor.clone().detach().requires_grad_(True)  # optimize the points themselves
-    scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
-
-    # opt = torch.optim.SGD([x], lr=lr)
-    opt = torch.optim.AdamW([x], lr=lr)
-
-    prev_scores = None
-    for t in range(steps):
-        opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device,enabled=mixed_precision):
-            scores = score(x)
-            loss = scores.sum()
-            if prev_scores is not None:
-                not_improved = (scores - prev_scores) > -eps
-                if not_improved.all():
-                    print(f"stop at {t}")
-                    break
-            prev_scores = scores.detach()
-        scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
-        with torch.no_grad():
-            x.clamp_(min=lo, max=hi)
 
     return torch.where(x > 0, 1., -1.).detach()
 """
