@@ -2,6 +2,7 @@
 # coding: utf-8
 
 # a script to check that matrices are Hadamard. takes input from stdin
+# variant for sym branch
 
 import sys
 import numpy as np
@@ -22,8 +23,12 @@ def upblock(x):
                      [-D, -C, B, A]])
 
 
-def score(a):
-    n = len(a)
+def score(a0):
+    one = np.array([1])
+    a=np.concatenate((a0[:nn2],one,np.flip(a0[:nn2]),
+                 a0[nn2:2*nn2],one,np.flip(a0[nn2:2*nn2]),
+                 a0[2*nn2:3*nn2],one,np.flip(a0[2*nn2:3*nn2]),
+                 a0[3*nn2:]))
     m = upblock(a)
     neye = n * np.eye(n, dtype=np.int64)
     mm = m.dot(m.T)-neye
@@ -35,11 +40,17 @@ def score(a):
 def convert(s):
     return np.array([1 if c == "+" else -1 for c in s], dtype=np.int64)
 
+def comp_n(a):
+    global n,nn,nn2
+    nn2 = (len(a)-1)//5
+    nn = 2*nn2+1
+    n = 4 * nn
 
+# na = 3 nn2 + nn = 3 nn2 + 2nn2+1
 def treat(s):
     a = convert(s)
-    n = len(a)
     # print(m)
+    comp_n(a)
     print(n, score(a))
 
 
