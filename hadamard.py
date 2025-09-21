@@ -295,7 +295,7 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
 def mod_score(m):
-    return score(torch.tanh(m))+.25*torch.sum(m**2,dim=1)
+    return score(torch.tanh(m))#+.25*torch.sum(m**2,dim=1)
 
 # optimisation of improve3a
 def improve3(x,steps=1000,lr=.01,mixed_precision=True):
