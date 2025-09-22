@@ -161,7 +161,7 @@ def batch_gradient_descent(
                 #
                 kaput = counter >= tolerance * eval_freq
                 #x[kaput] *= 0.01 + 0.5*torch.rand((1,na),device=device)
-                x[kaput] = (0.4 + 0.6*torch.rand((1,na),device=device))*real_x[kaput]
+                x[kaput] = (0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*real_x[kaput]
                 #x[kaput] = torch.sqrt(torch.rand((1,na),device=device))*real_x[kaput]
                 print(f'{kaput.sum()} {counter.sum()}')
                 counter.zero_()  # reset counter
