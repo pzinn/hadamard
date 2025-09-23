@@ -19,9 +19,58 @@ from timeit import default_timer as timer  # to measure exec time
 eps = 1e-5  # scores are heavily discretised so can be made large
 
 
+import torch
+
+"""
+@torch.no_grad()
+def rs_like_batch(n: int, B: int, dtype=torch.float32):
+    m=1
+    while (1<<m)<n:
+        m+=1
+    L = 1
+    # Work in int32 to avoid overflow of intermediate sums
+    P = torch.ones(B, 1, dtype=torch.int32, device=device)
+    Q = torch.ones(B, 1, dtype=torch.int32, device=device)
+    # Draw all σ_j ∈ {±1} for the whole batch in one go
+    sigmas = (torch.randint(0, 2, (B, m), device=device,dtype=torch.int32) * 2 - 1)
+    for j in range(m):
+        s = sigmas[:, j].view(B, 1)  # shape [B,1]
+        L2 = L << 1
+        # Allocate next level
+        Pn = torch.empty(B, L2, dtype=torch.int32, device=device)
+        Qn = torch.empty_like(Pn)
+        # Coeff recurrences (no padding/cat; just place blocks)
+        Pn[:, :L]  = P
+        Pn[:, L:]  = s * Q
+        Qn[:, :L]  = P
+        Qn[:, L:]  = -s * Q
+        P, Q = Pn, Qn
+        L = L2
+    # Map coefficients to {±1}; treat zeros (very rare) as +1
+    A = torch.sign(P).to(dtype)
+    A[A == 0] = 1
+    # crop
+    starts = torch.randint(0, (1<<m) - n + 1, (B,1), device=device)
+    rots   = torch.randint(0, n, (B,1), device=device)
+    # Indices for cropped-then-rotated view:
+    # (i,k) -> A[i, starts[i] + ((k - rots[i]) mod n)]
+    base = torch.arange(n, device=device).view(1,-1)
+    idx2d = starts + ((base - rots) % n)
+    out = A.gather(dim=1, index=idx2d)     # [B, n], still ±1
+    return out
+"""
+
 @torch.inference_mode()
 def generate_random_arrays(batch_size):
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
+    """
+    # for now rs_like not diverse enough (check autocorrel)
+    a=rs_like_batch(nn2,batch_size)
+    b=rs_like_batch(nn2,batch_size)
+    c=rs_like_batch(nn2,batch_size)
+    d=rs_like_batch(nn,batch_size)
+    return torch.cat((a,b,c,d),dim=1)
+    """
 
 # MAIN-DEFINITIONS #
 
@@ -133,6 +182,7 @@ def record_stats(arrays_dict, prefix=""):
     if prefix:
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
+cst = 1 / math.sqrt(n)
 
 def init_score_function():
     global score, normalise, score_type, score_threshold
@@ -173,14 +223,13 @@ def init_score_function():
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
         score_normalisation = 1
-        cst = 1 / math.sqrt(n)
         def score(m0):
             # reduce to non sym case but simplify due to phase alignment of first 3 fft
             nm=4
             ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
-            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
-                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
+            m=torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+                         ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
+                         ones,m0[:,2*nn2:3*nn2],torch.flip(m0[:,2*nn2:3*nn2],(1,)),
                          m0[:,3*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             ff = torch.real(f*f.conj())
@@ -269,6 +318,7 @@ def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single b
     if debugging:
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 
+"""
 @torch.inference_mode()
 def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous sequences of bits
     if debugging:
@@ -293,6 +343,36 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
         scores[mask] = new_scores[mask]
     if debugging:
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
+"""
+
+@torch.inference_mode()
+def improve2(m0,scores):  # try to infer one of the 3 nn2 arrays from the rest
+    # as in score
+    nm=4
+    ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
+    m=torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+                 ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
+                 ones,m0[:,2*nn2:3*nn2],torch.flip(m0[:,2*nn2:3*nn2],(1,)),
+                 m0[:,3*nn2:]),dim=1).view(-1,nm,nn)  # lazy
+    f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+    ff = torch.real(f*f.conj())
+    ff1 = ff[:,1:].sum(dim=1)  # for now do only one
+    mask = torch.all(ff1<1,dim=1)
+    print("possible",mask.sum())
+    if mask.any():
+        g = torch.sqrt(1-ff1[mask])
+        h = torch.sign(torch.fft.irfft(g,n=nn))
+        h = h * h[:,0:1]  # make first a plus
+        #print(h)
+        hf = cst * torch.fft.rfft(h,dim=1)
+        hff = torch.real(hf*hf.conj())
+        s = torch.log(ff1[mask]+hff)
+        new_scores = -2*s[:,0]-4*s[:,1:].sum(dim=1)
+        improved = new_scores < scores[mask]
+        print("improved",improved.sum())
+        scores[mask][improved]=new_scores[improved]
+        m[mask][improved,0]=h[improved]
+        m0[mask][improved,:nn2]=h[improved,1:nn2+1]
 
 def mod_score(m):
     #return score(torch.tanh(m))
@@ -409,6 +489,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
+    improve2(arrays_tensor, scores)  # TEST
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
     arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
@@ -427,6 +508,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
+    improve2(arrays_tensor, scores)  # TEST
     # step C: do some sorting
     mysort(arrays_tensor)
     # update
