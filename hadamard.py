@@ -356,23 +356,25 @@ def improve2(m0,scores):  # try to infer one of the 3 nn2 arrays from the rest
                  m0[:,3*nn2:]),dim=1).view(-1,nm,nn)  # lazy
     f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
     ff = torch.real(f*f.conj())
-    ff1 = ff[:,1:].sum(dim=1)  # for now do only one
-    mask = torch.all(ff1<1,dim=1)
-    print("possible",mask.sum())
-    if mask.any():
-        g = torch.sqrt(1-ff1[mask])
-        h = torch.sign(torch.fft.irfft(g,n=nn))
-        h = h * h[:,0:1]  # make first a plus
-        #print(h)
-        hf = cst * torch.fft.rfft(h,dim=1)
-        hff = torch.real(hf*hf.conj())
-        s = torch.log(ff1[mask]+hff)
-        new_scores = -2*s[:,0]-4*s[:,1:].sum(dim=1)
-        improved = new_scores < scores[mask]
-        print("improved",improved.sum())
-        scores[mask][improved]=new_scores[improved]
-        m[mask][improved,0]=h[improved]
-        m0[mask][improved,:nn2]=h[improved,1:nn2+1]
+    ffs = ff.sum(dim=1)
+    for i in range(3):
+        g = 1-ffs+ff[:,i]
+        mask = torch.all(g>=0,dim=1)
+        if mask.any():
+            g = torch.sqrt(g[mask])
+            h = torch.fft.irfft(g,n=nn,dim=1)
+            h = torch.where(h > 0, 1., -1.)
+            hf = cst * torch.fft.rfft(h,dim=1)
+            hff = torch.real(hf*hf.conj())
+            s = torch.log(ffs[mask]-ff[mask,i]+hff)
+            new_scores = -2*s[:,0]-4*s[:,1:].sum(dim=1)
+            improved = new_scores < scores[mask]
+            print(f"{i=} improved {improved.sum()} / {mask.sum()}")
+            scores[mask][improved]=new_scores[improved]
+            ffs[mask][improved]=ffs[mask][improved]-ff[mask][improved,i]+hff[improved]
+            ff[mask][improved,i]=hff[improved]  # probably useless
+            m[mask][improved,i]=h[improved]  # probably useless
+            m0[mask][improved,i*nn2:(i+1)*nn2]=h[improved,1:nn2+1]*h[improved,0:1]  # make first a plus
 
 def mod_score(m):
     #return score(torch.tanh(m))
