@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 29  # size of basic block. must be odd for this version!
+nn = 29  # size of basic block. must be odd, prime for this version, and for now = 1 [4]
 n = 4 * nn  # size of matrix
 
 # the parameters below are sweepable: use values, or lists for a sweep

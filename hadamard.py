@@ -135,6 +135,30 @@ def record_stats(arrays_dict, prefix=""):
     if prefix:
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
+@torch.no_grad()
+def legendre_pm1(p: int, *, dtype=torch.float32):
+    """
+    Return length-p tensor in {+1,-1}: a_j = (j|p) with a_0 := +1,
+    randomized by a cyclic shift and a global sign flip.
+    Requires odd prime p.
+    """
+    if p < 3 or p % 2 == 0:
+        raise ValueError("p must be an odd prime")
+    # Mark quadratic residues mod p
+    # Using all k=1..p-1 (or k=1..(p-1)//2 also works) and setting mask[(k*k)%p] = True
+    k = torch.arange(1, p, device=device, dtype=torch.int64)
+    residues = (k * k) % p                           # [p-1]
+    mask = torch.zeros(p, dtype=torch.bool, device=device)
+    mask.scatter_(0, residues, True)                 # mark all quadratic residues; 0 stays False for now
+    # Build a in {+1,-1}; set a_0 = +1 explicitly (0 is a residue too)
+    a = torch.empty(p, dtype=dtype, device=device)
+    a[:] = -1   # TODO rewrite more cleanly
+    a[mask] = 1
+    a[0] = 1
+    return a
+
+print(legendre_pm1(nn))  # testing
+leg = legendre_pm1(nn)
 
 def init_score_function():
     global score, normalise, score_type, score_threshold
@@ -146,21 +170,16 @@ def init_score_function():
         cst = 1 / math.sqrt(n)
         def score(m0):
             # reduce to non sym case but simplify due to phase alignment of first 3 fft
-            nm=3
+            nm=4
             ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
-            m=torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+            m=torch.cat((leg.unsqueeze(0).expand(m0.size(0),nn),
+                         ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
                          ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
                          m0[:,2*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             ff = torch.real(f*f.conj()).sum(dim=1)
-            mask = torch.all(ff < 1,dim=1)  # others are fucked already
-            print(mask.sum())
-            g = torch.sqrt(1-ff[mask])
-            h = 1/cst * torch.fft.irfft(g)
-            print(h)
-            s = torch.full((m0.shape[0],), float('inf'),device=device,dtype=score_type)
-            s[mask] = ((h**2-1)**2).sum(dim=1)
-            return s
+            s = torch.log(ff)
+            return -2*s[:,0]-4*s[:,1:].sum(dim=1)
     else:
         raise Exception('unknown score_function')
     def normalise(sc):
