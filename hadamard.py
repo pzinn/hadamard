@@ -62,6 +62,7 @@ def record_stats(arrays_dict, prefix=""):
     arrays, values = zip(*arrays_items)
     scores, gens = zip(*values)
 
+    """
     # compute autocorrelation by MC
     mc_size = 1000
     perms = params.perms.tolist()
@@ -88,7 +89,8 @@ def record_stats(arrays_dict, prefix=""):
         s += ss
     s /= (mc_size * na)
     print(f"Correlation: {s}")
-
+    """
+    s=0
     # now scores
     scores = normalise(np.array(scores, dtype=float))
     # if debugging:
@@ -136,39 +138,7 @@ def record_stats(arrays_dict, prefix=""):
 
 def init_score_function():
     global score, normalise, score_type, score_threshold
-    if config.score_function != 'fft log determinant':
-        # Generate row indices for circulant
-        indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
-        shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
-        rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
-        V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
-        X = V[:, rolled_indices]
-        X[3] = torch.flip(X[3], dims=[1])
-        X[7] = torch.flip(X[7], dims=[1])
-        full_indices = torch.cat([
-            torch.cat((X[0], X[1], X[2], X[3]), dim=1),
-            torch.cat((X[5], X[0], X[7], X[2]), dim=1),
-            torch.cat((X[6], X[3], X[0], X[5]), dim=1),
-            torch.cat((X[7], X[6], X[1], X[0]), dim=1)
-        ], dim=0)
-        # create the n x n block circulant matrix out of the n bits
-        def block_circulant(x):
-            return torch.cat((x, -x), dim=1)[..., full_indices]
-        # for device=='cuda', float is pretty much compulsory
-    # float16 may be faster but may lead to accuracy issues
-    if config.score_function == 'log determinant':
-        score_type = torch.float32  # slogdet needs float32
-        score_threshold = - n/2 * math.log(n)
-        score_normalisation = 1
-        def score(m0):
-            # TEMP reduce to non sym case
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
-            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
-                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                         m0[:,3*nn2:]),dim=1)
-            return -torch.linalg.slogdet(block_circulant(m))[1]
-    elif config.score_function == 'fft log determinant':
+    if config.score_function == 'fft log determinant':
         score_type = torch.float32
         # score_threshold = - n/4 * math.log(n)
         score_threshold = 0  # see renormalisation of m below
@@ -176,31 +146,21 @@ def init_score_function():
         cst = 1 / math.sqrt(n)
         def score(m0):
             # reduce to non sym case but simplify due to phase alignment of first 3 fft
-            nm=4
+            nm=3
             ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
-            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
-                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                         m0[:,3*nn2:]),dim=1)
+            m=torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+                         ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
+                         m0[:,2*nn2:]),dim=1)
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-            ff = torch.real(f*f.conj())
-            s = torch.log(ff.sum(dim=1))
-            return -2*s[:,0]-4*s[:,1:].sum(dim=1)
-    elif config.score_function == 'quartic':
-        score_type = torch.float16
-        score_threshold = n**1.5
-        score_normalisation = 2*math.sqrt(n)
-        def score(m):
-            C = block_circulant(m)
-            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-    elif config.score_function == 'one':
-        score_type = torch.float16
-        score_threshold = 0
-        score_normalisation = n
-        Idn = n * torch.eye(n, device=device, dtype=score_type)
-        def score(m):
-            C = block_circulant(m)
-            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
+            ff = torch.real(f*f.conj()).sum(dim=1)
+            mask = torch.all(ff < 1,dim=1)  # others are fucked already
+            print(mask.sum())
+            g = torch.sqrt(1-ff[mask])
+            h = 1/cst * torch.fft.irfft(g)
+            print(h)
+            s = torch.full((m0.shape[0],), float('inf'),device=device,dtype=score_type)
+            s[mask] = ((h**2-1)**2).sum(dim=1)
+            return s
     else:
         raise Exception('unknown score_function')
     def normalise(sc):
@@ -412,7 +372,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
     arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
-    arrays_tensor1 = improve3(arrays_tensor1)
+    #arrays_tensor1 = improve3(arrays_tensor1)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
@@ -428,7 +388,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
     # step C: do some sorting
-    mysort(arrays_tensor)
+    #mysort(arrays_tensor)
     # update
     for i in range(2):
         temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}

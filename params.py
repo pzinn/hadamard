@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 35  # size of basic block. must be odd for this version!
+nn = 29  # size of basic block. must be odd for this version!
 n = 4 * nn  # size of matrix
 
 # the parameters below are sweepable: use values, or lists for a sweep
@@ -13,14 +13,14 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400_000
+sample_size = 1_000_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 100_000  # will be adjusted dynamically (to be less than that)
-num_improve = 5  # number of times data get improved per generation
+training_steps = 20_000  # will be adjusted dynamically (to be less than that)
+num_improve = 0  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4
@@ -58,7 +58,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -121,7 +121,7 @@ print(f'{n=}')
 
 # array encoding -- do not change
 nn2 = (nn-1)//2
-na = 3*nn2 + nn  # length of array
+na = 2*nn2 + nn  # length of array
 
 class ModelConfig:
     def __init__(self, **kwargs):
@@ -149,7 +149,7 @@ from itertools import permutations
 import torch
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
+perms = torch.tensor(list(p for p in permutations(range(2))), dtype=torch.long)
 rndmod = torch.tensor([len(perms), 2*nn, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
@@ -157,8 +157,8 @@ print("order of symmetry: ", rndmod.prod().item())
 def rotate(array):
     array=array.view(-1,na)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    array3=array[:,:3*nn2].view(-1,3,nn2)
-    array1=array[:,3*nn2:]
+    array3=array[:,:2*nn2].view(-1,2,nn2)
+    array1=array[:,2*nn2:]
     # symmetry: random permute
     array3.copy_(array3[:,perms[rnd[0]]])
     # symmetry: second rotation/flip
