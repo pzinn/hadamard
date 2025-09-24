@@ -183,9 +183,16 @@ def record_stats(arrays_dict, prefix=""):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 cst = 1 / math.sqrt(n)
+one = torch.tensor([[1]],device=device,dtype=torch.float32)
+def unfold(m0):
+    ones=one.expand(m0.shape[0],1)
+    return torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+                 ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
+                 ones,m0[:,2*nn2:3*nn2],torch.flip(m0[:,2*nn2:3*nn2],(1,)),
+                 m0[:,3*nn2:]),dim=1)
 
 def init_score_function():
-    global score, score_type
+    global score, score0, score_type
     if config.score_function != 'fft log determinant':
         # Generate row indices for circulant
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
@@ -209,27 +216,18 @@ def init_score_function():
     if config.score_function == 'log determinant':
         score_type = torch.float32  # slogdet needs float32
         def score(m0):
-            # TEMP reduce to non sym case
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
-            m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
-                         m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                         m0[:,3*nn2:]),dim=1)
+            m=unfold(m0)
             return n/2 * math.log(n) - torch.linalg.slogdet(block_circulant(m))[1]
     elif config.score_function == 'fft log determinant':
         score_type = torch.float32
-        def score(m0):
-            # reduce to non sym case but simplify due to phase alignment of first 3 fft
-            nm=4
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
-            m=torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
-                         ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         ones,m0[:,2*nn2:3*nn2],torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                         m0[:,3*nn2:]),dim=1)
+        nm=4
+        def score0(m):
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             ff = torch.real(f*f.conj())
             s = torch.log(ff.sum(dim=1))
             return -2*s[:,0]-4*s[:,1:].sum(dim=1)
+        def score(m0):
+            return score0(unfold(m0))
     elif config.score_function == 'quartic':
         score_type = torch.float16
         score_threshold = n**1.5
@@ -339,6 +337,7 @@ def improve2(arrays_tensor,scores):  # used by parallel_improve: flip contiguous
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 """
 
+"""
 @torch.inference_mode()
 def improve2(m0,scores):  # try to infer one of the 3 nn2 arrays from the rest
     # as in score
@@ -369,6 +368,28 @@ def improve2(m0,scores):  # try to infer one of the 3 nn2 arrays from the rest
             ff[mask][improved,i]=hff[improved]  # probably useless
             m[mask][improved,i]=h[improved]  # probably useless
             m0[mask][improved,i*nn2:(i+1)*nn2]=h[improved,1:nn2+1]*h[improved,0:1]  # make first a plus
+"""
+
+@torch.inference_mode()
+def improve2(m0,scores):  # try to use our knowledge of the score fn
+    print(f"2", end=''); sys.stdout.flush()
+    # as in score
+    nm=4
+    m=unfold(m0).view(-1, nm, nn)
+    f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+    ff = torch.real(f*f.conj())
+    ffs = ff.sum(dim=1)
+    f /= torch.sqrt(ffs).unsqueeze(1)  # now their squared sum is one!
+    h = torch.fft.irfft(f,n=nn,dim=2)
+    h = torch.where(h > 0, 1., -1.)
+    new_scores = score0(h)
+    improved = new_scores < scores
+    if debugging:
+        print(f' improve success rate: {improved.sum()/m0.shape[0]}')
+    scores[improved]=new_scores[improved]
+    for i in range(3):
+        m0[improved,i*nn2:(i+1)*nn2]=h[improved,i,1:nn2+1]*h[improved,i,0:1]  # make first a plus
+    m0[improved,3*nn2:]=h[improved,3]
 
 def mod_score(m):
     #return score(torch.tanh(m))
@@ -485,7 +506,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    improve2(arrays_tensor, scores)  # TEST
+    #improve2(arrays_tensor, scores)  # TEST
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
     arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
@@ -501,10 +522,11 @@ def parallel_improve(arrays_items,new_arrays_dict):
             print(f"pre -improve batch {i}:")
             record_stats(temp_arrays)
     # step B
-    improve2(arrays_tensor, scores)
+    for _ in range(config.num_improve):
+        improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
-    improve2(arrays_tensor, scores)  # TEST
+    #improve2(arrays_tensor, scores)  # TEST
     # step C: do some sorting
     mysort(arrays_tensor)
     # update
