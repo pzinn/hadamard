@@ -157,8 +157,8 @@ def legendre_pm1(p: int, *, dtype=torch.float32):
     a[0] = 1
     return a
 
-print(legendre_pm1(nn))  # testing
 leg = legendre_pm1(nn)
+print(leg)
 
 def init_score_function():
     global score, score_type
@@ -386,7 +386,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
     arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
-    #arrays_tensor1 = improve3(arrays_tensor1)
+    arrays_tensor1 = improve3(arrays_tensor1)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
@@ -398,7 +398,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
             print(f"pre -improve batch {i}:")
             record_stats(temp_arrays)
     # step B
-    improve2(arrays_tensor, scores)
+    #improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
     # step C: do some sorting
