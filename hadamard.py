@@ -79,7 +79,7 @@ def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
     smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
-    return {k: v for k, v in items if k in smallest_keys or v[0] < score_threshold + eps}  # always keep H-matrices
+    return {k: v for k, v in items if k in smallest_keys or v[0] < eps}  # always keep H-matrices
     # doesn't
     # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
     # some other discarded alternatives
@@ -139,7 +139,7 @@ def record_stats(arrays_dict, prefix=""):
     print(f"Correlation: {s}")
 
     # now scores
-    scores = normalise(np.array(scores, dtype=float))
+    scores = np.array(scores, dtype=float)
     # if debugging:
     #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
 
@@ -185,7 +185,7 @@ def record_stats(arrays_dict, prefix=""):
 cst = 1 / math.sqrt(n)
 
 def init_score_function():
-    global score, normalise, score_type, score_threshold
+    global score, score_type
     if config.score_function != 'fft log determinant':
         # Generate row indices for circulant
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
@@ -208,8 +208,6 @@ def init_score_function():
     # float16 may be faster but may lead to accuracy issues
     if config.score_function == 'log determinant':
         score_type = torch.float32  # slogdet needs float32
-        score_threshold = - n/2 * math.log(n)
-        score_normalisation = 1
         def score(m0):
             # TEMP reduce to non sym case
             ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)
@@ -217,12 +215,9 @@ def init_score_function():
                          m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
                          m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
                          m0[:,3*nn2:]),dim=1)
-            return -torch.linalg.slogdet(block_circulant(m))[1]
+            return n/2 * math.log(n) - torch.linalg.slogdet(block_circulant(m))[1]
     elif config.score_function == 'fft log determinant':
         score_type = torch.float32
-        # score_threshold = - n/4 * math.log(n)
-        score_threshold = 0  # see renormalisation of m below
-        score_normalisation = 1
         def score(m0):
             # reduce to non sym case but simplify due to phase alignment of first 3 fft
             nm=4
@@ -241,7 +236,8 @@ def init_score_function():
         score_normalisation = 2*math.sqrt(n)
         def score(m):
             C = block_circulant(m)
-            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
+            nrm = torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
+            return (nrm-score_threshold)/score_normalisation
     elif config.score_function == 'one':
         score_type = torch.float16
         score_threshold = 0
@@ -249,12 +245,10 @@ def init_score_function():
         Idn = n * torch.eye(n, device=device, dtype=score_type)
         def score(m):
             C = block_circulant(m)
-            return torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
+            nrm = torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
+            return (nrm-score_threshold)/score_normalisation
     else:
         raise Exception('unknown score_function')
-    def normalise(sc):
-        return (sc-score_threshold)/score_normalisation
-
 
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats. also generates random data at gen 0

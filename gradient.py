@@ -84,7 +84,7 @@ def improve1(x,scores):
         for i in range(na):
             x[:, p[i]] *= -1  # Flip only the i-th bit
             # Compute new scores for all batch elements in parallel
-            new_scores[active_mask] = score(x[active_mask])            
+            new_scores[active_mask] = score(x[active_mask])
             # Identify which flips improved the score
             mask = new_scores < scores  # True where improvement happens
             new_active_mask[mask] = 1
