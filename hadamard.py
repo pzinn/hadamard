@@ -30,7 +30,7 @@ def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
     smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
-    return {k: v for k, v in items if k in smallest_keys or v[0] < score_threshold + eps}  # always keep H-matrices
+    return {k: v for k, v in items if k in smallest_keys or v[0] < eps}  # always keep H-matrices
     # doesn't
     # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
     # some other discarded alternatives
@@ -92,7 +92,7 @@ def record_stats(arrays_dict, prefix=""):
     """
     s=0
     # now scores
-    scores = normalise(np.array(scores, dtype=float))
+    scores = np.array(scores, dtype=float)
     # if debugging:
     #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
 
@@ -161,17 +161,14 @@ print(legendre_pm1(nn))  # testing
 leg = legendre_pm1(nn)
 
 def init_score_function():
-    global score, normalise, score_type, score_threshold
+    global score, score_type
     if config.score_function == 'fft log determinant':
         score_type = torch.float32
-        # score_threshold = - n/4 * math.log(n)
-        score_threshold = 0  # see renormalisation of m below
-        score_normalisation = 1
         cst = 1 / math.sqrt(n)
         def score(m0):
             # reduce to non sym case but simplify due to phase alignment of first 3 fft
             nm=4
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
+            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out, use unsqueeze expand
             m=torch.cat((leg.unsqueeze(0).expand(m0.size(0),nn),
                          ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
                          ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
@@ -182,8 +179,6 @@ def init_score_function():
             return -2*s[:,0]-4*s[:,1:].sum(dim=1)
     else:
         raise Exception('unknown score_function')
-    def normalise(sc):
-        return (sc-score_threshold)/score_normalisation
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
