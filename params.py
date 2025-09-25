@@ -20,7 +20,7 @@ training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
 training_steps = 100_000  # will be adjusted dynamically (to be less than that)
-num_improve = 5  # number of times data get improved per generation
+num_improve = None  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4

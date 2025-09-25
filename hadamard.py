@@ -227,7 +227,7 @@ def init_score_function():
             ffs = ff.sum(dim=1)
             s = torch.log(ffs)
             return -2*s[:,0]-4*s[:,1:].sum(dim=1)
-            # return ((1-ffs)**2).sum(dim=1)  # alternative score
+            # return ((1-ffs)**2).sum(dim=1)  # alternative score which sucks
         def score(m0):
             return score0(unfold(m0))
     elif config.score_function == 'quartic':
@@ -293,27 +293,44 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
     return updated_dict
 
 @torch.inference_mode()
-def improve0(arrays_tensor,scores):  # bruteforce try to flip every single bit
+def improve1(arrays_tensor, scores):
+    print(f"1", end=''); sys.stdout.flush()
     # first let's do it the stupidest way (will recode later)
-    B=arrays_tensor.shape[0]
-    print(f"0", end=''); sys.stdout.flush()
-    inds = torch.full((B,),-1,dtype=torch.int64)
-    for i in range(na):
-        arrays_tensor[:, i] *= -1  # Flip the i-th bit
-        new_scores = score(arrays_tensor)
-        mask = new_scores < scores  # True where improvement happens
-        inds[mask] = i
-        arrays_tensor[:, i] *= -1  # Flip the i-th bit
-        scores[mask] = new_scores[mask]  # Update scores accordingly
-    mask = inds >= 0                          # rows to modify
-    rows = torch.arange(B, device=device)[mask]
-    cols = inds[mask]
-    arrays_tensor[rows, cols] *= -1
-    if debugging:
-        print(f' improve success rate: {mask.sum()/B}')
+    B = arrays_tensor.shape[0]
+    active_mask = torch.ones(B, device=device, dtype=torch.bool)
+    active_rows = torch.arange(B, device=device)
+    while True:
+        # rows we’re actively trying to improve this round
+        M = active_rows.numel()
+        # indices of best bit (−1 means no improvement found)
+        inds = torch.full((M,), -1, dtype=torch.int64, device=device)
+        # Current scores of the active subset (a *view* for comparison)
+        cur = scores[active_rows]
+        # Try flipping each bit, keep any improvement
+        for i in range(na):
+            arrays_tensor[active_rows, i] *= -1          # flip bit i
+            new_scores = score(arrays_tensor[active_rows])
+            improved = new_scores < scores[active_rows]                  # where this flip helps
+            if improved.any():
+                scores[active_rows[improved]] = new_scores[improved]            # write into base `scores`
+                inds[improved] = i
+            arrays_tensor[active_rows, i] *= -1          # flip back
+        # rows that actually improved this round
+        improved_any = inds >= 0
+        if not improved_any.any():
+            break
+        # Apply the winning flips once
+        active_rows = active_rows[improved_any]
+        active_cols = inds[improved_any]
+        arrays_tensor[active_rows, active_cols] *= -1
+        # Next round: only keep rows that improved (they might improve again)
+        active_mask.zero_()
+        active_mask[active_rows] = True
+        if debugging:
+            print(f' improve success rate: {active_mask.sum()/B}')
 
 @torch.inference_mode()
-def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single bit
+def improve1a(arrays_tensor,scores):  # the old improve1: flip a single bit greedily
     if debugging:
         cnt = torch.tensor(0, device=device, dtype=torch.int64)
     print(f"1", end=''); sys.stdout.flush()
@@ -419,6 +436,7 @@ def mod_score(m):
 
 # optimisation of improve3a
 def improve3(x,steps=10000,lr=.01,mixed_precision=True):
+    print(f"3", end=''); sys.stdout.flush()
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
@@ -528,7 +546,6 @@ def parallel_improve(arrays_items,new_arrays_dict):
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
-    #improve2(arrays_tensor, scores)  # TEST
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
     arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
@@ -544,12 +561,10 @@ def parallel_improve(arrays_items,new_arrays_dict):
             print(f"pre -improve batch {i}:")
             record_stats(temp_arrays)
     # step B
-    for _ in range(config.num_improve):
-        improve0(arrays_tensor, scores)
     improve2(arrays_tensor, scores)
-    for _ in range(config.num_improve):
-        improve1(arrays_tensor, scores)
-    #improve2(arrays_tensor, scores)  # TEST
+    improve1(arrays_tensor, scores)
+    #for _ in range(config.num_improve):
+    #   improve1(arrays_tensor, scores)
     # step C: do some sorting
     mysort(arrays_tensor)
     # update

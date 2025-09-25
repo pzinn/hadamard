@@ -73,7 +73,7 @@ def score(m0):
     return -2*s[:,0]-4*s[:,1:].sum(dim=1)
 
 @torch.inference_mode()
-def improve1(x,scores):
+def improve1(x,scores):  # TODO update in same way as hadamard.py
     active_mask = torch.ones(x.shape[0],device=device,dtype=torch.bool)
     new_scores = scores.clone()
     t=0
