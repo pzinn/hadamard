@@ -23,16 +23,9 @@ nn2 = (nn-1)//2
 na = 3*nn2 + nn  # length of array
 debugging = False
 max_samples = 50_000
-#num_improve = 10
 eps=1e-5
 eval_freq=100
 max_iterations = 25_000 # special value -1 means stop at first Hadamard
-
-"""
-# range of #s of random flips. optimum value?
-r1=int(.5*math.sqrt(na))
-r2=int(2*math.sqrt(na))
-"""
 
 def fmt_array(s):
     return "".join("+" if x > 0 else "-" for x in s)
@@ -42,8 +35,73 @@ def generate_random_arrays(batch_size):
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
 
 
+
+cst = 1 / math.sqrt(n)
+one = torch.tensor([[1]],device=device,dtype=torch.float32)
+def mir(a):
+    return torch.cat((one.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
+def unfold(m0):
+    ones=one.expand(m0.shape[0],1)
+    return torch.stack((mir(m0[:,:nn2]),
+                        mir(m0[:,nn2:2*nn2]),
+                        mir(m0[:,2*nn2:3*nn2]),
+                        m0[:,3*nn2:]),dim=1)
+nm=4
+def score0(m):
+    f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+    ff = torch.real(f*f.conj())
+    ffs = ff.sum(dim=1)
+    s = torch.log(ffs)
+    return -2*s[:,0]-4*s[:,1:].sum(dim=1)
+def score(m0):
+    return score0(unfold(m0))
+
+@torch.inference_mode()
+def improve1(arrays_tensor, scores):
+    print(f"1", end=''); sys.stdout.flush()
+    # first let's do it the stupidest way (will recode later)
+    B = arrays_tensor.shape[0]
+    active_mask = torch.ones(B, device=device, dtype=torch.bool)
+    active_rows = torch.arange(B, device=device)
+    while True:
+        # rows we’re actively trying to improve this round
+        M = active_rows.numel()
+        # indices of best bit (−1 means no improvement found)
+        inds = torch.full((M,), -1, dtype=torch.int64, device=device)
+        # Current scores of the active subset (a *view* for comparison)
+        cur = scores[active_rows]
+        # Try flipping each bit, keep any improvement
+        for i in range(na):
+            arrays_tensor[active_rows, i] *= -1          # flip bit i
+            new_scores = score(arrays_tensor[active_rows])
+            improved = new_scores < scores[active_rows]                  # where this flip helps
+            if improved.any():
+                scores[active_rows[improved]] = new_scores[improved]            # write into base `scores`
+                inds[improved] = i
+            arrays_tensor[active_rows, i] *= -1          # flip back
+        # rows that actually improved this round
+        improved_any = inds >= 0
+        if not improved_any.any():
+            break
+        # Apply the winning flips once
+        active_rows = active_rows[improved_any]
+        active_cols = inds[improved_any]
+        arrays_tensor[active_rows, active_cols] *= -1
+        # Next round: only keep rows that improved (they might improve again)
+        active_mask.zero_()
+        active_mask[active_rows] = True
+        print(f' improve success rate: {active_mask.sum()/B}')
+
+cf=1
+def mod_score(m):
+    #return score(torch.tanh(m))
+    return score(m)+cf*torch.sum(m**2,dim=1)
+
+
 if len(sys.argv) < 2:
     arrays_tensor = generate_random_arrays(max_samples)
+    scores=score(arrays_tensor)
+    print(f'{torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
 else:
     filename = sys.argv[1]
     try:
@@ -56,47 +114,6 @@ else:
     # complete with garbage
     arrays_tensor = torch.cat((arrays_tensor,generate_random_arrays(max_samples-arrays_tensor.shape[0])),dim=0)
 
-
-cst = 1 / math.sqrt(n)
-def score(m0):
-    #print(m0.shape)
-    # reduce to non sym case but simplify due to phase alignment of first 3 fft
-    nm=4
-    ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out
-    m=torch.cat((m0[:,:nn2],ones,torch.flip(m0[:,:nn2],(1,)),
-                 m0[:,nn2:2*nn2],ones,torch.flip(m0[:,nn2:2*nn2],(1,)),
-                 m0[:,2*nn2:3*nn2],ones,torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                 m0[:,3*nn2:]),dim=1)
-    f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-    ff = torch.real(f*f.conj())
-    s = torch.log(ff.sum(dim=1))
-    return -2*s[:,0]-4*s[:,1:].sum(dim=1)
-
-@torch.inference_mode()
-def improve1(x,scores):  # TODO update in same way as hadamard.py
-    active_mask = torch.ones(x.shape[0],device=device,dtype=torch.bool)
-    new_scores = scores.clone()
-    t=0
-    while active_mask.any():
-        t += 1
-        new_active_mask = torch.zeros(x.shape[0],device=device,dtype=torch.bool)
-        p = torch.randperm(na)
-        for i in range(na):
-            x[:, p[i]] *= -1  # Flip only the i-th bit
-            # Compute new scores for all batch elements in parallel
-            new_scores[active_mask] = score(x[active_mask])
-            # Identify which flips improved the score
-            mask = new_scores < scores  # True where improvement happens
-            new_active_mask[mask] = 1
-            x[~mask, p[i]] *= -1  # Only revert for elements where no improvement
-            scores[mask] = new_scores[mask]  # Update scores accordingly
-        active_mask=new_active_mask
-    print(f"improv stopped at {t=}")
-
-cf=1
-def mod_score(m):
-    #return score(torch.tanh(m))
-    return score(m)+cf*torch.sum(m**2,dim=1)
 
 
 file_path = "test.txt"  # TEMP
