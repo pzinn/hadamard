@@ -224,8 +224,10 @@ def init_score_function():
         def score0(m):
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             ff = torch.real(f*f.conj())
-            s = torch.log(ff.sum(dim=1))
+            ffs = ff.sum(dim=1)
+            s = torch.log(ffs)
             return -2*s[:,0]-4*s[:,1:].sum(dim=1)
+            # return ((1-ffs)**2).sum(dim=1)  # alternative score
         def score(m0):
             return score0(unfold(m0))
     elif config.score_function == 'quartic':
@@ -289,6 +291,26 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
     for batch in batches:
         updated_dict.update(parallel_score(batch))
     return updated_dict
+
+@torch.inference_mode()
+def improve0(arrays_tensor,scores):  # bruteforce try to flip every single bit
+    # first let's do it the stupidest way (will recode later)
+    B=arrays_tensor.shape[0]
+    print(f"0", end=''); sys.stdout.flush()
+    inds = torch.full((B,),-1,dtype=torch.int64)
+    for i in range(na):
+        arrays_tensor[:, i] *= -1  # Flip the i-th bit
+        new_scores = score(arrays_tensor)
+        mask = new_scores < scores  # True where improvement happens
+        inds[mask] = i
+        arrays_tensor[:, i] *= -1  # Flip the i-th bit
+        scores[mask] = new_scores[mask]  # Update scores accordingly
+    mask = inds >= 0                          # rows to modify
+    rows = torch.arange(B, device=device)[mask]
+    cols = inds[mask]
+    arrays_tensor[rows, cols] *= -1
+    if debugging:
+        print(f' improve success rate: {mask.sum()/B}')
 
 @torch.inference_mode()
 def improve1(arrays_tensor,scores):  # used by parallel_improve: flip a single bit
@@ -523,7 +545,8 @@ def parallel_improve(arrays_items,new_arrays_dict):
             record_stats(temp_arrays)
     # step B
     for _ in range(config.num_improve):
-        improve2(arrays_tensor, scores)
+        improve0(arrays_tensor, scores)
+    improve2(arrays_tensor, scores)
     for _ in range(config.num_improve):
         improve1(arrays_tensor, scores)
     #improve2(arrays_tensor, scores)  # TEST
