@@ -159,24 +159,28 @@ def legendre_pm1(p: int, *, dtype=torch.float32):
 
 leg = legendre_pm1(nn)
 print(leg)
+cst = 1 / math.sqrt(n)
+one = torch.tensor([[1]],device=device,dtype=torch.float32)
+def unfold(m0):
+    B=m0.shape[0]
+    ones=one.expand(B,1)
+    return torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
+                      ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
+                      leg.unsqueeze(0).expand(B,nn),
+                      m0[:,2*nn2:]),dim=1)
 
 def init_score_function():
-    global score, score_type
+    global score, score0, score_type
     if config.score_function == 'fft log determinant':
         score_type = torch.float32
-        cst = 1 / math.sqrt(n)
-        def score(m0):
-            # reduce to non sym case but simplify due to phase alignment of first 3 fft
-            nm=4
-            ones=torch.ones((m0.size(0),1),device=m0.device,dtype=score_type)  # take out, use unsqueeze expand
-            m=torch.cat((leg.unsqueeze(0).expand(m0.size(0),nn),
-                         ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
-                         ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
-                         m0[:,2*nn2:]),dim=1)
+        nm=4
+        def score0(m):
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-            ff = torch.real(f*f.conj()).sum(dim=1)
-            s = torch.log(ff)
+            ff = torch.real(f*f.conj())
+            s = torch.log(ff.sum(dim=1))
             return -2*s[:,0]-4*s[:,1:].sum(dim=1)
+        def score(m0):
+            return score0(unfold(m0))
     else:
         raise Exception('unknown score_function')
 
