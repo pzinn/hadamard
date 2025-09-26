@@ -304,8 +304,6 @@ def improve1(arrays_tensor, scores):
         M = active_rows.numel()
         # indices of best bit (−1 means no improvement found)
         inds = torch.full((M,), -1, dtype=torch.int64, device=device)
-        # Current scores of the active subset (a *view* for comparison)
-        cur = scores[active_rows]
         # Try flipping each bit, keep any improvement
         for i in range(na):
             arrays_tensor[active_rows, i] *= -1          # flip bit i
@@ -560,6 +558,8 @@ def parallel_improve(arrays_items,new_arrays_dict):
             temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor2[i] > 0, 1, -1).tolist(), scores2[i].tolist(), gens) if math.isfinite(s)}
             print(f"pre -improve batch {i}:")
             record_stats(temp_arrays)
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     # step B
     improve2(arrays_tensor, scores)
     improve1(arrays_tensor, scores)
