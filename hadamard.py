@@ -20,6 +20,9 @@ eps = 1e-5  # scores are heavily discretised so can be made large
 
 
 import torch
+if debugging:
+    # Start recording memory snapshot history
+    torch.cuda.memory._record_memory_history(max_entries=100000)
 
 """
 @torch.no_grad()
@@ -433,17 +436,18 @@ def mod_score(m):
     return score(m) + torch.sum(m**2,dim=1)
 
 # optimisation of improve3a
-def improve3(x,steps=10000,lr=.01,mixed_precision=True):
+def improve3(x,steps=10000,lr=.01,tolerance=5,mixed_precision=True):
     print(f"3", end=''); sys.stdout.flush()
+    B = x.shape[0]
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
     # opt = torch.optim.SGD([x], lr=lr)
     opt = torch.optim.AdamW([x], lr=lr)
 
-    not_improved = None
-    active_mask = torch.ones(x.shape[0], device=device, dtype=torch.bool)
-
+    active_mask = torch.ones(B, device=device, dtype=torch.bool)
+    improv = torch.ones(B, device=device, dtype=torch.bool)
+    counter = torch.zeros(B, device=device, dtype=torch.int64)
     for t in range(steps):
         opt.zero_grad(set_to_none=True)
         with torch.amp.autocast(device,enabled=mixed_precision):
@@ -457,15 +461,14 @@ def improve3(x,steps=10000,lr=.01,mixed_precision=True):
             if t==0:
                 prev_scores = scores
             else:
-                new_active_mask = active_mask.clone()
-                improve = (scores - prev_scores[active_mask]) < -eps
-                if not improve.any():
+                improv[active_mask] = (scores - prev_scores[active_mask]) < -eps
+                prev_scores[active_mask] = scores
+                counter[~improv] += 1
+                counter[improv] = 0
+                active_mask = active_mask & (counter < tolerance)
+                if not active_mask.any():
                     print(f"All rows converged. Stopping at step {t}.")
                     break
-                new_active_mask[active_mask] = improve
-                prev_scores[active_mask] = scores
-                active_mask=new_active_mask
-
     return torch.where(x > 0, 1., -1.).detach()
 
 """
@@ -546,7 +549,7 @@ def parallel_improve(arrays_items,new_arrays_dict):
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
-    arrays_tensor1=(0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
+    arrays_tensor1=(0.6 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
     arrays_tensor1 = improve3(arrays_tensor1)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
     scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
@@ -642,6 +645,9 @@ def main():
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
         if params.gen == config.max_iterations:
+            if debugging:
+                torch.cuda.memory._dump_snapshot("profile.pkl")
+                torch.cuda.memory._record_memory_history(enabled=None)
             break
         if params.skip_first_training:
             params.skip_first_training = False
