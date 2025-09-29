@@ -24,8 +24,8 @@ na = 3*nn2 + nn  # length of array
 debugging = False
 max_samples = 50_000
 eps=1e-5
-eval_freq=100
-max_iterations = 25_000 # special value -1 means stop at first Hadamard
+max_iterations = 100
+inner_steps = 0
 
 def fmt_array(s):
     return "".join("+" if x > 0 else "-" for x in s)
@@ -33,6 +33,7 @@ def fmt_array(s):
 
 def generate_random_arrays(batch_size):
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
+    #return 2*(torch.rand((batch_size, na), device=device, dtype=score_type) - .5)
 
 
 
@@ -41,7 +42,6 @@ one = torch.tensor([[1]],device=device,dtype=torch.float32)
 def mir(a):
     return torch.cat((one.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
 def unfold(m0):
-    ones=one.expand(m0.shape[0],1)
     return torch.stack((mir(m0[:,:nn2]),
                         mir(m0[:,nn2:2*nn2]),
                         mir(m0[:,2*nn2:3*nn2]),
@@ -58,7 +58,7 @@ def score(m0):
 
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
-    print(f"1", end=''); sys.stdout.flush()
+    print(f"1 ", end=''); sys.stdout.flush()
     # first let's do it the stupidest way (will recode later)
     B = arrays_tensor.shape[0]
     active_mask = torch.ones(B, device=device, dtype=torch.bool)
@@ -68,8 +68,6 @@ def improve1(arrays_tensor, scores):
         M = active_rows.numel()
         # indices of best bit (−1 means no improvement found)
         inds = torch.full((M,), -1, dtype=torch.int64, device=device)
-        # Current scores of the active subset (a *view* for comparison)
-        cur = scores[active_rows]
         # Try flipping each bit, keep any improvement
         for i in range(na):
             arrays_tensor[active_rows, i] *= -1          # flip bit i
@@ -82,6 +80,7 @@ def improve1(arrays_tensor, scores):
         # rows that actually improved this round
         improved_any = inds >= 0
         if not improved_any.any():
+            print('')
             break
         # Apply the winning flips once
         active_rows = active_rows[improved_any]
@@ -90,9 +89,9 @@ def improve1(arrays_tensor, scores):
         # Next round: only keep rows that improved (they might improve again)
         active_mask.zero_()
         active_mask[active_rows] = True
-        print(f' improve success rate: {active_mask.sum()/B}')
+        print(f'{active_mask.sum()/B} ',end='')
 
-cf=1
+cf=1.25
 def mod_score(m):
     #return score(torch.tanh(m))
     return score(m)+cf*torch.sum(m**2,dim=1)
@@ -101,7 +100,10 @@ def mod_score(m):
 if len(sys.argv) < 2:
     arrays_tensor = generate_random_arrays(max_samples)
     scores=score(arrays_tensor)
-    print(f'{torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
+    mask=torch.isfinite(scores)
+    arrays_tensor = arrays_tensor[mask]
+    scores = scores[mask]
+    print(f'{mask.sum()} {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
 else:
     filename = sys.argv[1]
     try:
@@ -133,62 +135,66 @@ def batch_gradient_descent(
     Returns: (opt_data, history) where opt_data is the final tensor (B, n),
              history is a dict with last scores and optional traces.
     """
+    B=x.shape[0]
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler('cuda',enabled=mixed_precision)
 
     # opt = torch.optim.SGD([x], lr=lr)
     opt = torch.optim.AdamW([x], lr=lr)
 
-    counter = torch.zeros(x.shape[0], device=device, dtype=torch.int64)
+    counter = torch.zeros(B, device=device, dtype=torch.int64)
 
     prev_scores = None
-    t=0
-    start_timer=timer()
-    while t != steps:
-        opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device,enabled=mixed_precision):
-            scores = mod_score(x)
-            loss = scores.sum()
-        scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
-        with torch.no_grad():
-            x.clamp_(min=-1, max=1)  # projection
-            if t>0:
-                improv = (scores - prev_scores) < -eps
-                counter[~improv] += 1
-                counter[improv] = 0
-            prev_scores = scores
-            t += 1
-            if t % eval_freq == 0:
-                real_x = torch.where(x > 0, 1., -1.)
-                real_scores = score(real_x)
-                print(f'{t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
-                # traditional improve
-                start_timer=timer()
-                improve1(real_x,real_scores)
-                print(f'{t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
-                if torch.min(real_scores) < eps:
-                    l = real_x[real_scores<eps].tolist()
-                    with open(file_path, 'a') as file:
-                        for s in l:
-                            file.write(fmt_array(s) + "\n")
-                    if max_iterations == -1:
-                        return
-                #
-                kaput = counter >= tolerance * eval_freq
-                #x[kaput] *= 0.01 + 0.5*torch.rand((1,na),device=device)
-                x[kaput] = (0.45 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*real_x[kaput]
-                #x[kaput] = torch.sqrt(torch.rand((1,na),device=device))*real_x[kaput]
-                print(f'{kaput.sum()} {counter.sum()}')
-                counter.zero_()  # reset counter
-                # added: try to keep min -- silly
-                #i = torch.argmin(real_scores)
-                #x[i]=real_x[i]
-                #
-                start_timer=timer()
-            if t == max_iterations:
+    for t in range(max_iterations):
+        start_timer=timer()
+        for _ in range(inner_steps):
+            opt.zero_grad(set_to_none=True)
+            with torch.amp.autocast(device,enabled=mixed_precision):
+                scores = mod_score(x)
+                loss = scores.sum()
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+            with torch.no_grad():
+                x.clamp_(min=-1, max=1)  # projection
+                if t>0:
+                    improv = (scores - prev_scores) < -eps
+                    counter[~improv] += 1
+                    counter[improv] = 0
+                prev_scores = scores
+        #real_x = torch.where((x+.1*(torch.rand(x.shape,device=device)-.05)) > 0, 1., -1.)
+        real_x = torch.where(x > 0, 1., -1.)
+        real_scores = score(real_x)
+        print(f'{t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
+        # traditional improve
+        start_timer=timer()
+        improve1(real_x,real_scores)
+        print(f'{t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
+        if torch.min(real_scores) < eps:
+            l = real_x[real_scores<eps].tolist()
+            with open(file_path, 'a') as file:
+                for s in l:
+                    file.write(fmt_array(s) + "\n")
+            if max_iterations == -1:
                 return
+        #
+        kaput = counter >= tolerance * inner_steps
+        tst = x[kaput].abs().min(dim=1)[0].mean()
+        print(f'{tst=}')
+        # x[kaput] = 2 * torch.rand((kaput.sum(), na), device=device, dtype=score_type) - 1  #baseline
+        #x[kaput] *= 0.01 + 0.5*torch.rand((1,na),device=device)
+        with torch.no_grad():
+            if inner_steps==0:
+                x.copy_(generate_random_arrays(B))  # for testing purposes
+            else:
+                x[kaput] = (0.4 + 0.1*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*real_x[kaput]
+                #x[kaput] = 0.5*real_x[kaput]
+        print(f'{kaput.sum()} {counter.sum()}')
+        counter.zero_()  # reset counter
+        # added: try to keep min -- silly
+        #i = torch.argmin(real_scores)
+        #x[i]=real_x[i]
+        #
 
 
 batch_gradient_descent(arrays_tensor)

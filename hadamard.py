@@ -187,12 +187,13 @@ def record_stats(arrays_dict, prefix=""):
 
 cst = 1 / math.sqrt(n)
 one = torch.tensor([[1]],device=device,dtype=torch.float32)
+def mir(a):
+    return torch.cat((one.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
 def unfold(m0):
-    ones=one.expand(m0.shape[0],1)
-    return torch.cat((ones,m0[:,:nn2],torch.flip(m0[:,:nn2],(1,)),
-                 ones,m0[:,nn2:2*nn2],torch.flip(m0[:,nn2:2*nn2],(1,)),
-                 ones,m0[:,2*nn2:3*nn2],torch.flip(m0[:,2*nn2:3*nn2],(1,)),
-                 m0[:,3*nn2:]),dim=1)
+    return torch.stack((mir(m0[:,:nn2]),
+                        mir(m0[:,nn2:2*nn2]),
+                        mir(m0[:,2*nn2:3*nn2]),
+                        m0[:,3*nn2:]),dim=1)
 
 def init_score_function():
     global score, score0, score_type
@@ -431,45 +432,92 @@ def improve2(m0,scores):  # try to use our knowledge of the score fn
         m0[improved,i*nn2:(i+1)*nn2]=h[improved,i,1:nn2+1]*h[improved,i,0:1]  # make first a plus
     m0[improved,3*nn2:]=h[improved,3]
 
-def mod_score(m):
-    #return score(torch.tanh(m))
-    return score(m) + torch.sum(m**2,dim=1)
+def unfold2(m1,m2):
+    return torch.stack((mir(m1[:,:nn2]),
+                        mir(m1[:,nn2:2*nn2]),
+                        mir(m1[:,2*nn2:]),
+                        m2),dim=1)
+def alt_score0(m):
+    f = alt_cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+    ff = torch.real(f*f.conj())
+    ffs = ff.sum(dim=1)
+    s = (ffs-1)**2
+    return s[:,0]+2*s[:,1:].sum(dim=1)
+def score2(m1,m2):
+    return alt_score0(unfold2(m1,m2))
 
 # optimisation of improve3a
-def improve3(x,steps=10000,lr=.01,tolerance=5,mixed_precision=True):
+def improve3(arrays_tensor,scores,max_iterations=5,inner_steps=100,lr=.05,mixed_precision=True):
+    x=arrays_tensor.clone()
     print(f"3", end=''); sys.stdout.flush()
     B = x.shape[0]
-    x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
-    # opt = torch.optim.SGD([x], lr=lr)
-    opt = torch.optim.AdamW([x], lr=lr)
+    x1 = torch.nn.Parameter(x[:, :3*nn2].detach())
+    x2 = torch.nn.Parameter(x[:, 3*nn2:].detach())
+    opt1 = torch.optim.AdamW([x1], lr=lr)
+    opt2 = torch.optim.AdamW([x2], lr=lr)
+    #opt1 = torch.optim.SGD([x1], lr=lr)
+    #opt2 = torch.optim.SGD([x2], lr=lr)
 
-    active_mask = torch.ones(B, device=device, dtype=torch.bool)
-    improv = torch.ones(B, device=device, dtype=torch.bool)
-    counter = torch.zeros(B, device=device, dtype=torch.int64)
-    for t in range(steps):
-        opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device,enabled=mixed_precision):
-            scores = mod_score(x[active_mask])
-            loss = scores.sum()
-        scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
-        with torch.no_grad():
-            x.clamp_(min=-1, max=1)  # projection
-            if t==0:
-                prev_scores = scores
-            else:
-                improv[active_mask] = (scores - prev_scores[active_mask]) < -eps
-                prev_scores[active_mask] = scores
-                counter[~improv] += 1
-                counter[improv] = 0
-                active_mask = active_mask & (counter < tolerance)
-                if not active_mask.any():
-                    print(f"All rows converged. Stopping at step {t}.")
-                    break
-    return torch.where(x > 0, 1., -1.).detach()
+    global alt_cst
+
+    for t in range(max_iterations):
+        #first set
+        alt_cst = math.sqrt(3) / math.sqrt(3*nn2)  # controls average size of abc -- (cst0/cst)^2 where cst0 = 1/sqrt(3nn2)
+        start_timer=timer()
+        x2d=torch.zeros_like(x2)
+        #x2.detach()  # could be moved out of the loop
+        #x2d=torch.where(x2>0,1.,-1.).detach()
+        for _ in range(inner_steps):
+            opt1.zero_grad(set_to_none=True)
+            with torch.amp.autocast(device,enabled=mixed_precision):
+                fake_scores = score2(x1,x2d)
+                loss = fake_scores.sum()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt1)
+            scaler.step(opt1)
+            scaler.update()
+            with torch.no_grad():
+                x1.clamp_(min=-1, max=1)  # projection
+        print(f'1a {t=} : {torch.min(fake_scores)} {torch.mean(fake_scores)} {torch.max(fake_scores)} time={timer()-start_timer}')
+        print(x1.abs().mean(),x2.abs().mean())
+        #alt_cst = 1 / math.sqrt(n)
+        if debugging:
+            real_x = torch.where(x > 0, 1., -1.)  # not needed, for testing only
+            real_scores = score(real_x)
+            print(f'1b {t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
+        #second set
+        alt_cst = 2 / math.sqrt(n)  # controls average size of d --- how exactly?
+        start_timer=timer()
+        x1d=x1.detach()  # could be moved out of the loop
+        for _ in range(inner_steps):
+            opt2.zero_grad(set_to_none=True)
+            with torch.amp.autocast(device,enabled=mixed_precision):
+                fake_scores = score2(x1d,x2)
+                loss = fake_scores.sum()
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt2)
+            scaler.step(opt2)
+            scaler.update()
+            with torch.no_grad():
+                x2.clamp_(min=-1, max=1)  # projection
+        if debugging:
+            print(f'2a {t=} : {torch.min(fake_scores)} {torch.mean(fake_scores)} {torch.max(fake_scores)} time={timer()-start_timer}')
+            print(x1.abs().mean(),x2.abs().mean())
+        #next
+        #alt_cst = 1 / math.sqrt(n)
+        real_x = torch.where(x > 0, 1., -1.)
+        real_scores = score(real_x)
+        if debugging:
+            print(f'2b {t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
+        if t==0:
+            arrays_tensor.copy_(real_x)
+            scores.copy_(real_scores)
+        else:
+            improve = real_scores <= scores
+            arrays_tensor[improve]=real_x[improve]
+            scores[improve]=real_scores[improve]
 
 """
 def improve3a(x,steps=1000,lr=.01,mixed_precision=True):
@@ -549,10 +597,11 @@ def parallel_improve(arrays_items,new_arrays_dict):
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
-    arrays_tensor1=(0.6 + 0.3*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
-    arrays_tensor1 = improve3(arrays_tensor1)
+    arrays_tensor1=(0.1 + 0.1*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
+    scores1 = torch.zeros_like(scores)
+    improve3(arrays_tensor1,scores1)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
-    scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
+    scores2 = torch.stack((scores,scores1),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
     scores = scores2.view(-1)
     if debugging:
