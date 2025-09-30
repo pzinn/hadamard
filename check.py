@@ -25,9 +25,9 @@ def upblock(x):
 
 def score(a0):
     one = np.array([1])
-    a=np.concatenate((a0[:nn2],one,np.flip(a0[:nn2]),
-                 a0[nn2:2*nn2],one,np.flip(a0[nn2:2*nn2]),
-                 a0[2*nn2:3*nn2],one,np.flip(a0[2*nn2:3*nn2]),
+    a=np.concatenate((one,a0[:nn2],np.flip(a0[:nn2]),
+                      one,a0[nn2:2*nn2],np.flip(a0[nn2:2*nn2]),
+                      one,a0[2*nn2:3*nn2],np.flip(a0[2*nn2:3*nn2]),
                  a0[3*nn2:]))
     m = upblock(a)
     neye = n * np.eye(n, dtype=np.int64)
