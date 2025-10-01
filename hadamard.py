@@ -20,9 +20,11 @@ eps = 1e-5  # scores are heavily discretised so can be made large
 
 
 import torch
+"""
 if debugging:
     # Start recording memory snapshot history
     torch.cuda.memory._record_memory_history(max_entries=100000)
+"""
 
 """
 @torch.no_grad()
@@ -225,6 +227,7 @@ def init_score_function():
     elif config.score_function == 'fft log determinant':
         score_type = torch.float32
         nm=4
+        @torch.inference_mode()
         def score0(m):
             f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
             ff = torch.real(f*f.conj())
@@ -329,6 +332,7 @@ def improve1(arrays_tensor, scores):
         active_mask.zero_()
         active_mask[active_rows] = True
         if debugging:
+            #print(f' {torch.bincount(active_cols, minlength=na)} improve success rate: {active_mask.sum()/B}')
             print(f' improve success rate: {active_mask.sum()/B}')
 
 @torch.inference_mode()
@@ -432,6 +436,39 @@ def improve2(m0,scores):  # try to use our knowledge of the score fn
         m0[improved,i*nn2:(i+1)*nn2]=h[improved,i,1:nn2+1]*h[improved,i,0:1]  # make first a plus
     m0[improved,3*nn2:]=h[improved,3]
 
+one = torch.tensor([[1]],device=device,dtype=torch.float32)
+@torch.inference_mode()
+def improve3(arrays_tensor):
+    print(f"3", end=''); sys.stdout.flush()
+    # x = (0.4 + 0.1*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor  # TODO re-optimise this
+    x1 = arrays_tensor[:, :3*nn2]
+    B=x1.shape[0]
+    x1a=x1.view(B,3,nn2)
+    m=torch.cat((one.expand(B,3,1),x1a,torch.flip(x1a,(2,))),dim=2)
+    f = cst * torch.fft.rfft(m, dim=2)
+    ff = f**2
+    ffs = ff.sum(dim=1)
+    """
+    # too ambitious -- might want to reinstate but need to treat case where all 0, maybe return None or something. would be interesting to know success ratio?
+    mask = (ffs.real <= 1).all(dim=1)
+    h = torch.sqrt(1-ffs[mask])
+    h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((h.shape[0],nn2),device=device))
+    x2=torch.fft.irfft(h,n=nn,dim=1)
+    return torch.cat((x1[mask],torch.where(x2 > 0, 1., -1.)),dim=1)
+    """
+    #z = torch.max(ffs.real.max(dim=1)[0],torch.tensor(1))
+    z, _ = ffs.real.max(dim=1)
+    if debugging:
+        print(f'success {(z<=1).sum()/B}')
+    z=torch.max(z,torch.tensor(1))
+    ffs /= z.unsqueeze(1)
+    h = torch.sqrt(1-ffs)
+    h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((B,nn2),device=device))
+    x2=torch.fft.irfft(h,n=nn,dim=1)
+    return torch.cat((x1,torch.where(x2 > 0, 1., -1.)),dim=1)
+
+"""
+# failed gradient descent
 def unfold2(m1,m2):
     return torch.stack((mir(m1[:,:nn2]),
                         mir(m1[:,nn2:2*nn2]),
@@ -446,8 +483,7 @@ def alt_score0(m):
 def score2(m1,m2):
     return alt_score0(unfold2(m1,m2))
 
-# optimisation of improve3a
-def improve3(arrays_tensor,scores,max_iterations=5,inner_steps=100,lr=.05,mixed_precision=True):
+def improve3(arrays_tensor,max_iterations=5,inner_steps=100,lr=.05,mixed_precision=True):
     x=arrays_tensor.clone()
     print(f"3", end=''); sys.stdout.flush()
     B = x.shape[0]
@@ -519,7 +555,6 @@ def improve3(arrays_tensor,scores,max_iterations=5,inner_steps=100,lr=.05,mixed_
             arrays_tensor[improve]=real_x[improve]
             scores[improve]=real_scores[improve]
 
-"""
 def improve3a(x,steps=1000,lr=.01,mixed_precision=True):
     x.requires_grad_(True)
     scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
@@ -597,11 +632,9 @@ def parallel_improve(arrays_items,new_arrays_dict):
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
     #arrays_tensor1=(0.2+0.4*torch.rand(arrays_tensor.shape,device=device))*arrays_tensor
-    arrays_tensor1=(0.1 + 0.1*torch.rand((),device=device) + 0.1*torch.rand((1,na),device=device))*arrays_tensor
-    scores1 = torch.zeros_like(scores)
-    improve3(arrays_tensor1,scores1)
+    arrays_tensor1=improve3(arrays_tensor)
     arrays_tensor2 = torch.stack((arrays_tensor,arrays_tensor1),dim=0)
-    scores2 = torch.stack((scores,scores1),dim=0)
+    scores2 = torch.stack((scores,score(arrays_tensor1)),dim=0)
     arrays_tensor = arrays_tensor2.view(-1,na)
     scores = scores2.view(-1)
     if debugging:
@@ -694,9 +727,11 @@ def main():
             arrays = arrays_dict.keys()
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
         if params.gen == config.max_iterations:
+            """
             if debugging:
                 torch.cuda.memory._dump_snapshot("profile.pkl")
                 torch.cuda.memory._record_memory_history(enabled=None)
+            """
             break
         if params.skip_first_training:
             params.skip_first_training = False
