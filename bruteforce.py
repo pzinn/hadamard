@@ -52,14 +52,12 @@ def unfold2(m1):
     m1=m1.view(B,3,nn2)
     return torch.cat((one.expand(B,3,1),m1,torch.flip(m1,(2,))),dim=2)
 
-cst2 = .7 / math.sqrt(3*nn2)  # controls average size of abc -- what's the logic? not obvious, naively it controls |.|^2 of the Fourier transform which should be = |.|^2 of original data but exact constant unclear
 def alt_score0(m):
-    f = cst2 * torch.fft.rfft(m, dim=2)  # cst there for accuracy
-    #ff = torch.real(f*f.conj())
-    ff = torch.real(f**2)  # because we only apply to 3nn2; otherwise, revert
+    f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+    ff = torch.real(f*f.conj())
     ffs = ff.sum(dim=1)
     s = (ffs-1)**2
-    return s[:,0]+2*s[:,1:].sum(dim=1)
+    return s[:,0]+2*s[:,1:].sum(dim=1)  # what happens if we vary relative coefficient? nothing good apparently
 def score0(m):
     f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
     ff = torch.real(f*f.conj())
@@ -67,13 +65,43 @@ def score0(m):
     s = -2*torch.log(ffs)
     return s[:,0]+2*s[:,1:].sum(dim=1)
 def score(m0):
-    return score0(unfold(m0))
-def alt_score(m0):
-    return alt_score0(unfold(m0))
-cf=0.01  # nope, even a tiny bit spoils everything?!? (presumably, for the 2nd part)
-def score2(m1):
-    return alt_score0(unfold2(m1))
-    #return alt_score0(unfold2(m1))+cf*torch.sum((m1**2-1)**2)
+    return score0(unfold(m0))  # replace with alt_score0 -- makes things worse
+
+@torch.inference_mode()
+def improve12(arrays_tensor, scores):  # proof of concept of brute force k-bit flip
+    print(f"improve12", end=''); sys.stdout.flush()
+    B=arrays_tensor.shape[0]
+    rows = torch.arange(B, device=device)
+    # first let's do it the stupidest way (will recode later)
+    #for t in range(12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
+    for k in range(3,12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
+        #k=5
+        scores_delta = scores.unsqueeze(1).expand(-1,na).clone()
+        for i in range(na):
+            arrays_tensor[:, i] *= -1          # flip bit i
+            new_scores = score(arrays_tensor)
+            scores_delta[:, i] -= new_scores   # by now we don't even care about difference
+            arrays_tensor[:, i] *= -1          # flip bit i
+        """
+        mask = (scores_delta > 0).any(dim=1)
+        # easy ones: 1-bit flip. (combine later with improve1?)
+        max_delta, inds = scores_delta[mask].max(dim=1)
+        scores[mask] -= max_delta
+        arrays_tensor[mask,inds] *= -1  # doesn't work? I forget
+        """
+        # hard ones: brute force 10 best candidates
+        #k=5
+        _, inds = torch.topk(scores_delta, k, dim=1, sorted=False)
+        cur=arrays_tensor.clone()    # eww lazy TODO only copy the k columns with cur=torch.gather(arrays_tensor,1,inds)
+        for i in range(1,1<<k):
+            j = (i & -i).bit_length() - 1  # index of bit to flip
+            cols = inds[:,j]
+            cur[rows,cols] *= -1  # TODO use arrays_tensor
+            new_scores = score(cur)  # same
+            improved = new_scores < scores
+            scores[improved] = new_scores[improved]
+            arrays_tensor[improved]=cur[improved]  # TODO other way around cur[improved]=torch.gather(arrays_tensor[improved],1,inds[improved])
+        # TODO copy back with arrays_tensor[rows.unsqueeze(1).expand(-1,k),inds] = cur
 
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
@@ -259,11 +287,18 @@ def batch_gradient_descent(
         #next
         x.copy_(torch.where(x > 0, 1., -1.))
         scores = score(x)
-        print(f'pre improve {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
-        improve1(x,scores)
+        print(f'pre improve {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
+        start_timer = timer()
+        improve1(x, scores)
+        print(f"improve1 time: {timer() - start_timer}")
+        start_timer = timer()
         improve2(x,scores)
-        improve1(x,scores)  # possible repeat a few more times?
-        print(f'postimprove {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
+        print(f"improve2 time: {timer() - start_timer}")
+        start_timer = timer()
+        improve12(x,scores)
+        print(f"improve12 time: {timer() - start_timer}")
+        improve1(x, scores)
+        print(f'postimprove {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
         success = scores<eps
         if success.any():
             l = x[success]
