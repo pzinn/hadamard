@@ -602,7 +602,10 @@ def parallel_improve(arrays_items,new_arrays_dict):
     # scores = score(arrays_tensor)  # Recompute scores in parallel
     scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
+    start_timer = timer()
     arrays_tensor1=improve3(arrays_tensor)
+    if debugging:
+        print(f"improve3 time: {timer() - start_timer}")
     if arrays_tensor1 is not None:
         scores1 = score(arrays_tensor1)
         if debugging:
@@ -619,8 +622,14 @@ def parallel_improve(arrays_items,new_arrays_dict):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B
+    start_timer = timer()
     improve1(arrays_tensor, scores)
+    if debugging:
+        print(f"improve1 time: {timer() - start_timer}")
+    start_timer = timer()
     improve2(arrays_tensor, scores)
+    if debugging:
+        print(f"improve2 time: {timer() - start_timer}")
     #for _ in range(config.num_improve):
     #   improve1(arrays_tensor, scores)
     # step C: do some sorting
@@ -686,8 +695,8 @@ def main():
             params.skip_first_improve = False
         else:
             # improve existing data, write to GEN-(gen)
-            start_timer = timer()
             print('\n***Improving***')
+            start_timer = timer()
             arrays_dict = batch_improve(arrays_dict,{})
             if debugging:
                 print(f"improving time: {timer() - start_timer}")
