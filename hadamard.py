@@ -615,7 +615,6 @@ def parallel_improve(arrays_items,new_arrays_dict):
             temp_arrays={tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens) if math.isfinite(s)}
             print(f"pre -improve batch 0:")
             record_stats(temp_arrays)
-            print(arrays_tensor1.shape,scores1.shape,params.gen)
             temp_arrays={tuple(x): (s, params.gen) for x, s in zip(torch.where(arrays_tensor1 > 0, 1, -1).tolist(), scores1.tolist()) if math.isfinite(s)}
             print(f"pre -improve batch 1:")
             record_stats(temp_arrays)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# script to brute force improve using gradient descent
+# script to brute force
 
 import sys
 import torch
@@ -235,10 +235,9 @@ def batch_gradient_descent(
     for t in range(max_iterations):
         if device.startswith('cuda'):
             torch.cuda.empty_cache()  # Free memory
-        #print(x1,x2)
         #first set
         start_timer=timer()
-        m = unfold2(x1)  # should it be x or real_x? unclear. data suggest x is better
+        m = unfold2(x1)
         f = cst * torch.fft.rfft(m, dim=2)
         #ff = f*f.conj()  # in fact, just f**2
         ff = f**2
@@ -263,7 +262,7 @@ def batch_gradient_descent(
         print(f'pre improve {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
         improve1(x,scores)
         improve2(x,scores)
-        improve1(x,scores)
+        improve1(x,scores)  # possible repeat a few more times?
         print(f'postimprove {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
         success = scores<eps
         if success.any():
