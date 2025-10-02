@@ -52,35 +52,42 @@ def unfold2(m1):
     m1=m1.view(B,3,nn2)
     return torch.cat((one.expand(B,3,1),m1,torch.flip(m1,(2,))),dim=2)
 
+def fft(m):
+    return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+
+def score_fft(f):  # score in terms of precomputed fft
+    ff = torch.real(f*f.conj())
+    ffs = ff.sum(dim=1)
+    s = -2*torch.log(ffs)
+    return s[:,0]+2*s[:,1:].sum(dim=1)
+
+def score(m0):
+    return score_fft(fft(unfold(m0)))
+
+"""
 def alt_score0(m):
     f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
     ff = torch.real(f*f.conj())
     ffs = ff.sum(dim=1)
     s = (ffs-1)**2
     return s[:,0]+2*s[:,1:].sum(dim=1)  # what happens if we vary relative coefficient? nothing good apparently
-def score0(m):
-    f = cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
-    ff = torch.real(f*f.conj())
-    ffs = ff.sum(dim=1)
-    s = -2*torch.log(ffs)
-    return s[:,0]+2*s[:,1:].sum(dim=1)
-def score(m0):
-    return score0(unfold(m0))  # replace with alt_score0 -- makes things worse
+def alt_score(m0):
+    return alt_score0(unfold(m0))  # makes things worse
+"""
 
 @torch.inference_mode()
 def improve12(arrays_tensor, scores):  # proof of concept of brute force k-bit flip
-    print(f"improve12", end=''); sys.stdout.flush()
+    print(f"improve12 ", end=''); sys.stdout.flush()
     B=arrays_tensor.shape[0]
     rows = torch.arange(B, device=device)
     # first let's do it the stupidest way (will recode later)
     #for t in range(12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
     for k in range(3,12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
         #k=5
-        scores_delta = scores.unsqueeze(1).expand(-1,na).clone()
+        scores_delta = scores.unsqueeze(1).expand(-1,na).clone()  # no longer used, just init once and for all
         for i in range(na):
             arrays_tensor[:, i] *= -1          # flip bit i
-            new_scores = score(arrays_tensor)
-            scores_delta[:, i] -= new_scores   # by now we don't even care about difference
+            scores_delta[:, i] = score(arrays_tensor)
             arrays_tensor[:, i] *= -1          # flip bit i
         """
         mask = (scores_delta > 0).any(dim=1)
@@ -91,7 +98,7 @@ def improve12(arrays_tensor, scores):  # proof of concept of brute force k-bit f
         """
         # hard ones: brute force 10 best candidates
         #k=5
-        _, inds = torch.topk(scores_delta, k, dim=1, sorted=False)
+        _, inds = torch.topk(scores_delta, k, dim=1, sorted=False, largest=False)
         cur=arrays_tensor.clone()    # eww lazy TODO only copy the k columns with cur=torch.gather(arrays_tensor,1,inds)
         for i in range(1,1<<k):
             j = (i & -i).bit_length() - 1  # index of bit to flip
@@ -103,10 +110,23 @@ def improve12(arrays_tensor, scores):  # proof of concept of brute force k-bit f
             arrays_tensor[improved]=cur[improved]  # TODO other way around cur[improved]=torch.gather(arrays_tensor[improved],1,inds[improved])
         # TODO copy back with arrays_tensor[rows.unsqueeze(1).expand(-1,k),inds] = cur
 
+
+w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=torch.float32) / nn)
+rng0 = torch.arange(nn+1, device=device, dtype=torch.float32)
+rng = torch.arange(nn2+1, device=device, dtype=torch.float32)
+wrng = 2 * cst * w ** torch.outer(rng0,rng)
+# for now manual formulae, can precompute those too
+def flip_fft(j, a, f):  # j = which bit to flip, a = which way, f = fft
+    #print(a.shape,f.shape,wrng.shape)
+    if j < 3*nn2:
+        k = j%nn2 + 1
+        f[:,j//nn2] -= a.unsqueeze(1) * (wrng[k] + wrng[nn-k])
+    else:
+        f[:,3] -= a.unsqueeze(1) * wrng[nn-j+3*nn2]
+
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
     print(f"improve1 ", end=''); sys.stdout.flush()
-    # first let's do it the stupidest way (will recode later)
     B = arrays_tensor.shape[0]
     active_mask = torch.ones(B, device=device, dtype=torch.bool)
     active_rows = torch.arange(B, device=device)
@@ -116,21 +136,30 @@ def improve1(arrays_tensor, scores):
         M = active_rows.numel()
         # indices of best bit (−1 means no improvement found)
         inds = torch.full((M,), -1, dtype=torch.int64, device=device)
+        # precompute fft
+        f = fft(unfold(arrays_tensor[active_rows]))
         # Try flipping each bit, keep any improvement
         for i in range(na):
+            """
             arrays_tensor[active_rows, i] *= -1          # flip bit i
             new_scores = score(arrays_tensor[active_rows])
+            arrays_tensor[active_rows, i] *= -1          # flip back
+            """
+            # v2
+            flip_fft(i, arrays_tensor[active_rows, i], f)
+            new_scores = score_fft(f)
+            flip_fft(i, -arrays_tensor[active_rows, i], f)
+            #
             improved = new_scores < scores[active_rows]                  # where this flip helps
             if improved.any():
                 scores[active_rows[improved]] = new_scores[improved]            # write into base `scores`
                 inds[improved] = i
-            arrays_tensor[active_rows, i] *= -1          # flip back
         # rows that actually improved this round
         improved_any = inds >= 0
         if not improved_any.any():
             print('')
             if debugging:
-                print(flip_counts)            
+                print(flip_counts)
             break
         # Apply the winning flips once
         active_rows = active_rows[improved_any]
@@ -295,9 +324,8 @@ def batch_gradient_descent(
         improve2(x,scores)
         print(f"improve2 time: {timer() - start_timer}")
         start_timer = timer()
-        improve12(x,scores)
+        #improve12(x,scores)
         print(f"improve12 time: {timer() - start_timer}")
-        improve1(x, scores)
         print(f'postimprove {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
         success = scores<eps
         if success.any():
