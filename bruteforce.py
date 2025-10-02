@@ -56,9 +56,7 @@ def fft(m):
     return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
 
 def score_fft(f):  # score in terms of precomputed fft
-    ff = torch.real(f*f.conj())
-    ffs = ff.sum(dim=1)
-    s = -2*torch.log(ffs)
+    s = -4*torch.log(torch.real(f*f.conj()).sum(dim=1))
     return s[:,0]+2*s[:,1:].sum(dim=1)
 
 def score(m0):
@@ -75,57 +73,77 @@ def alt_score(m0):
     return alt_score0(unfold(m0))  # makes things worse
 """
 
-@torch.inference_mode()
-def improve12(arrays_tensor, scores):  # proof of concept of brute force k-bit flip
-    print(f"improve12 ", end=''); sys.stdout.flush()
-    B=arrays_tensor.shape[0]
-    rows = torch.arange(B, device=device)
-    # first let's do it the stupidest way (will recode later)
-    #for t in range(12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
-    for k in range(3,12):  # can be adjusted or can have some counter for each sample when no scores_delta > 0 with some tolerance
-        #k=5
-        scores_delta = scores.unsqueeze(1).expand(-1,na).clone()  # no longer used, just init once and for all
-        for i in range(na):
-            arrays_tensor[:, i] *= -1          # flip bit i
-            scores_delta[:, i] = score(arrays_tensor)
-            arrays_tensor[:, i] *= -1          # flip bit i
-        """
-        mask = (scores_delta > 0).any(dim=1)
-        # easy ones: 1-bit flip. (combine later with improve1?)
-        max_delta, inds = scores_delta[mask].max(dim=1)
-        scores[mask] -= max_delta
-        arrays_tensor[mask,inds] *= -1  # doesn't work? I forget
-        """
-        # hard ones: brute force 10 best candidates
-        #k=5
-        _, inds = torch.topk(scores_delta, k, dim=1, sorted=False, largest=False)
-        cur=arrays_tensor.clone()    # eww lazy TODO only copy the k columns with cur=torch.gather(arrays_tensor,1,inds)
-        for i in range(1,1<<k):
-            j = (i & -i).bit_length() - 1  # index of bit to flip
-            cols = inds[:,j]
-            cur[rows,cols] *= -1  # TODO use arrays_tensor
-            new_scores = score(cur)  # same
-            improved = new_scores < scores
-            scores[improved] = new_scores[improved]
-            arrays_tensor[improved]=cur[improved]  # TODO other way around cur[improved]=torch.gather(arrays_tensor[improved],1,inds[improved])
-        # TODO copy back with arrays_tensor[rows.unsqueeze(1).expand(-1,k),inds] = cur
-
-
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=torch.float32) / nn)
 rng0 = torch.arange(nn+1, device=device, dtype=torch.float32)
 rng = torch.arange(nn2+1, device=device, dtype=torch.float32)
 wrng = 2 * cst * w ** torch.outer(rng0,rng)
+wrng_r = wrng + torch.conj(wrng)
 # for now manual formulae, can precompute those too
 def flip_fft(j, a, f):  # j = which bit to flip, a = which way, f = fft
-    #print(a.shape,f.shape,wrng.shape)
     if j < 3*nn2:
         k = j%nn2 + 1
-        f[:,j//nn2] -= a.unsqueeze(1) * (wrng[k] + wrng[nn-k])
+        f[:,j//nn2] -= a.unsqueeze(1) * wrng_r[k]
     else:
         f[:,3] -= a.unsqueeze(1) * wrng[nn-j+3*nn2]
 
+k=10
+@torch.inference_mode()
+def improve12(arrays_tensor, scores):  # proof of concept of combined optimised 1-bit flip / opportunistic k-bit flip
+    start_timer = timer()
+    print(f"improve12 ", end=''); sys.stdout.flush()
+    B=arrays_tensor.shape[0]
+    active_rows = torch.arange(B, device=device)
+    while True:
+        M = active_rows.numel()
+        if M==0:
+            print(f"improve12 time: {timer() - start_timer}")
+            break
+        scores1 = torch.zeros((M,na),device=device,dtype=torch.float32)
+        # precompute fft
+        f = fft(unfold(arrays_tensor[active_rows]))
+        # Try flipping each bit, keep any improvement
+        for i in range(na):
+            """
+            arrays_tensor[:, i] *= -1          # flip bit i
+            scores1[:, i] = score(arrays_tensor)
+            arrays_tensor[:, i] *= -1          # flip back
+            """
+            # v2
+            flip_fft(i, arrays_tensor[active_rows, i], f)
+            scores1[:, i] = score_fft(f)
+            flip_fft(i, -arrays_tensor[active_rows, i], f)
+        mask = (scores1 < scores[active_rows].unsqueeze(1)).any(dim=1)
+        #print(f'{mask=} {active_rows=}')
+        print(f'ratio: {mask.sum()/B}')
+        # easy ones: 1-bit flip.
+        easy_rows = active_rows[mask]
+        #print(f'{easy_rows=}')
+        min_scores, inds = scores1[mask].min(dim=1)
+        scores[easy_rows] = min_scores
+        arrays_tensor[easy_rows,inds] *= -1
+        # hard ones: brute force k best candidates
+        hard_rows = active_rows[~mask]
+        hard_inds = torch.nonzero(~mask, as_tuple=True)[0]  # <sigh>
+        #print(f'{hard_rows=}')
+        if hard_rows.numel() > 0:
+            _, inds = torch.topk(scores1[~mask], k, dim=1, sorted=False, largest=False)
+            cur=torch.gather(arrays_tensor[hard_rows],1,inds)  # might want to undo the cur <-> arrays_tensor, see what's faster
+            for i in range(1,1<<k):
+                j = (i & -i).bit_length() - 1  # index of bit to flip
+                cols = inds[:,j]
+                arrays_tensor[hard_rows,cols] *= -1
+                new_scores = score(arrays_tensor[hard_rows])
+                improved = new_scores < scores[hard_rows]
+                mask[hard_inds[improved]] = True
+                scores[hard_rows[improved]] = new_scores[improved]
+                cur[improved]=torch.gather(arrays_tensor[hard_rows[improved]],1,inds[improved])
+            arrays_tensor[hard_rows.unsqueeze(1).expand(-1,k),inds] = cur
+            active_rows=active_rows[mask]
+
+
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
+    start_timer = timer()
     print(f"improve1 ", end=''); sys.stdout.flush()
     B = arrays_tensor.shape[0]
     active_mask = torch.ones(B, device=device, dtype=torch.bool)
@@ -160,6 +178,7 @@ def improve1(arrays_tensor, scores):
             print('')
             if debugging:
                 print(flip_counts)
+            print(f"improve1 time: {timer() - start_timer}")
             break
         # Apply the winning flips once
         active_rows = active_rows[improved_any]
@@ -168,27 +187,46 @@ def improve1(arrays_tensor, scores):
         if debugging:
             flip_counts += torch.bincount(active_cols, minlength=na)
         # Next round: only keep rows that improved (they might improve again)
-        active_mask.zero_()
+        active_mask.zero_()  # TODO REMOVE
         active_mask[active_rows] = True
         print(f'{active_mask.sum()/B} ', end='')
+
+def flip_fft_mask(j, a, f, mask):  # j = which bit to flip, a = which way, f = fft TODO merge with non mask
+    if j < 3*nn2:
+        k = j%nn2 + 1
+        f[mask,j//nn2] -= a[mask].unsqueeze(1) * wrng_r[k]
+    else:
+        f[mask,3] -= a[mask].unsqueeze(1) * wrng[nn-j+3*nn2]
 
 # greedy 2-bit flip
 @torch.inference_mode()
 def improve2(x,scores):
+    start_timer = timer()
     print("improve2 ", end=''); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    # precompute fft
+    f = fft(unfold(x))
     for i in range(1,na):
-        x[:, i] *= -1
+        #x[:, i] *= -1
+        flip_fft(i,x[:,i],f)
         for j in range(i):
-            x[:, j] *= -1
-            new_scores = score(arrays_tensor)
+            #x[:, j] *= -1
+            flip_fft(j,x[:,j],f)
+            #new_scores = score(arrays_tensor)
+            new_scores = score_fft(f)
             mask = new_scores < scores
             cnt += torch.sum(mask)
-            x[~mask, j] *= -1  # Only revert for elements where no improvement
-            x[mask, i] *= -1  # !!!
+            #x[~mask, j] *= -1  # Only revert for elements where no improvement
+            #x[mask, i] *= -1  # !!!
+            flip_fft_mask(i,-x[:,i],f,mask)
+            flip_fft_mask(j,-x[:,j],f,~mask)
+            x[mask, i] *= -1
+            x[mask, j] *= -1
             scores[mask] = new_scores[mask]  # Update scores accordingly
-        x[:, i] *= -1
+        flip_fft(i,-x[:,i],f)
+        #x[:, i] *= -1
     print(f'{cnt/x.shape[0]}')
+    print(f"improve2 time: {timer() - start_timer}")
 
 # greedy 2-bit flip, restricted to intrablocks
 @torch.inference_mode()
@@ -317,15 +355,9 @@ def batch_gradient_descent(
         x.copy_(torch.where(x > 0, 1., -1.))
         scores = score(x)
         print(f'pre improve {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
-        start_timer = timer()
-        improve1(x, scores)
-        print(f"improve1 time: {timer() - start_timer}")
-        start_timer = timer()
-        improve2(x,scores)
-        print(f"improve2 time: {timer() - start_timer}")
-        start_timer = timer()
-        #improve12(x,scores)
-        print(f"improve12 time: {timer() - start_timer}")
+        #improve1(x, scores)
+        #improve2(x,scores)
+        improve12(x,scores)
         print(f'postimprove {t=} : {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)}')
         success = scores<eps
         if success.any():
