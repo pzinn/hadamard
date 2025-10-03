@@ -56,7 +56,7 @@ def fft(m):
     return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
 
 def score_fft(f):  # score in terms of precomputed fft
-    s = -4*torch.log(torch.real(f*f.conj()).sum(dim=1))
+    s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
     return s[:,0]+2*s[:,1:].sum(dim=1)
 
 def score(m0):
@@ -88,7 +88,7 @@ def flip_fft(j, a, f):  # j = which bit to flip, a = which way, f = fft
 
 k=10
 @torch.inference_mode()
-def improve1p(arrays_tensor, scores):  # proof of concept of combined optimised 1-bit flip / opportunistic k-bit flip
+def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
     start_timer = timer()
     print(f"improve1p ", end=''); sys.stdout.flush()
     B=arrays_tensor.shape[0]

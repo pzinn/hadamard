@@ -200,7 +200,7 @@ def unfold(m0):
                         m0[:,3*nn2:]),dim=1)
 
 def init_score_function():
-    global score, score0, score_type
+    global score, score_fft, fft, unfold, score_type
     if config.score_function != 'fft log determinant':
         # Generate row indices for circulant
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
@@ -230,15 +230,15 @@ def init_score_function():
         score_type = torch.float32
         nm=4
         @torch.inference_mode()
-        def score0(m):
-            f = cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-            ff = torch.real(f*f.conj())
-            ffs = ff.sum(dim=1)
-            s = torch.log(ffs)
-            return -2*s[:,0]-4*s[:,1:].sum(dim=1)
-            # return ((1-ffs)**2).sum(dim=1)  # alternative score which sucks
+        def fft(m):
+            return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
+        @torch.inference_mode()
+        def score_fft(f):  # score in terms of precomputed fft
+            s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+            return s[:,0]+2*s[:,1:].sum(dim=1)
+        @torch.inference_mode()
         def score(m0):
-            return score0(unfold(m0))
+            return score_fft(fft(unfold(m0)))
     elif config.score_function == 'quartic':
         score_type = torch.float16
         score_threshold = n**1.5
@@ -301,6 +301,75 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         updated_dict.update(parallel_score(batch))
     return updated_dict
 
+# precompute roots of unity for fft delta
+w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=torch.float32) / nn)
+rng0 = torch.arange(nn, device=device, dtype=torch.float32)
+rng = torch.arange(nn2+1, device=device, dtype=torch.float32)
+wrng = 2 * cst * w ** torch.outer(rng0,rng)
+wrng012 = (wrng + torch.conj(wrng))[1:nn2+1]
+wrng3 = torch.conj(wrng)
+wrng_all = torch.cat((wrng012,wrng012,wrng012,wrng3),dim=0)
+
+def flip_fft(j, a, f):  # j = which bit to flip, a = which way, f = fft
+    l = j // nn2 if j < 3*nn2 else 3
+    f[:,l] -= a.unsqueeze(1) * wrng_all[j]
+
+k=10
+@torch.inference_mode()
+def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+    start_timer = timer()
+    print(f"improve1p ", end=''); sys.stdout.flush()
+    B=arrays_tensor.shape[0]
+    active_rows = torch.nonzero(scores>=eps, as_tuple=True)[0]  # don't bother with H-matrices
+    while True:
+        M = active_rows.numel()
+        if M==0:
+            print(f"improve1p time: {timer() - start_timer}")
+            break
+        scores1 = torch.zeros((M,na),device=device,dtype=torch.float32)
+        # precompute fft
+        f = fft(unfold(arrays_tensor[active_rows]))
+        # Try flipping each bit, keep any improvement
+        for i in range(na):
+            """
+            arrays_tensor[:, i] *= -1          # flip bit i
+            scores1[:, i] = score(arrays_tensor)
+            arrays_tensor[:, i] *= -1          # flip back
+            """
+            # v2
+            flip_fft(i, arrays_tensor[active_rows, i], f)
+            scores1[:, i] = score_fft(f)
+            flip_fft(i, -arrays_tensor[active_rows, i], f)
+        mask = (scores1 < scores[active_rows].unsqueeze(1)).any(dim=1)
+        # easy ones: 1-bit flip.
+        easy_rows = active_rows[mask]
+        min_scores, inds = scores1[mask].min(dim=1)
+        scores[easy_rows] = min_scores
+        arrays_tensor[easy_rows,inds] *= -1
+        # hard ones: brute force k best candidates
+        hard_rows = active_rows[~mask]
+        M2 = hard_rows.numel()
+        print(f'ratios: {M/B} {M2/B}')
+        #print(f'{hard_rows=}')
+        if M2 > 0:
+            hard_inds = torch.nonzero(~mask, as_tuple=True)[0]  # <sigh>
+            _, inds = torch.topk(scores1[~mask], k, dim=1, sorted=False, largest=False)
+            cur=arrays_tensor[hard_rows].clone()
+            f = fft(unfold(cur))
+            cur_rows = torch.arange(M2, device=device)
+            for i in range(1,1<<k):
+                j = (i & -i).bit_length() - 1  # index of bit to flip
+                cols = inds[:,j]  # actual index for each sample
+                l = torch.where(cols < 3*nn2, cols//nn2, 3)  # imitate fft_flip except now indices vary per sample
+                f[cur_rows,l] -= cur[cur_rows,cols].unsqueeze(1) * wrng_all[cols]
+                cur[cur_rows,cols] *= -1  # need to keep track of these two
+                new_scores = score_fft(f)
+                improved = new_scores < scores[hard_rows]
+                mask[hard_inds[improved]] = True  # these will get saved for next round
+                scores[hard_rows[improved]] = new_scores[improved]
+                arrays_tensor[hard_rows[improved]] = cur[improved]
+            active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
+
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
     print(f"improve1", end=''); sys.stdout.flush()
@@ -359,7 +428,7 @@ def improve1a(arrays_tensor,scores):  # the old improve1: flip a single bit gree
         print(f' improve success rate: {cnt/arrays_tensor.shape[0]}')
 """
 
-# greedy 2-bit flip
+# greedy 2-bit flip -- probably too slow for large n
 @torch.inference_mode()
 def improve2(x,scores):
     print("improve2 ", end=''); sys.stdout.flush()
@@ -625,15 +694,15 @@ def parallel_improve(arrays_items,new_arrays_dict):
         torch.cuda.empty_cache()  # Free memory
     # step B
     start_timer = timer()
-    improve1(arrays_tensor, scores)
+    improve1p(arrays_tensor, scores)
     if debugging:
-        print(f"improve1 time: {timer() - start_timer}")
+        print(f"improve1p time: {timer() - start_timer}")
+    """
     start_timer = timer()
     improve2(arrays_tensor, scores)
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
-    #for _ in range(config.num_improve):
-    #   improve1(arrays_tensor, scores)
+    """
     # step C: do some sorting
     mysort(arrays_tensor)
     # update
