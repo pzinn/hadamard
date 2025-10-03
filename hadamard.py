@@ -368,7 +368,8 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
                 mask[hard_inds[improved]] = True  # these will get saved for next round
                 scores[hard_rows[improved]] = new_scores[improved]
                 arrays_tensor[hard_rows[improved]] = cur[improved]
-            active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
+        mask &= scores[active_rows] >= eps
+        active_rows=active_rows[mask]  # eliminate those that haven't been improved at all, or H-matrices
 
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
@@ -670,8 +671,8 @@ def parallel_improve(arrays_items,new_arrays_dict):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     arrays_tensor = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor and float
-    # scores = score(arrays_tensor)  # Recompute scores in parallel
-    scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
+    scores = score(arrays_tensor)  # Recompute scores in parallel -- for accuracy reasons, safer
+    # scores = torch.tensor(scores, dtype=score_type, device=device)  # Convert to tensor and float
     # step A: demultiply data
     start_timer = timer()
     arrays_tensor1=improve3(arrays_tensor)
