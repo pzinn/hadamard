@@ -480,23 +480,32 @@ one = torch.tensor([[1]],device=device,dtype=torch.float32)
 @torch.inference_mode()
 def improve3(arrays_tensor):
     print(f"improve3 ", end=''); sys.stdout.flush()
-    x1 = arrays_tensor[:, :3*nn2]
-    B=x1.shape[0]
-    x1a=x1.view(B,3,nn2)
-    m=torch.cat((one.expand(B,3,1),x1a,torch.flip(x1a,(2,))),dim=2)
-    f = cst * torch.fft.rfft(m, dim=2)
-    ff = f**2
+    B=arrays_tensor.shape[0]
+    m = unfold(arrays_tensor)
+    f = fft(m)
+    ff = f*f.conj()
     ffs = ff.sum(dim=1)
-    # the ambitious version
-    mask = (ffs.real <= 1).all(dim=1)
-    s = mask.sum()
-    print(f'success rate {s/B}')
-    if s==0:
-        return None
-    h = torch.sqrt(1-ffs[mask])
-    h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((h.shape[0],nn2),device=device))
-    x2=torch.fft.irfft(h,n=nn,dim=1)
-    return torch.cat((x1[mask],torch.where(x2 > 0, 1., -1.)),dim=1)
+    lst = []
+    for j in range(4):
+        ffs1 = ffs - ff[:,j]
+        # the ambitious version
+        mask = (ffs1.real <= 1).all(dim=1)
+        M = mask.sum()
+        print(f'success rate ({j}) {M/B}')
+        if M > 0:
+            x = arrays_tensor[mask].clone()
+            h = torch.sqrt(1-ffs1[mask])
+            if j==3:
+                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                x[:, 3*nn2:] = torch.where(hh > 0, 1., -1.)
+            else:
+                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
+                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                hh = torch.where(hh > 0, 1., -1.)
+                x[:,j*nn2:(j+1)*nn2] = hh[:,0:1]*hh[:,1:nn2+1]
+            lst.append(x)
+    return torch.cat(lst, dim=0) if len(lst) > 0 else None
     """
     # the less ambitious version -- but maybe should be kept? though all it does is increase # samples?
     z, _ = ffs.real.max(dim=1)
