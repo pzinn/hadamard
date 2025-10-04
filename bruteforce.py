@@ -14,6 +14,11 @@ import os
 torch.set_printoptions(threshold=sys.maxsize,sci_mode=False)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
+random_seed = 1
+torch.manual_seed(random_seed)
+if device.startswith('cuda'):
+    torch.cuda.manual_seed_all(random_seed)
+
 score_type = torch.float32
 n = 108   # must be a multiple of 4
 assert(n%4==0)
@@ -34,7 +39,7 @@ def fmt_array(s):
 
 
 def generate_random_arrays(batch_size):
-    return 2 * torch.rand((batch_size, na), device=device, dtype=score_type) - 1
+    return 2 * torch.rand((batch_size, na), device=device, dtype=score_type) - 1  # why did I switch from randint? test
 
 
 
@@ -56,7 +61,8 @@ def fft(m):
     return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
 
 def score_fft(f):  # score in terms of precomputed fft
-    s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+    ff = torch.real(f*f.conj())
+    s = -2*torch.log(ff.sum(dim=1)) # + 2 * F.relu(ff-1).sum(dim=1) + F.relu(ff[:,:3].sum(dim=1)-1)
     return s[:,0]+2*s[:,1:].sum(dim=1)
 
 def score(m0):
@@ -85,7 +91,7 @@ def flip_fft(j, a, f):  # j = which bit to flip, a = which way, f = fft
     l = j // nn2 if j < 3*nn2 else 3
     f[:,l] -= a.unsqueeze(1) * wrng_all[j]
 
-
+"""
 k=10
 @torch.inference_mode()
 def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
@@ -103,11 +109,6 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
         f = fft(unfold(arrays_tensor[active_rows]))
         # Try flipping each bit, keep any improvement
         for i in range(na):
-            """
-            arrays_tensor[:, i] *= -1          # flip bit i
-            scores1[:, i] = score(arrays_tensor)
-            arrays_tensor[:, i] *= -1          # flip back
-            """
             # v2
             flip_fft(i, arrays_tensor[active_rows, i], f)
             scores1[:, i] = score_fft(f)
@@ -125,6 +126,7 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
         #print(f'{hard_rows=}')
         if M2 > 0:
             hard_inds = torch.nonzero(~mask, as_tuple=True)[0]  # <sigh>
+            new_mask = torch.zeros((M2,), device=device, dtype=torch.bool)
             _, inds = torch.topk(scores1[~mask], k, dim=1, sorted=False, largest=False)
             cur=arrays_tensor[hard_rows].clone()
             f = fft(unfold(cur))
@@ -137,11 +139,67 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
                 cur[cur_rows,cols] *= -1  # need to keep track of these two
                 new_scores = score_fft(f)
                 improved = new_scores < scores[hard_rows]
-                mask[hard_inds[improved]] = True  # these will get saved for next round
-                scores[hard_rows[improved]] = new_scores[improved]
-                arrays_tensor[hard_rows[improved]] = cur[improved]
+                new_mask[improved] = True  # these will get saved for next round
+                improved_rows = hard_rows[improved]
+                scores[improved_rows] = new_scores[improved]
+                arrays_tensor[improved_rows] = cur[improved]
+            mask[hard_inds] = new_mask
             active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
+"""
 
+k=10
+@torch.inference_mode()
+def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+    start_timer = timer()
+    print(f"improve1p ", end=''); sys.stdout.flush()
+    B=arrays_tensor.shape[0]
+    active_rows = torch.arange(B, device=device)
+    scores1 = torch.empty((B,na), device=device, dtype=torch.float32)
+    while True:
+        M = active_rows.numel()
+        print(f'{M/B}')
+        cur_rows = active_rows
+        while True:
+            f = fft(unfold(arrays_tensor[cur_rows]))  # better than flip updating for accuracy
+            #print(f'easy {mask.sum()/B}')
+            for j in range(na):
+                l = j // nn2 if j < 3*nn2 else 3
+                f[:, l] -= arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
+                scores1[cur_rows, j] = score_fft(f)
+                f[:, l] += arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
+            mask = (scores1[cur_rows] < scores[cur_rows].unsqueeze(1)).any(dim=1)
+            if not mask.any():
+                break
+            # easy ones: 1-bit flip.
+            cur_rows = cur_rows[mask]
+            min_scores, inds = scores1[cur_rows].min(dim=1)
+            scores[cur_rows] = min_scores
+            # l = (inds//nn2).clamp_max(3)
+            # f[cur_rows,l] -= arrays_tensor[cur_rows,inds].unsqueeze(1) * wrng_all[inds]  # removed, see above
+            arrays_tensor[cur_rows,inds] *= -1
+        # hard ones: brute force k best candidates
+        _, indsk = torch.topk(scores1[active_rows], k, dim=1, sorted=False, largest=False)
+        cur=torch.gather(arrays_tensor[active_rows], 1, indsk)
+        f = fft(unfold(arrays_tensor[active_rows]))  # better than flip updating for accuracy
+        rows=torch.arange(M, device=device)
+        mask = torch.zeros((M,), device=device, dtype=torch.bool)
+        for i in range(1,1<<k):
+            j = (i & -i).bit_length() - 1  # index of bit to flip
+            inds = indsk[:,j]  # actual index for each sample
+            l = (inds//nn2).clamp_max(3)
+            f[rows,l] -= cur[:,j].unsqueeze(1) * wrng_all[inds]
+            cur[:,j] *= -1  # need to keep track of these two
+            new_scores = score_fft(f)
+            improved = new_scores < scores[active_rows]
+            mask[improved] = True  # these will get saved for next round
+            improved_rows = active_rows[improved]
+            scores[improved_rows] = new_scores[improved]
+            arrays_tensor[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+        if not mask.any():
+            print(f"improve1p time: {timer() - start_timer}")
+            break
+        #print(f'hard {mask.sum()/B}')
+        active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
 
 @torch.inference_mode()
 def improve1(arrays_tensor, scores):
@@ -319,6 +377,7 @@ def batch_gradient_descent(
     #scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
 
     x1 = x[:, :3*nn2]
+    x2 = x[:, 3*nn2:]
 
     #counter = torch.zeros(x.shape[0], device=device, dtype=torch.int64)
 
@@ -328,20 +387,25 @@ def batch_gradient_descent(
             torch.cuda.empty_cache()  # Free memory
         #first set
         start_timer=timer()
-        m = unfold2(x1)
-        f = cst * torch.fft.rfft(m, dim=2)
-        #ff = f*f.conj()  # in fact, just f**2
-        ff = f**2
+        m = unfold(x)
+        f = fft(m)
+        ff = f*f.conj()
         ffs = ff.sum(dim=1)
-        z = torch.max(ffs.real.max(dim=1)[0],torch.tensor(1))
-        ffs /= z.unsqueeze(1)
-        h = torch.sqrt(1-ffs)
-        h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((B,nn2),device=device))
-        x[:,3*nn2:]=1/cst*torch.fft.irfft(h,n=nn,dim=1)  # actually 1/cst doesn't matter since we're gonna sign it
+        #select one of the 4
+        #j = torch.randint(4, (B,), device=device, dtype=torch.int64)
+        j = 3 # torch.randint(4, ()).item()  # TEMP
+        ffs1 = ffs - ff[:,j]
+        z = torch.max(ffs1.real.max(dim=1)[0],torch.tensor(1))
+        ffs1 /= z.unsqueeze(1)
+        h = torch.sqrt(1-ffs1)
+        if j==3:
+            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((B,nn2), device=device))
+            x[:,3*nn2:] = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+        else:
+            h[:,1:] *= 2*torch.randint(2, (B,nn2), device=device)-1
+            hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+            x[:,j*nn2:(j+1)*nn2] = hh[:,0:1]*hh[:,1:nn2+1]
         if t==max_iterations-1+1:  # save for testing purposes; remove +1 to enable
-            print(f'mod_score: {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
-            scores=score(x)
-            print(f'    score: {torch.min(scores)} {torch.mean(scores)} {torch.max(scores)} time={timer()-start_timer}')
             with open('dump.txt', 'w') as file:
                 for s in x.tolist():
                     for r in s:
