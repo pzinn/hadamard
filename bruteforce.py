@@ -39,7 +39,8 @@ def fmt_array(s):
 
 
 def generate_random_arrays(batch_size):
-    return 2 * torch.rand((batch_size, na), device=device, dtype=score_type) - 1  # why did I switch from randint? test
+#    return 2 * torch.rand((batch_size, na), device=device, dtype=score_type) - 1
+    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=score_type) - 1
 
 
 
