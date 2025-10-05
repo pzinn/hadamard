@@ -688,9 +688,9 @@ def parallel_improve(arrays_items,new_arrays_dict):
             temp_arrays={tuple(x): (s, params.gen) for x, s in zip(torch.where(arrays_tensor1 > 0, 1, -1).tolist(), scores1.tolist()) if math.isfinite(s)}
             print(f"pre -improve batch 1:")
             record_stats(temp_arrays)
-        arrays_tensor = torch.cat((arrays_tensor,arrays_tensor1),dim=0)
-        scores = torch.cat((scores,scores1),dim=0)
-        gens = chain(gens, repeat(params.gen))
+        arrays_tensor = torch.cat((arrays_tensor1,arrays_tensor),dim=0)
+        scores = torch.cat((scores1,scores),dim=0)
+        gens = chain(repeat(params.gen, arrays_tensor1.shape[0]), gens)
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B
