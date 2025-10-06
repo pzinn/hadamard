@@ -81,7 +81,6 @@ def generate_random_arrays(batch_size):
 
 # MAIN-DEFINITIONS #
 
-
 def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
@@ -170,21 +169,21 @@ def record_stats(arrays_dict, prefix=""):
     hada_tally = dict(Counter(hada_dict.values()).most_common())
     print(f"Hadamard gen tally: {hada_tally}")
 
-    if hasattr(record_stats, "total_hada_dict"):
-        hada_dict.update(record_stats.total_hada_dict)
-    record_stats.total_hada_dict = hada_dict
-    total_nh = len(record_stats.total_hada_dict)
-    print(f"Total number of Hadamard: {total_nh}")
-    if total_nh>0:
-        print(f"Here's one: {fmt_array(next(iter(record_stats.total_hada_dict)))}")
+    if prefix == "selected":  # don't spam with H-matrices...
+        if hasattr(record_stats, "total_hada_dict"):
+            hada_dict.update(record_stats.total_hada_dict)
+        record_stats.total_hada_dict = hada_dict
+        total_nh = len(record_stats.total_hada_dict)
+        print(f"Total number of Hadamard: {total_nh}")
+        if total_nh>0:
+            print(f"Here's one: {fmt_array(next(iter(record_stats.total_hada_dict)))}")
+            write_arrays(logger.hada_file, record_stats.total_hada_dict.keys())
 
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(record_stats.total_hada_dict):>10} {tally} {hada_tally}\n")
-
-    write_arrays(logger.hada_file, record_stats.total_hada_dict.keys())
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_dict):>10} {tally} {hada_tally}\n")
 
     if prefix:
         logger.record_scores(prefix, scores, gens, mean_score, nh)
