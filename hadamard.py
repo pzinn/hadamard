@@ -26,97 +26,35 @@ if debugging:
     torch.cuda.memory._record_memory_history(max_entries=100000)
 """
 
-"""
-@torch.no_grad()
-def rs_like_batch(n: int, B: int, dtype=torch.float32):
-    m=1
-    while (1<<m)<n:
-        m+=1
-    L = 1
-    # Work in int32 to avoid overflow of intermediate sums
-    P = torch.ones(B, 1, dtype=torch.int32, device=device)
-    Q = torch.ones(B, 1, dtype=torch.int32, device=device)
-    # Draw all σ_j ∈ {±1} for the whole batch in one go
-    sigmas = (torch.randint(0, 2, (B, m), device=device,dtype=torch.int32) * 2 - 1)
-    for j in range(m):
-        s = sigmas[:, j].view(B, 1)  # shape [B,1]
-        L2 = L << 1
-        # Allocate next level
-        Pn = torch.empty(B, L2, dtype=torch.int32, device=device)
-        Qn = torch.empty_like(Pn)
-        # Coeff recurrences (no padding/cat; just place blocks)
-        Pn[:, :L]  = P
-        Pn[:, L:]  = s * Q
-        Qn[:, :L]  = P
-        Qn[:, L:]  = -s * Q
-        P, Q = Pn, Qn
-        L = L2
-    # Map coefficients to {±1}; treat zeros (very rare) as +1
-    A = torch.sign(P).to(dtype)
-    A[A == 0] = 1
-    # crop
-    starts = torch.randint(0, (1<<m) - n + 1, (B,1), device=device)
-    rots   = torch.randint(0, n, (B,1), device=device)
-    # Indices for cropped-then-rotated view:
-    # (i,k) -> A[i, starts[i] + ((k - rots[i]) mod n)]
-    base = torch.arange(n, device=device).view(1,-1)
-    idx2d = starts + ((base - rots) % n)
-    out = A.gather(dim=1, index=idx2d)     # [B, n], still ±1
-    return out
-"""
-
-
-
 @torch.inference_mode()
 def generate_random_arrays(batch_size):
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=numeric_type) - 1
-    """
-    # for now rs_like not diverse enough (check autocorrel)
-    a=rs_like_batch(nn2,batch_size)
-    b=rs_like_batch(nn2,batch_size)
-    c=rs_like_batch(nn2,batch_size)
-    d=rs_like_batch(nn,batch_size)
-    return torch.cat((a,b,c,d),dim=1)
-    """
 
 # MAIN-DEFINITIONS #
-
+"""
 def best_from(arrays_dict):
     # preserves ordering
     items = arrays_dict.items()
     smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
     return {k: v for k, v in items if k in smallest_keys or v[0] < eps}  # always keep H-matrices
-    # doesn't
-    # return dict(heapq.nsmallest(training_size,arrays_dict.items(),key=lambda item: item[1]))
-    # some other discarded alternatives
-    """
-    arrays_items = list(arrays_dict.items())
-    arrays_items.sort(key=lambda item: item[1])
-    return dict(arrays_items[:training_size])
-    """
-    """
-    scores, _ = zip(*arrays_dict.values())
-    threshold = np.partition(np.array(scores), training_size)[training_size]
-    return {k: v for k, v in arrays_dict.items() if v[0] <= threshold}
-    """
+"""
 
+def write_arrays_buffer(buffer, a):
+    plus, minus = ord('+'), ord('-')
+    rows = torch.where(a > 0, plus, minus).to(torch.uint8)
+    for r in rows:
+        buffer.write(bytes(r.tolist()))
+        buffer.write(b"\n")
 
-def fmt_array(s):
-    return "".join("+" if x > 0 else "-" for x in s)
-
-def write_arrays(file_path, arrays):
-    with open(file_path, 'w') as file:
-        for s in arrays:
-            file.write(fmt_array(s) + "\n")
+def write_arrays(file_path, a):
+    with open(file_path, 'wb') as file:
+        write_arrays_buffer(file, a)
 
 # for keeping track of stats
-def record_stats(arrays_dict, prefix=""):
-    if len(arrays_dict) == 0:
+def record_stats(arrays_tensor, scores, gens, prefix=""):
+    if len(arrays_tensor) == 0:
         return
-    arrays_items = arrays_dict.items()
-    arrays, values = zip(*arrays_items)
-    scores, gens = zip(*values)
-
+    """
     # compute autocorrelation by MC
     mc_size = 1000
     perms = params.perms.tolist()
@@ -143,47 +81,49 @@ def record_stats(arrays_dict, prefix=""):
         s += ss
     s /= (mc_size * na)
     print(f"Correlation: {s}")
+    """
+    s=float('nan')
 
     # now scores
-    scores = np.array(scores, dtype=float)
     # if debugging:
     #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
 
-    min_score = np.min(scores)
+    min_score = torch.min(scores)
     print(f"Min score: {min_score}")
 
-    mean_score = np.mean(scores)
+    mean_score = torch.mean(scores)
     print(f"Mean score: {mean_score}")
 
-    max_score = np.max(scores)
+    max_score = torch.max(scores)
     print(f"Max score: {max_score}")
 
     # tally=Counter([val[1] for val in vals])
-    tally = dict(Counter(gens).most_common())
+    tally = dict(Counter(gens.tolist()).most_common())
     print(f"Gen tally: {tally}")
 
-    hada_dict = {arrays[i]: gens[i] for i in range(len(arrays_dict)) if scores[i] < eps}
-    nh = len(hada_dict) / len(arrays_dict)
+    hada_inds = torch.nonzero(scores < eps, as_tuple=True)[0]
+    nh = len(hada_inds) / len(arrays_tensor)
     print(f"Hadamard ratio: {nh}")
     # hada_tally = Counter(hada_dict.values())
-    hada_tally = dict(Counter(hada_dict.values()).most_common())
+    hada_tally = dict(Counter(gens[hada_inds].tolist()).most_common())
     print(f"Hadamard gen tally: {hada_tally}")
 
     if prefix == "selected":  # don't spam with H-matrices...
-        if hasattr(record_stats, "total_hada_dict"):
-            hada_dict.update(record_stats.total_hada_dict)
-        record_stats.total_hada_dict = hada_dict
-        total_nh = len(record_stats.total_hada_dict)
+        if not hasattr(record_stats, "hada_tensor"):
+            record_stats.hada_tensor = torch.empty((0,na), dtype=torch.int8)
+        record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays_tensor[hada_inds]), dim=0), dim=0)
+        total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
         if total_nh>0:
-            print(f"Here's one: {fmt_array(next(iter(record_stats.total_hada_dict)))}")
-            write_arrays(logger.hada_file, record_stats.total_hada_dict.keys())
+            print(f"Here's one: ")
+            write_arrays_buffer(sys.stdout.buffer, record_stats.hada_tensor[0:1])
+            write_arrays(logger.hada_file, record_stats.hada_tensor)
 
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_dict):>10} {tally} {hada_tally}\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {tally} {hada_tally}\n")
 
     if prefix:
         logger.record_scores(prefix, scores, gens, mean_score, nh)
@@ -197,9 +137,18 @@ def unfold(m0):
                         mir(m0[:,nn2:2*nn2]),
                         mir(m0[:,2*nn2:3*nn2]),
                         m0[:,3*nn2:]),dim=1)
+one_cpu = torch.tensor([[1]],device='cpu',dtype=torch.float32)
+def mir_cpu(a):
+    return torch.cat((one_cpu.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
+def unfold_cpu(m0):
+    return torch.stack((mir_cpu(m0[:,:nn2]),
+                        mir_cpu(m0[:,nn2:2*nn2]),
+                        mir_cpu(m0[:,2*nn2:3*nn2]),
+                        m0[:,3*nn2:]),dim=1)
+
 
 def init_score_function():
-    global score, score_fft, fft, unfold, numeric_type
+    global score, score_cpu, score_fft, fft, unfold, numeric_type
     if config.score_function != 'fft log determinant':
         # Generate row indices for circulant
         indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
@@ -238,6 +187,8 @@ def init_score_function():
         @torch.inference_mode()
         def score(m0):
             return score_fft(fft(unfold(m0)))
+        def score_cpu(m0):
+            return score_fft(fft(unfold_cpu(m0)))
     elif config.score_function == 'quartic':
         numeric_type = torch.float16
         score_threshold = n**1.5
@@ -260,22 +211,15 @@ def init_score_function():
 
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats. also generates random data at gen 0
-def parallel_score(arrays):
-    if isinstance(arrays,torch.Tensor):
-        arrays_tensor = arrays
-        arrays = [tuple(row) for row in torch.where(arrays_tensor > 0, 1, -1).tolist()]
-    else:
-        arrays_tensor = torch.tensor(arrays, dtype=numeric_type, device=device)  # Convert to tensor
+def parallel_score(arrays_tensor):
     scores = score(arrays_tensor)  # Compute scores in parallel
-    return {x: (s, params.gen) for x, s in zip(arrays, scores.tolist()) if math.isfinite(s)}  # Convert back to dict
+    return scores.cpu()  # move back to cpu
 
-def batch_generator(arrays):
-    it = iter(arrays)
-    while True:
-        batch = list(islice(it, config.score_batch_size))
-        if not batch:
-            break
-        yield batch
+def batch_generator(arrays_tensor):
+    B = arrays_tensor.shape[0]
+    for i in range(0, B, config.score_batch_size):
+        j = i + config.score_batch_size
+        yield arrays_tensor[i:j].to(device=device, dtype=numeric_type)
 
 def random_batch_generator():
     n_full_batches = config.sample_size // config.score_batch_size
@@ -285,20 +229,26 @@ def random_batch_generator():
     if remainder:
         yield generate_random_arrays(remainder)
 
-def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
+def batch_score(arrays_tensor):  # same as parallel_score but in batches of score_batch_size
     torch.set_float32_matmul_precision('highest')
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     if config.score_batch_size is None:
-        return parallel_score(list(arrays) if arrays is not None else generate_random_arrays(config.sample_size))
-    updated_dict = {}
-    if arrays is None:
+        if arrays_tensor is None:
+            arrays_tensor_gpu = generate_random_arrays(config.sample_size)
+            arrays_tensor = arrays_tensor_gpu.to(device='cpu', dtype=torch.int8)  # TODO CHECK
+        else:
+            arrays_tensor_gpu = arrays_tensor.to(device=device, dtype=numeric_type)
+        return arrays_tensor, parallel_score(arrays_tensor_gpu)
+    scores = torch.empty((0,), dtype=numeric_type)
+    if arrays_tensor0 is None:
         batches = random_batch_generator()
     else:
-        batches = batch_generator(arrays)
+        batches = batch_generator(arrays_tensor0)
     for batch in batches:
-        updated_dict.update(parallel_score(batch))
-    return updated_dict
+        new_scores = parallel_score(batch)
+        scores = torch.cat((scores, new_scores), dim=0)
+    return arrays_tensor, scores
 
 # precompute roots of unity for fft delta
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=torch.float32) / nn)
@@ -466,7 +416,6 @@ def improve2(m0,scores):  # try to use our knowledge of the score fn
     m0[improved,3*nn2:]=h[improved,3]
 """
 
-one = torch.tensor([[1]],device=device,dtype=torch.float32)
 @torch.inference_mode()
 def improve3(arrays_tensor):
     print(f"improve3 ", end=''); sys.stdout.flush()
@@ -664,15 +613,10 @@ def mysort(arrays_tensor):
         if (s1-s2).abs().max() > 1e-5:
             raise RuntimeError("score not preserved by sort", s1, s2, (s1-s2).abs().max().item())
 
-def parallel_improve(arrays_items):
-    arrays, values = zip(*arrays_items)
-    scores, gens = zip(*values)
+def parallel_improve(arrays_tensor, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    arrays_tensor = torch.tensor(arrays, dtype=numeric_type, device=device)  # Convert to tensor and float
-    scores = score(arrays_tensor)  # Recompute scores in parallel -- for accuracy reasons, safer
-    gens = torch.tensor(gens, dtype=torch.int16, device=device)
-    # scores = torch.tensor(scores, dtype=numeric_type, device=device)  # Convert to tensor and float
+    #scores = score(arrays_tensor)  # Recompute scores in parallel -- for accuracy reasons, safer
     # step A: demultiply data
     start_timer = timer()
     arrays_tensor1=improve3(arrays_tensor)
@@ -706,41 +650,40 @@ def parallel_improve(arrays_items):
     return (arrays_tensor, scores, gens)
 
 def new_best_from(arrays_tensor, scores, gens):
-    if arrays_tensor.shape[0] > config.training_size:
-        # selecting first *then* deduplicate for efficiency -- might result in fewer data than expected
-        idx = torch.topk(scores, k=config.training_size, largest=False, sorted=False).indices
-        arrays_tensor = arrays_tensor[idx]
-        scores = scores[idx]
-        gens = gens[idx]
-        arrays_tensor, inv = torch.unique(arrays_tensor, dim=0, return_inverse=True, sorted=False)
-        U = arrays_tensor.shape[0]
-        min_gens = torch.empty(U, device=device, dtype=torch.int16)  # contents irrelevant
-        min_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
-        # normally scores should be equal but who knows
-        min_scores = torch.empty(U, device=device, dtype=numeric_type)  # contents irrelevant
-        min_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
+    if arrays_tensor.shape[0] <= config.training_size:
+        return arrays_tensor, scores, gens
+    # selecting first *then* deduplicate for efficiency -- might result in fewer data than expected
+    idx = torch.topk(scores, k=config.training_size, largest=False, sorted=False).indices
+    arrays_tensor = arrays_tensor[idx]
+    scores = scores[idx]
+    gens = gens[idx]
+    arrays_tensor, inv = torch.unique(arrays_tensor, dim=0, return_inverse=True, sorted=False)
+    U = arrays_tensor.shape[0]
+    min_gens = torch.empty(U, device=device, dtype=torch.int16)  # contents irrelevant
+    min_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
+    # normally scores should be equal but who knows
+    min_scores = torch.empty(U, device=device, dtype=numeric_type)  # contents irrelevant
+    min_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
     return arrays_tensor, min_scores, min_gens
 
-def batch_improve(arrays_dict):
+def batch_improve(arrays_tensor0, scores0, gens0):
     if config.score_batch_size is None:
-        arrays_tensor, scores, gens = parallel_improve(arrays_dict.items())
+        arrays_tensor, scores, gens = parallel_improve(arrays_tensor0.to(device=device, dtype=numeric_type), scores0.to(device=device), gens0.to(device=device))
         # select
-        arrays_tensor, scores, gens = new_best_from(arrays_tensor, scores, gens)
+        arrays_tensor, scores, gens = new_best_from(arrays_tensor, scores, gens)        
     else:
-        it = iter(arrays_dict.items())  # Convert dictionary to iterator
+        B = arrays_tensor0.shape[0]
         arrays_tensor = torch.empty((0,na), dtype=numeric_type, device=device)
         scores = torch.empty((0,), dtype=numeric_type, device=device)
         gens = torch.empty((0,), dtype=torch.int16, device=device)
-        while True:
-            batch = list(islice(it, config.score_batch_size))  # Take next batch_size items
-            if not batch:
-                break
-            new_arrays_tensor, new_scores, new_gens = parallel_improve(batch)
+        for i in range(0, B, config.score_batch_size):
+            j = i + config.score_batch_size
+            new_arrays_tensor, new_scores, new_gens = parallel_improve(arrays_tensor0[i:j].to(device=device, dtype=numeric_type), scores0[i:j].to(device=device), gens0[i:j].to(device=device))
             arrays_tensor = torch.cat((arrays_tensor, new_arrays_tensor), dim=0)
             scores = torch.cat((scores, new_scores), dim=0)
             gens = torch.cat((gens, new_gens), dim=0)
             arrays_tensor, scores, gens = new_best_from(arrays_tensor, scores, gens)
-    return {tuple(x): (s, g) for x, s, g in zip(torch.where(arrays_tensor > 0, 1, -1).tolist(), scores.tolist(), gens.tolist()) if math.isfinite(s)}
+    return arrays_tensor.to(device='cpu', dtype=torch.int8), scores.cpu(), gens.cpu()  # potentially dangerous. CHECK
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
@@ -768,15 +711,16 @@ def main():
         init_sample = params.work_dir + f'GEN-{params.gen:02d}.txt'
         try:
             with open(init_sample, 'r') as f:
-                arrays = [tuple(1 if c == "+" else -1 for c in line.strip()) for line in f]
+                arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
             print(f'***Loading initial sample from {init_sample}***')
         except FileNotFoundError:
             arrays = []
     else:
         arrays = None
 
-    arrays_dict = batch_score(arrays)
-    record_stats(arrays_dict, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
+    arrays_tensor, scores = batch_score(arrays)
+    gens = torch.full(scores.shape, params.gen, dtype=torch.int16)
+    record_stats(arrays_tensor, scores, gens, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
     # MAIN-LOOP #
 
@@ -787,13 +731,12 @@ def main():
             # improve existing data, write to GEN-(gen)
             print('\n***Improving***')
             start_timer = timer()
-            arrays_dict = batch_improve(arrays_dict)
+            arrays_tensor, scores, gens = batch_improve(arrays_tensor, scores, gens)
             if debugging:
                 print(f"improving time: {timer() - start_timer}")
             print('\n***Selecting***')  # technically already done, but left for clarity of output
-            record_stats(arrays_dict, "selected")
-            arrays = arrays_dict.keys()
-            write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
+            record_stats(arrays_tensor, scores, gens, "selected")
+            write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays_tensor)
         if params.gen == config.max_iterations:
             """
             if debugging:
@@ -815,7 +758,7 @@ def main():
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
+            transformer.train(arrays_tensor, score=score_cpu if params.test_randomisation else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
@@ -824,11 +767,13 @@ def main():
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
         start_timer = timer()
-        new_arrays = transformer.sample()
-        new_arrays_dict = batch_score(new_arrays)
-        record_stats(new_arrays_dict, prefix="sample")  # do we produce similar scores as training data?
-        new_arrays_dict.update(arrays_dict)  # old ones last to avoid overwriting old gen (including during improving)
-        arrays_dict = new_arrays_dict
+        new_arrays_tensor = transformer.sample()
+        new_arrays_tensor, new_scores = batch_score(new_arrays_tensor)
+        new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.int16)
+        record_stats(new_arrays_tensor, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
+        arrays_tensor = torch.cat((arrays_tensor, new_arrays_tensor), dim=0)
+        scores = torch.cat((scores, new_scores), dim=0)
+        gens = torch.cat((gens, new_gens), dim=0)
         if debugging:
             print(f"sampling time: {timer() - start_timer}")
 

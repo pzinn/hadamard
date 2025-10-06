@@ -152,7 +152,7 @@ def init_model():
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.int8)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
     string_length = config.block_size - 1
     # segment_string_length = string_length//nm
     # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
@@ -213,17 +213,14 @@ def evaluate(sample):
     return mean_loss
 
 
-# conversion string <-> matrix
-def char_to_sign(c, i):
-    return int(2 * ((c >> i) & 1) - 1)
-
-
-def string_to_array(s):  # really, tensor to tuple by now!
-    return tuple(
-        char_to_sign(s[i // config.stacking] - 1, i % config.stacking)
-        for i in my_range
-    )
-
+bit_positions = torch.arange(config.stacking, device=device)
+@torch.no_grad()
+def string_to_array(X):  # really, int tensor to float tensor
+    X = X[:,1:] - 1  # remove initial zero
+    bits = (X.unsqueeze(-1) >> bit_positions) & 1  # shape (B, n, stacking)
+    signs = (bits * 2 - 1).to(torch.int8) # now in {-1, +1}
+    result = signs.reshape(config.sample_batch_size, string_length*config.stacking)
+    return result[:,:na]
 
 def array_to_string(array0):  # (dtype=long) tensor to tensor
     # code updated to make it clearer that we don't want to change the original array!
@@ -299,8 +296,7 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    # convert to torch tensors
-    data = torch.tensor(list(data), dtype=torch.long).share_memory_()
+    data.share_memory_()
     for i in range(test_set_size):
         j = torch.randint(i, data_len, ()).item()
         data[[i, j]] = data[[j, i]]
@@ -384,23 +380,24 @@ def train(data, **kwargs):
 # def crop(row):
 #    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
 
-if not device.startswith('cuda'):
+if True: # not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
+    @torch.no_grad()
     def sample():
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        num_batches = config.sample_size // config.sample_batch_size
-        new_arrays_set = set()
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-        for _ in range(num_batches):
+        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
+        for i in range(0, config.sample_size, config.sample_batch_size):
+            j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
             X.zero_()
             generate(X, config.block_size-1, do_sample=True)
-            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
-        return new_arrays_set
+            arrays_cpu[i:j] = string_to_array(X)
+        return arrays_cpu
 else:
-    # sample with CPU double buffering
+    # sample with CPU double buffering TODO reinstate at some point
     stream = torch.cuda.Stream()
     @torch.no_grad()
     def sample():
@@ -410,11 +407,11 @@ else:
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
-        new_arrays_set = set()
+        arrays_cpu_full = torch.empty((0,na), dtype=torch.float32)  # TODO fix type?
         if num_batches == 0:
-            return new_arrays_set
+            return arrays_cpu
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-        X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
+        arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.float32, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
         for i in range(num_batches+1):
@@ -425,9 +422,9 @@ else:
                 with torch.cuda.stream(stream):
                     X.zero_()
                     generate(X, config.block_size-1, do_sample=True)
-                    X_cpu[1-idx].copy_(X, non_blocking=True)
+                    arrays_cpu[1-idx].copy_(string_to_array(X), non_blocking=True)
                     stream.record_event(event[1-idx])
             if i > 0:
-                new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
+                arrays_cpu_full = torch.cat((arrays_cpu, arrays_cpu[idx]), dim=0)  # TODO clearly not optimized!
             idx = 1 - idx
         return new_arrays_set
