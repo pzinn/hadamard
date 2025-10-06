@@ -308,7 +308,10 @@ rng = torch.arange(nn2+1, device=device, dtype=torch.float32)
 wrng = 2 * cst * w ** torch.outer(rng0,rng)
 wrng012 = (wrng + torch.conj(wrng))[1:nn2+1]
 wrng3 = torch.conj(wrng)
-wrng_all = torch.cat((wrng012,wrng012,wrng012,wrng3),dim=0)
+wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=torch.complex64)
+for i in range(3):
+    wrng_all[i*nn2:(i+1)*nn2,i*(nn2+1):(i+1)*(nn2+1)] = wrng012
+wrng_all[3*nn2:,3*(nn2+1):] = wrng3
 
 k=10
 @torch.inference_mode()
@@ -324,11 +327,11 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
         cur_rows = active_rows
         while True:
             f = fft(unfold(arrays_tensor[cur_rows]))  # better than flip updating for accuracy
+            fl = f.view(-1,4*(nn2+1))
             for j in range(na):
-                l = j // nn2 if j < 3*nn2 else 3
-                f[:, l] -= arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
+                fl -= arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
                 scores1[cur_rows, j] = score_fft(f)
-                f[:, l] += arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
+                fl += arrays_tensor[cur_rows, j].unsqueeze(1) * wrng_all[j]
             mask = (scores1[cur_rows] < scores[cur_rows].unsqueeze(1)).any(dim=1)
             if not mask.any():
                 break
@@ -336,20 +339,17 @@ def improve1p(arrays_tensor, scores):  # combined optimised 1-bit flip / opportu
             cur_rows = cur_rows[mask]
             min_scores, inds = scores1[cur_rows].min(dim=1)
             scores[cur_rows] = min_scores
-            # l = (inds//nn2).clamp_max(3)
-            # f[cur_rows,l] -= arrays_tensor[cur_rows,inds].unsqueeze(1) * wrng_all[inds]  # removed, see above
             arrays_tensor[cur_rows,inds] *= -1
         # hard ones: brute force k best candidates
         _, indsk = torch.topk(scores1[active_rows], k, dim=1, sorted=False, largest=False)
         cur=torch.gather(arrays_tensor[active_rows], 1, indsk)
-        f = fft(unfold(arrays_tensor[active_rows]))  # better than flip updating for accuracy
-        rows=torch.arange(M, device=device)
+        f = fft(unfold(arrays_tensor[active_rows]))
+        fl = f.view(M,4*(nn2+1))
         mask = torch.zeros((M,), device=device, dtype=torch.bool)
         for i in range(1,1<<k):
             j = (i & -i).bit_length() - 1  # index of bit to flip
             inds = indsk[:,j]  # actual index for each sample
-            l = (inds//nn2).clamp_max(3)
-            f[rows,l] -= cur[:,j].unsqueeze(1) * wrng_all[inds]
+            fl -= cur[:,j].unsqueeze(1) * wrng_all[inds]
             cur[:,j] *= -1  # need to keep track of these two
             new_scores = score_fft(f)
             improved = new_scores < scores[active_rows]
