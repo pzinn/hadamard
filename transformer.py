@@ -113,12 +113,12 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, idx, targets=None):
-        device = idx.device
+    def forward(self, idx0, compute_loss=False):
+        device = idx0.device
+        #assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
+        idx = idx0[:,:self.block_size]
         b, t = idx.size()
-        assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
-
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
@@ -127,12 +127,10 @@ class Transformer(torch.nn.Module):
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-
         # if we are given some desired targets also calculate the loss
         loss = None
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-
+        if compute_loss:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0[:,1:].reshape(-1))
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -153,7 +151,7 @@ def init_model():
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.int64)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    string_length = config.block_size - 1
+    string_length = config.block_size  # TODO REMOVE
     # segment_string_length = string_length//nm
     # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
     nice = na % config.stacking == 0
@@ -206,8 +204,8 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
 @torch.inference_mode()
 def evaluate(sample):
     model.eval()
-    batch = [t.to(device) for t in sample]
-    logits, loss = model(*batch)
+    batch = sample.to(device)
+    logits, loss = model(batch, compute_loss=True)
     mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
     return mean_loss
@@ -241,7 +239,7 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
     #if not nice:
     #    array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
+    return torch.cat((torch.tensor([0], dtype=torch.int64), 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)))  # TODO better
 
 
 # -----------------------------------------------------------------------------
@@ -257,11 +255,7 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx])
-        x = torch.cat([torch.tensor([0], dtype=torch.long), ix])
-        y = torch.cat([ix, torch.tensor([-1], dtype=torch.long)])  # index -1 will mask the loss at the inactive locations
-        return x, y
-
+        return array_to_string(self.words[idx])
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -319,7 +313,7 @@ def train(data, **kwargs):
     train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
+    test_sample = torch.stack([ts for ts in test_dataset], dim=0)  # just get it all
 
     # training loop
     step = 0
@@ -336,7 +330,7 @@ def train(data, **kwargs):
             batch = next(batch_iter)
         # Train on the current batch
         # feed into the model
-        logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
+        logits, loss = model(batch.to(device, non_blocking=True), compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
         
@@ -387,13 +381,13 @@ if True: # not device.startswith('cuda'):
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size+1, dtype=torch.long, device=device)
         arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
             X.zero_()
-            generate(X, config.block_size-1, do_sample=True)
+            generate(X, config.block_size, do_sample=True)
             arrays_cpu[i:j] = string_to_array(X)
         return arrays_cpu
 else:
@@ -410,7 +404,7 @@ else:
         arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size+1, dtype=torch.long, device=device)
         arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.float32, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0

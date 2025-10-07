@@ -33,7 +33,7 @@ stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
-num_workers = 3  # for cpu parallelisation
+num_workers = 6  # for cpu parallelisation
 
 resume = False  # whether to resume a previous run
 # resume = True
@@ -131,7 +131,7 @@ class ModelConfig:
             # string_length = n//stacking  # only works if stacking | n
             # string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2 TODO
             string_length = (na-1)//self.stacking+1
-            self.block_size = string_length + 1  # block_size : <START> token followed by string
+            self.block_size = string_length  # block_size : <START> token followed by string TODO REMOVE
             nchars = 1 << self.stacking
             self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
     def update(self):
