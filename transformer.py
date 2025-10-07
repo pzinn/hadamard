@@ -407,7 +407,7 @@ else:
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
-        arrays_cpu_full = torch.empty((0,na), dtype=torch.float32)  # TODO fix type?
+        arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
