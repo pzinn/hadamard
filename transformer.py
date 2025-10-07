@@ -405,7 +405,7 @@ else:
         if num_batches == 0:
             return arrays_cpu
         X = torch.zeros(config.sample_batch_size, config.block_size+1, dtype=torch.long, device=device)
-        arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.float32, device='cpu', pin_memory=True) for _ in range(2)]
+        arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
         for i in range(num_batches+1):
@@ -415,7 +415,7 @@ else:
                 print('*', end=''); sys.stdout.flush()
                 with torch.cuda.stream(stream):
                     X.zero_()
-                    generate(X, config.block_size-1, do_sample=True)
+                    generate(X, config.block_size, do_sample=True)
                     arrays_cpu[1-idx].copy_(string_to_array(X), non_blocking=True)
                     stream.record_event(event[1-idx])
             if i > 0:

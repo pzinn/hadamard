@@ -50,11 +50,11 @@ skip_first_training = False  # only meaningful if resume: start by sampling from
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
-test_score = True  # for debugging purposes, test whether randomisation of arrays (rotation) and other transformations preserves score
+test_score = False  # for debugging purposes, test whether randomisation of arrays (rotation) and other transformations preserves score
 
 
 import time
-random_seed = 1 # int(time.time())  # 1746533706
+random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
