@@ -152,7 +152,7 @@ def init_model():
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.int8)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.int64)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
     string_length = config.block_size - 1
     # segment_string_length = string_length//nm
     # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
@@ -234,12 +234,12 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
             raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
     # Convert -1 → 0, +1 → 1
     #array1 = (1+array>>1).view(nm,nn)
-    array1 = 1+array>>1
+    #array1 = (1+array>>1).to(torch.int64)
+    array1 = torch.zeros(string_length * config.stacking, dtype=torch.int64)
+    array1[:na].copy_(1+array>>1)
     # pad if necessary
-    if not nice:
-        array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
     #if not nice:
-    #    array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
+    #    array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
     return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
 
