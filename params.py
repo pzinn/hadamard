@@ -129,8 +129,8 @@ class ModelConfig:
         # Automatically computed values
         if isinstance(self.stacking, int):
             # string_length = n//stacking  # only works if stacking | n
-            # string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2 TODO
-            string_length = (na-1)//self.stacking+1
+            string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2
+            #string_length = (na-1)//self.stacking+1
             self.block_size = string_length  # block_size : <START> token followed by string TODO REMOVE
             nchars = 1 << self.stacking
             self.vocab_size = nchars  # vocab_size is all the possible characters

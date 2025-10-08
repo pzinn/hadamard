@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, device, config, resume_training, rotate
+from params import na, nn, nn2, device, config, resume_training, rotate
 import logger
 
 # -----------------------------------------------------------------------------
@@ -139,23 +139,18 @@ class Transformer(torch.nn.Module):
 def init_model():
     global model  # to simplify, model, etc, are global
     global model_path
-    global powers_of_two
-    global my_range
+    global bit_positions
     global string_length
-    #global segment_string_length
-    global nice
+    global segment_string_length
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, device=device, dtype=torch.int64)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
-    # segment_string_length = string_length//nm
-    # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    nice = na % config.stacking == 0
-    my_range = range(na) # if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
+    segment_string_length = (nn2-1)//config.stacking+1
 
 
 def load_model():
@@ -209,24 +204,31 @@ def evaluate(sample):
     model.train()  # reset model back to training mode
     return mean_loss
 
-
-bit_positions = torch.arange(config.stacking, device=device)
+# conversion string of tokens <-> array of signs
 @torch.no_grad()
-def string_to_array(X):  # really, int tensor to float tensor
-    #bits = (X.unsqueeze(-1) >> bit_positions) & 1  # shape (B, n, stacking)
-    #signs = (bits * 2 - 1).to(torch.int8) # now in {-1, +1}
-    #result = signs.view(config.sample_batch_size, string_length*config.stacking)
-    #return result[:,:na]
-    signs = (((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1
-    return signs.to(torch.int8).view(config.sample_batch_size, string_length*config.stacking)[:,:na]
+def string_to_array(X):  # really, int tensor to int8 tensor
+    nn2mod = segment_string_length * config.stacking  # TODO define elsewhere
+    B = X.shape[0]
+    signs1 = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, string_length*config.stacking)
+    signs = torch.empty((B,na), dtype=torch.int8, device=device)
+    signs[:,:nn2].copy_(signs1[:,:nn2])
+    signs[:,nn2:2*nn2].copy_(signs1[:,nn2mod:nn2mod+nn2])
+    signs[:,2*nn2:3*nn2].copy_(signs1[:,2*nn2mod:2*nn2mod+nn2])
+    signs[:,3*nn2:na].copy_(signs1[:,3*nn2mod:3*nn2mod+nn])
+    return signs
 
-def array_to_string(array):  # int8 tensor to long tensor
-    B = array.shape[0]
-    array1 = torch.zeros((B,string_length * config.stacking), device=device, dtype=torch.int64)
+def array_to_string(signs):  # int8 tensor to long tensor
+    nn2mod = segment_string_length * config.stacking
+    B = signs.shape[0]
+    signs1 = torch.zeros((B,string_length * config.stacking), device=device, dtype=torch.int64)
+    signs1[:,:nn2].copy_(signs[:,:nn2])
+    signs1[:,nn2mod:nn2mod+nn2].copy_(signs[:,nn2:2*nn2])
+    signs1[:,2*nn2mod:2*nn2mod+nn2].copy_(signs[:,2*nn2:3*nn2])
+    signs1[:,3*nn2mod:3*nn2mod+nn].copy_(signs[:,3*nn2:na])
     # Convert -1 → 0, +1 → 1
-    array1[:,:na].copy_(1+array>>1)
-    # Compute integer encoding using vectorized matrix multiplication
-    return (array1.view(B, string_length, config.stacking)*powers_of_two).sum(dim=2)
+    signs1 += 1
+    signs1 >>= 1
+    return (signs1.view(B, string_length, config.stacking) << bit_positions).sum(dim=2)
 
 
 # -----------------------------------------------------------------------------
