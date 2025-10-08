@@ -133,7 +133,7 @@ class ModelConfig:
             string_length = (na-1)//self.stacking+1
             self.block_size = string_length  # block_size : <START> token followed by string TODO REMOVE
             nchars = 1 << self.stacking
-            self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
+            self.vocab_size = nchars  # vocab_size is all the possible characters
     def update(self):
         if is_sweep:
             import wandb

@@ -116,13 +116,15 @@ class Transformer(torch.nn.Module):
     def forward(self, idx0, compute_loss=False):
         b = idx0.shape[0]
         # add zero at start. also, in training, remove last token since don't need to predict next one
-        idx = torch.cat((torch.zeros((b,1), dtype=torch.long, device=device), idx0[:,:self.block_size-1]), dim=1)
+        #idx = torch.cat((torch.zeros((b,1), dtype=torch.long, device=device), idx0[:,:self.block_size-1]), dim=1)
+        idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1]
         pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
         x = tok_emb + pos_emb
+        x = torch.cat((torch.zeros((b,1,config.n_embd), dtype=x.dtype, device=device), x), dim=1)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -213,7 +215,6 @@ def evaluate(sample):
 bit_positions = torch.arange(config.stacking, device=device)
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to float tensor
-    X -= 1
     #bits = (X.unsqueeze(-1) >> bit_positions) & 1  # shape (B, n, stacking)
     #signs = (bits * 2 - 1).to(torch.int8) # now in {-1, +1}
     #result = signs.view(config.sample_batch_size, string_length*config.stacking)
@@ -240,7 +241,7 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
     #if not nice:
     #    array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
+    return array1.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
