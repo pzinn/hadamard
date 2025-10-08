@@ -150,7 +150,7 @@ def init_model():
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.int64)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
+    powers_of_two = 2 ** torch.arange(config.stacking, device=device, dtype=torch.int64)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
     string_length = config.block_size  # TODO REMOVE
     # segment_string_length = string_length//nm
     # nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
@@ -203,7 +203,7 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
 @torch.inference_mode()
 def evaluate(sample):
     model.eval()
-    batch = sample.to(device)
+    batch = array_to_string(sample.to(device))  # shouldn't we do this once and for all?
     logits, loss = model(batch, compute_loss=True)
     mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
@@ -220,26 +220,13 @@ def string_to_array(X):  # really, int tensor to float tensor
     signs = (((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1
     return signs.to(torch.int8).view(config.sample_batch_size, string_length*config.stacking)[:,:na]
 
-def array_to_string(array0):  # int8 tensor to long tensor
-    # code updated to make it clearer that we don't want to change the original array!
-    array = array0.clone()
-    rotate(array)
-    if score:  # for testing purposes: does the randomisation respect score?
-        if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
-            raise RuntimeError("array not +-1",array)
-        scores = score(torch.stack((array0,array.view(na))))
-        if torch.abs(scores[0]-scores[1]) > 1e-5:
-            raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
+def array_to_string(array):  # int8 tensor to long tensor
+    B = array.shape[0]
+    array1 = torch.zeros((B,string_length * config.stacking), device=device, dtype=torch.int64)
     # Convert -1 → 0, +1 → 1
-    #array1 = (1+array>>1).view(nm,nn)
-    #array1 = (1+array>>1).to(torch.int64)
-    array1 = torch.zeros(string_length * config.stacking, dtype=torch.int64)
-    array1[:na].copy_(1+array>>1)
-    # pad if necessary
-    #if not nice:
-    #    array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
+    array1[:,:na].copy_(1+array>>1)
     # Compute integer encoding using vectorized matrix multiplication
-    return array1.view(string_length, config.stacking).matmul(powers_of_two)
+    return (array1.view(B, string_length, config.stacking)*powers_of_two).sum(dim=2)
 
 
 # -----------------------------------------------------------------------------
@@ -254,7 +241,17 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        return array_to_string(self.words[idx])
+        # code updated to make it clearer that we don't want to change the original array!
+        array0 = self.words[idx]
+        array = array0.clone()
+        rotate(array)
+        if score:  # for testing purposes: does the randomisation respect score?
+            if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
+                raise RuntimeError("array not +-1",array)
+            scores = score(torch.stack((array0,array.view(na))))
+            if torch.abs(scores[0]-scores[1]) > 1e-5:
+                raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
+        return array
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -311,7 +308,7 @@ def train(data, **kwargs):
     train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = torch.stack([ts for ts in test_dataset], dim=0)  # just get it all
+    test_sample = torch.stack([ts for ts in test_dataset], dim=0)  # just get it all -- should we decode it as well???
 
     # training loop
     step = 0
@@ -328,7 +325,7 @@ def train(data, **kwargs):
             batch = next(batch_iter)
         # Train on the current batch
         # feed into the model
-        logits, loss = model(batch.to(device, non_blocking=True), compute_loss=True)
+        logits, loss = model(array_to_string(batch.to(device, non_blocking=True)), compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
         
