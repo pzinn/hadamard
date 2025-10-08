@@ -24,7 +24,7 @@ if debugging:
 """
 
 @torch.inference_mode()
-def generate_random_arrays(batch_size):
+def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
     return 2 * torch.randint(2, (batch_size, na), device=device, dtype=real_dtype) - 1
 
 # MAIN-DEFINITIONS #
@@ -220,6 +220,7 @@ def batch_generator(arrays):
         j = i + config.score_batch_size
         yield arrays[i:j].to(device=device, dtype=real_dtype)
 
+"""
 def random_batch_generator():
     n_full_batches = config.sample_size // config.score_batch_size
     remainder = config.sample_size % config.score_batch_size
@@ -227,6 +228,7 @@ def random_batch_generator():
         yield generate_random_arrays(config.score_batch_size)
     if remainder:
         yield generate_random_arrays(remainder)
+"""
 
 def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
     torch.set_float32_matmul_precision('highest')
@@ -234,16 +236,15 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         torch.cuda.empty_cache()  # Free memory
     if config.score_batch_size is None:
         if arrays is None:
-            arrays_gpu = generate_random_arrays(config.sample_size)
+            arrays_gpu = generate_random_arrays(config.sample_size, device)
             arrays = arrays_gpu.to(device='cpu', dtype=torch.int8)
         else:
             arrays_gpu = arrays.to(device=device, dtype=real_dtype)
         return arrays, parallel_score(arrays_gpu)
     scores = torch.empty((0,), dtype=real_dtype)
-    if arrays0 is None:
-        batches = random_batch_generator()
-    else:
-        batches = batch_generator(arrays0)
+    if arrays is None:
+        arrays = generate_random_arrays(config.sample_size, 'cpu')  # lame? reinstate old way?
+    batches = batch_generator(arrays)
     for batch in batches:
         new_scores = parallel_score(batch)
         scores = torch.cat((scores, new_scores), dim=0)
