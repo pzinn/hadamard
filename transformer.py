@@ -51,7 +51,7 @@ class CausalSelfAttention(torch.nn.Module):
         self.n_embd = config.n_embd
 
     def forward(self, x):
-        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
@@ -114,11 +114,11 @@ class Transformer(torch.nn.Module):
         return self.block_size
 
     def forward(self, idx0, compute_loss=False):
-        device = idx0.device
-        #assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-        idx = idx0[:,:self.block_size]
-        b, t = idx.size()
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
+        b = idx0.shape[0]
+        # add zero at start. also, in training, remove last token since don't need to predict next one
+        idx = torch.cat((torch.zeros((b,1), dtype=torch.long, device=device), idx0[:,:self.block_size-1]), dim=1)
+        t = idx.shape[1]
+        pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
@@ -130,7 +130,7 @@ class Transformer(torch.nn.Module):
         # if we are given some desired targets also calculate the loss
         loss = None
         if compute_loss:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0[:,1:].reshape(-1))
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1))
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -182,8 +182,7 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
     """
     block_size = model.get_block_size()
     for i in range(max_new_tokens):
-        # if the sequence context is growing too long we must crop it at block_size
-        idx_cond = idx[:, :i+1] if i < block_size else idx[:, i+1-block_size:i+1]
+        idx_cond = idx[:, :i]
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(idx_cond)
         # pluck the logits at the final step and scale by desired temperature
@@ -196,9 +195,9 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
         probs = F.softmax(logits, dim=-1)
         # either sample from the distribution or take the most likely element
         if do_sample:
-            idx[:, i+1] = torch.multinomial(probs, num_samples=1).view(-1)
+            idx[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
         else:
-            _, idx[:, i+1] = torch.topk(probs, k=1, dim=-1).view(-1)
+            _, idx[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
 
 
 @torch.inference_mode()
@@ -214,11 +213,13 @@ def evaluate(sample):
 bit_positions = torch.arange(config.stacking, device=device)
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to float tensor
-    X = X[:,1:] - 1  # remove initial zero
-    bits = (X.unsqueeze(-1) >> bit_positions) & 1  # shape (B, n, stacking)
-    signs = (bits * 2 - 1).to(torch.int8) # now in {-1, +1}
-    result = signs.reshape(config.sample_batch_size, string_length*config.stacking)
-    return result[:,:na]
+    X -= 1
+    #bits = (X.unsqueeze(-1) >> bit_positions) & 1  # shape (B, n, stacking)
+    #signs = (bits * 2 - 1).to(torch.int8) # now in {-1, +1}
+    #result = signs.view(config.sample_batch_size, string_length*config.stacking)
+    #return result[:,:na]
+    signs = (((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1
+    return signs.to(torch.int8).view(config.sample_batch_size, string_length*config.stacking)[:,:na]
 
 def array_to_string(array0):  # (dtype=long) tensor to tensor
     # code updated to make it clearer that we don't want to change the original array!
@@ -239,7 +240,7 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
     #if not nice:
     #    array1 = F.pad(array1, (0,string_length*config.stacking-na), mode='constant', value=0)
     # Compute integer encoding using vectorized matrix multiplication
-    return torch.cat((torch.tensor([0], dtype=torch.int64), 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)))  # TODO better
+    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
 
 
 # -----------------------------------------------------------------------------
@@ -381,7 +382,7 @@ if True: # not device.startswith('cuda'):
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        X = torch.zeros(config.sample_batch_size, config.block_size+1, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
         arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
@@ -404,7 +405,7 @@ else:
         arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
-        X = torch.zeros(config.sample_batch_size, config.block_size+1, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
         arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
