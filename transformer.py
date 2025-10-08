@@ -100,7 +100,7 @@ class Transformer(torch.nn.Module):
 
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = torch.nn.Embedding(config.block_size, config.n_embd),
+            wpe = torch.nn.Embedding(config.block_size-1, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -115,16 +115,14 @@ class Transformer(torch.nn.Module):
 
     def forward(self, idx0, compute_loss=False):
         b = idx0.shape[0]
-        # add zero at start. also, in training, remove last token since don't need to predict next one
-        #idx = torch.cat((torch.zeros((b,1), dtype=torch.long, device=device), idx0[:,:self.block_size-1]), dim=1)
         idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1]
         pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
-        # forward the GPT model itself
+        # forward the transformer itself
+        x = torch.zeros((b, t+1, config.n_embd), dtype=torch.float32, device=device)
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x = tok_emb + pos_emb
-        x = torch.cat((torch.zeros((b,1,config.n_embd), dtype=x.dtype, device=device), x), dim=1)
+        x[:,1:,:] = tok_emb + pos_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -222,7 +220,7 @@ def string_to_array(X):  # really, int tensor to float tensor
     signs = (((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1
     return signs.to(torch.int8).view(config.sample_batch_size, string_length*config.stacking)[:,:na]
 
-def array_to_string(array0):  # (dtype=long) tensor to tensor
+def array_to_string(array0):  # int8 tensor to long tensor
     # code updated to make it clearer that we don't want to change the original array!
     array = array0.clone()
     rotate(array)
@@ -249,9 +247,8 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
 
 
 class CharDataset(Dataset):
-    def __init__(self, words, block_size):
+    def __init__(self, words):
         self.words = words
-        self.block_size = block_size
     def __len__(self):
         return len(self.words)
     def contains(self, word):
@@ -264,14 +261,13 @@ def train(data, **kwargs):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     test_set_size = config.test_set_size
-    block_size = config.block_size
     vocab_size = config.vocab_size  # should one check that this is correct?
     training_batch_size = config.training_batch_size
     data_len = len(data)
     if test_set_size >= data_len:
         raise SystemExit("training_size must be greater than test_set_size")
     print(f"number of examples in the dataset: {data_len}")
-    print(f"max word length+1: {block_size}")
+    print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
 
     # these parameters are adjusted dynamically during the run
@@ -301,8 +297,8 @@ def train(data, **kwargs):
     print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
 
     # wrap in dataset objects
-    train_dataset = CharDataset(train_data, block_size)
-    test_dataset = CharDataset(test_data, block_size)
+    train_dataset = CharDataset(train_data)
+    test_dataset = CharDataset(test_data)
 
     # init optimiser
     if device.startswith('cuda'):
