@@ -100,7 +100,7 @@ class Transformer(torch.nn.Module):
 
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = torch.nn.Embedding(config.block_size-1, config.n_embd),
+            wpe = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -116,13 +116,13 @@ class Transformer(torch.nn.Module):
     def forward(self, idx0, compute_loss=False):
         b = idx0.shape[0]
         idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
-        t = idx.shape[1]
+        t = idx.shape[1] + 1
         pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
         # forward the transformer itself
-        x = torch.zeros((b, t+1, config.n_embd), dtype=torch.float32, device=device)
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x[:,1:,:] = tok_emb + pos_emb
+        x = pos_emb.expand(b, t, config.n_embd).clone()
+        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
+        x[:,1:,:] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
