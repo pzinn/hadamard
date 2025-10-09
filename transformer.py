@@ -136,8 +136,12 @@ def init_model():
     global model  # to simplify, model, etc, are global
     global model_path
     global bit_positions
+    global bit_positions2
     global string_length
+    global segment_string_length
+    global segment_string_length2
     global nn2_pad
+    global nn_pad
     global na_pad
     model = Transformer(config)
     model.to(device)
@@ -146,10 +150,13 @@ def init_model():
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
+    bit_positions2 = torch.arange(config.stacking2, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
     segment_string_length = (nn2-1)//config.stacking+1
+    segment_string_length2 = (nn-1)//config.stacking2+1
     nn2_pad = segment_string_length * config.stacking
-    na_pad = string_length * config.stacking
+    nn_pad = segment_string_length2 * config.stacking2
+    na_pad = 3*nn2_pad + nn_pad
 
 def load_model():
     if model.need_reload:
@@ -206,25 +213,32 @@ def evaluate(sample):
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
-    signs1 = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, na_pad)
+    X1 = X[:,:3*segment_string_length]
+    X2 = X[:,3*segment_string_length:]
+    signs1 = ((((X1.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, 3*nn2_pad)
+    signs2 = ((((X2.unsqueeze(-1) >> bit_positions2) & 1) << 1) - 1).view(B, nn_pad)
     signs = torch.empty((B,na), dtype=torch.int8, device=device)
     signs[:,:nn2].copy_(signs1[:,:nn2])
     signs[:,nn2:2*nn2].copy_(signs1[:,nn2_pad:nn2_pad+nn2])
-    signs[:,2*nn2:3*nn2].copy_(signs1[:,2*nn2_pad:2*nn2_pad+nn2])
-    signs[:,3*nn2:na].copy_(signs1[:,3*nn2_pad:3*nn2_pad+nn])
+    signs[:,2*nn2:3*nn2].copy_(signs1[:,2*nn2_pad:2*nn2_pad+nn2])  # TODO better
+    signs[:,3*nn2:na].copy_(signs2[:,:nn])
     return signs
 
 def array_to_string(signs):  # int8 tensor to long tensor
     B = signs.shape[0]
-    signs1 = torch.zeros((B, na_pad), device=device, dtype=torch.int64)
+    signs1 = torch.zeros((B, 3*nn2_pad), device=device, dtype=torch.int64)
+    signs2 = torch.zeros((B, nn_pad), device=device, dtype=torch.int64)
     signs1[:,:nn2].copy_(signs[:,:nn2])
     signs1[:,nn2_pad:nn2_pad+nn2].copy_(signs[:,nn2:2*nn2])
-    signs1[:,2*nn2_pad:2*nn2_pad+nn2].copy_(signs[:,2*nn2:3*nn2])
-    signs1[:,3*nn2_pad:3*nn2_pad+nn].copy_(signs[:,3*nn2:na])
+    signs1[:,2*nn2_pad:2*nn2_pad+nn2].copy_(signs[:,2*nn2:3*nn2])  # TODO better
+    signs2[:,:nn].copy_(signs[:,3*nn2:na])
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
-    return (signs1.view(B, string_length, config.stacking) << bit_positions).sum(dim=2)
+    signs2 += 1
+    signs2 >>= 1
+    return torch.cat(((signs1.view(B, 3*segment_string_length, config.stacking) << bit_positions).sum(dim=2),
+                      (signs2.view(B, segment_string_length2, config.stacking2) << bit_positions2).sum(dim=2)), dim=1)
 
 
 # -----------------------------------------------------------------------------

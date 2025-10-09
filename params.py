@@ -28,6 +28,7 @@ n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+stacking2 = 5
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
@@ -78,7 +79,7 @@ except FileNotFoundError:
 
 import ast
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'stacking2', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
 
 # hparams can be updated in command line
 for param in hparams_list:
@@ -129,10 +130,10 @@ class ModelConfig:
         # Automatically computed values
         if isinstance(self.stacking, int):
             # string_length = n//stacking  # only works if stacking | n
-            string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking+1)  # including padding if stacking doesn't divide nn or nn2
+            string_length = 3*((nn2-1)//self.stacking+1) + ((nn-1)//self.stacking2+1)  # including padding if stacking doesn't divide nn or nn2
             #string_length = (na-1)//self.stacking+1
             self.block_size = string_length  # block_size : <START> token followed by string TODO REMOVE
-            nchars = 1 << self.stacking
+            nchars = 1 << max(self.stacking, self.stacking2)
             self.vocab_size = nchars  # vocab_size is all the possible characters
     def update(self):
         if is_sweep:
