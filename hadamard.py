@@ -435,7 +435,8 @@ def improve3(arrays):
     for j in range(4):
         ffs1 = ffs - ff[:,j]
         # the ambitious version
-        mask = (ffs1.real <= 1).all(dim=1)
+        threshold = 1 - .2 * torch.rand((), device=device) # randomise a bit
+        mask = (ffs1.real <= threshold).all(dim=1)
         M = mask.sum()
         print(f'success rate ({j}) {M/B}')
         if M > 0:
@@ -664,9 +665,8 @@ def best_from(arrays, scores, gens):
     if arrays.shape[0] <= config.training_size:
         return arrays, scores, gens
     # selecting first *then* deduplicate for efficiency -- might result in fewer data than expected
-    idx = torch.topk(scores, k=config.training_size, largest=False, sorted=False).indices
+    scores, idx = torch.topk(scores, k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
-    scores = scores[idx]
     gens = gens[idx]
     arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
     U = arrays.shape[0]
