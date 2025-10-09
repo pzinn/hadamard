@@ -21,14 +21,10 @@ import logger
 # -----------------------------------------------------------------------------
 # Transformer Language Model
 
-class MyGELU(torch.nn.Module):
-    """
-    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
-    Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
-    """
+class myActiv(torch.nn.Module):
     def forward(self, x):
-        return x / (1.0 + torch.exp(-1.6*x))
-        # return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+        return x * torch.sigmoid(1.6*x)
+
 
 class CausalSelfAttention(torch.nn.Module):
     """
@@ -81,7 +77,7 @@ class Block(torch.nn.Module):
         self.mlp = torch.nn.ModuleDict(dict(
             c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
-            act     = MyGELU(),
+            act     = myActiv(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
@@ -141,7 +137,8 @@ def init_model():
     global model_path
     global bit_positions
     global string_length
-    global segment_string_length
+    global nn2_pad
+    global na_pad
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -151,7 +148,8 @@ def init_model():
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
     segment_string_length = (nn2-1)//config.stacking+1
-
+    nn2_pad = segment_string_length * config.stacking
+    na_pad = string_length * config.stacking
 
 def load_model():
     if model.need_reload:
@@ -198,7 +196,7 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
 @torch.inference_mode()
 def evaluate(sample):
     model.eval()
-    batch = array_to_string(sample.to(device))  # shouldn't we do this once and for all?
+    batch = sample.to(device)
     logits, loss = model(batch, compute_loss=True)
     mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
@@ -207,24 +205,22 @@ def evaluate(sample):
 # conversion string of tokens <-> array of signs
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to int8 tensor
-    nn2mod = segment_string_length * config.stacking  # TODO define elsewhere
     B = X.shape[0]
-    signs1 = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, string_length*config.stacking)
+    signs1 = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, na_pad)
     signs = torch.empty((B,na), dtype=torch.int8, device=device)
     signs[:,:nn2].copy_(signs1[:,:nn2])
-    signs[:,nn2:2*nn2].copy_(signs1[:,nn2mod:nn2mod+nn2])
-    signs[:,2*nn2:3*nn2].copy_(signs1[:,2*nn2mod:2*nn2mod+nn2])
-    signs[:,3*nn2:na].copy_(signs1[:,3*nn2mod:3*nn2mod+nn])
+    signs[:,nn2:2*nn2].copy_(signs1[:,nn2_pad:nn2_pad+nn2])
+    signs[:,2*nn2:3*nn2].copy_(signs1[:,2*nn2_pad:2*nn2_pad+nn2])
+    signs[:,3*nn2:na].copy_(signs1[:,3*nn2_pad:3*nn2_pad+nn])
     return signs
 
 def array_to_string(signs):  # int8 tensor to long tensor
-    nn2mod = segment_string_length * config.stacking
     B = signs.shape[0]
-    signs1 = torch.zeros((B,string_length * config.stacking), device=device, dtype=torch.int64)
+    signs1 = torch.zeros((B, na_pad), device=device, dtype=torch.int64)
     signs1[:,:nn2].copy_(signs[:,:nn2])
-    signs1[:,nn2mod:nn2mod+nn2].copy_(signs[:,nn2:2*nn2])
-    signs1[:,2*nn2mod:2*nn2mod+nn2].copy_(signs[:,2*nn2:3*nn2])
-    signs1[:,3*nn2mod:3*nn2mod+nn].copy_(signs[:,3*nn2:na])
+    signs1[:,nn2_pad:nn2_pad+nn2].copy_(signs[:,nn2:2*nn2])
+    signs1[:,2*nn2_pad:2*nn2_pad+nn2].copy_(signs[:,2*nn2:3*nn2])
+    signs1[:,3*nn2_pad:3*nn2_pad+nn].copy_(signs[:,3*nn2:na])
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
@@ -310,7 +306,7 @@ def train(data, **kwargs):
     train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = torch.stack([ts for ts in test_dataset], dim=0)  # just get it all -- should we decode it as well???
+    test_sample = array_to_string(torch.stack([ts for ts in test_dataset], dim=0).to(device)).cpu()  # just get it all, and encode it too
 
     # training loop
     step = 0
@@ -342,7 +338,6 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-#            print(f"{step=}, {lr_sched(step)=} ", end='\t')
             print(f"{step=} ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
@@ -367,9 +362,6 @@ def train(data, **kwargs):
     with open(logger.stats_file, 'a') as file:
         file.write(f'training: {best_loss=} at {save_step=}\n')
 
-
-# def crop(row):
-#    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
 
 if True: # not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
