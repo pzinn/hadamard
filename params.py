@@ -23,8 +23,8 @@ training_steps = 200_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 4
-n_embd = 64
+n_layer = 6
+n_embd = 128
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -35,7 +35,7 @@ score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 6  # for cpu parallelisation
 
-resume = True  # whether to resume a previous run
+resume = False  # whether to resume a previous run
 # resume = True
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
@@ -46,7 +46,7 @@ if resume:
     # provide work_dir manually, default is latest
     # provide gen, default is latest
 
-skip_first_training = True  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
+skip_first_training = False  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
@@ -58,8 +58,8 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = ''  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'online'  # 'online' | 'offline' -- for wandb
+logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()
