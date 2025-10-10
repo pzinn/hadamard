@@ -13,18 +13,18 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400000
+sample_size = 400_000
 training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 200000  # will be adjusted dynamically (to be less than that)
-num_improve = 5  # number of times data get improved per generation
+training_steps = 200_000  # will be adjusted dynamically (to be less than that)
+num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 6
-n_embd = 128
+n_layer = 4
+n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -33,9 +33,9 @@ stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
-num_workers = 3  # for cpu parallelisation
+num_workers = 6  # for cpu parallelisation
 
-resume = False  # whether to resume a previous run
+resume = True  # whether to resume a previous run
 # resume = True
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
@@ -46,11 +46,11 @@ if resume:
     # provide work_dir manually, default is latest
     # provide gen, default is latest
 
-skip_first_training = False  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
+skip_first_training = True  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
 skip_first_improve = resume  # leave as is unless you know what you're doing
 resume_training = True  # whether to use previous model (not just previous data). True is a lot faster, False might be more accurate (?) leave True if unsure
 
-test_randomisation = False  # for debugging purposes, test whether randomisation of arrays (rotation, etc) preserves score
+test_score = False  # for debugging purposes, test whether randomisation of arrays (rotation) and other transformations preserves score
 
 
 import time
@@ -58,8 +58,8 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
+logging = ''  # '' | 'tensorboard' | 'wandb'
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -122,18 +122,16 @@ print(f'{n=}')
 # array encoding -- do not change
 nn = n // 4
 nm = 4  # number of blocks
-na = nm * nn  # length of array, happens to be n here
+na = nm * nn  # length of array
+nn2 = (nn-1) // 2
 
 class ModelConfig:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
         # Automatically computed values
         if isinstance(self.stacking, int):
-            # string_length = n//stacking  # only works if stacking | n
-            string_length = (1+(nn-1)//self.stacking)*nm  # including padding if stacking doesn't divide nn
-            self.block_size = string_length + 1  # block_size : <START> token followed by string
-            nchars = 1 << self.stacking
-            self.vocab_size = nchars + 1  # vocab_size is all the possible characters and special 0 token
+            self.block_size = 4 * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
+            self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
     def update(self):
         if is_sweep:
             import wandb
@@ -149,7 +147,7 @@ from itertools import permutations
 import torch
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(nm)) if p[3] == 3), dtype=torch.long)
+perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
 rndmod = torch.tensor([len(perms), 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
@@ -158,13 +156,12 @@ def rotate(array):
     array=array.view(-1,nm,nn)  # can do batches too (not currently used)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     # symmetry: random permute
-    array.copy_(array[:,perms[rnd[0]]])
+    array[:,:3].copy_(array[:,perms[rnd[0]]])
     # symmetry: random rotation/flip
     array.copy_(torch.roll(array if rnd[1] < nn else torch.flip(array, (2,)), shifts=rnd[1].item(), dims=2))
     # symmetry: second rotation/flip
     array[:,3] = torch.roll(array[:,3] if rnd[2] < nn else torch.flip(array[:,3], (1,)), shifts=rnd[2].item(), dims=1)
     # symmetry: random signs
     array.mul_((rnd[3:7]*2-1).unsqueeze(1))
-
 
 

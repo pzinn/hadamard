@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nm, device, config, resume_training, rotate
+from params import na, nn, nn2, device, config, resume_training, rotate
 import logger
 
 # -----------------------------------------------------------------------------
@@ -21,14 +21,10 @@ import logger
 # -----------------------------------------------------------------------------
 # Transformer Language Model
 
-class MyGELU(torch.nn.Module):
-    """
-    Implementation of the GELU activation function currently in Google BERT repo (identical to OpenAI GPT).
-    Reference: Gaussian Error Linear Units (GELU) paper: https://arxiv.org/abs/1606.08415
-    """
+class myActiv(torch.nn.Module):
     def forward(self, x):
-        return x / (1.0 + torch.exp(-1.6*x))
-        # return 0.5 * x * (1.0 + torch.tanh(math.sqrt(2.0 / math.pi) * (x + 0.044715 * torch.pow(x, 3.0))))
+        return x * torch.sigmoid(1.6*x)
+
 
 class CausalSelfAttention(torch.nn.Module):
     """
@@ -51,7 +47,7 @@ class CausalSelfAttention(torch.nn.Module):
         self.n_embd = config.n_embd
 
     def forward(self, x):
-        B, T, C = x.size()  # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
@@ -81,7 +77,7 @@ class Block(torch.nn.Module):
         self.mlp = torch.nn.ModuleDict(dict(
             c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
-            act     = MyGELU(),
+            act     = myActiv(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
@@ -113,26 +109,24 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, idx, targets=None):
-        device = idx.device
-        b, t = idx.size()
-        assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
-
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
+    def forward(self, idx0, compute_loss=False):
+        b = idx0.shape[0]
+        idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
+        t = idx.shape[1] + 1
+        pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
+        # forward the transformer itself
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x = tok_emb + pos_emb
+        x = pos_emb.expand(b, t, config.n_embd).clone()
+        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
+        x[:,1:,:] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-
         # if we are given some desired targets also calculate the loss
         loss = None
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-
+        if compute_loss:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1))
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -141,23 +135,19 @@ class Transformer(torch.nn.Module):
 def init_model():
     global model  # to simplify, model, etc, are global
     global model_path
-    global powers_of_two
-    global my_range
+    global bit_positions
     global string_length
-    global segment_string_length
-    global nice
+    global nn_pad
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    powers_of_two = 2 ** torch.arange(config.stacking, dtype=torch.long)  # Prepare powers-of-two weights [1, 2, 4, 8, ...] efficiently
-    string_length = config.block_size - 1
-    segment_string_length = string_length//nm
-    nice = nn % config.stacking == 0  # effectively do nn % stacking == 0 first because simpler
-    my_range = range(na) if nice else list(i for j in range(nm) for i in range(j * segment_string_length*config.stacking, j * segment_string_length*config.stacking + nn))  # list for reusability
-
+    bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
+    string_length = config.block_size  # TODO REMOVE
+    segment_string_length = string_length // 4
+    nn_pad = segment_string_length * config.stacking
 
 def load_model():
     if model.need_reload:
@@ -183,8 +173,7 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
     """
     block_size = model.get_block_size()
     for i in range(max_new_tokens):
-        # if the sequence context is growing too long we must crop it at block_size
-        idx_cond = idx[:, :i+1] if i < block_size else idx[:, i+1-block_size:i+1]
+        idx_cond = idx[:, :i]
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(idx_cond)
         # pluck the logits at the final step and scale by desired temperature
@@ -197,50 +186,35 @@ def generate(idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None):
         probs = F.softmax(logits, dim=-1)
         # either sample from the distribution or take the most likely element
         if do_sample:
-            idx[:, i+1] = torch.multinomial(probs, num_samples=1).view(-1)
+            idx[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
         else:
-            _, idx[:, i+1] = torch.topk(probs, k=1, dim=-1).view(-1)
+            _, idx[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
 
 
 @torch.inference_mode()
 def evaluate(sample):
     model.eval()
-    batch = [t.to(device) for t in sample]
-    logits, loss = model(*batch)
+    batch = sample.to(device)
+    logits, loss = model(batch, compute_loss=True)
     mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
     return mean_loss
 
+# conversion string of tokens <-> array of signs
+@torch.no_grad()
+def string_to_array(X):  # really, int tensor to int8 tensor
+    B = X.shape[0]
+    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, 4, nn_pad)
+    return signs[:,:,:nn].to(dtype=torch.int8).view(B,na)
 
-# conversion string <-> matrix
-def char_to_sign(c, i):
-    return int(2 * ((c >> i) & 1) - 1)
-
-
-def string_to_array(s):  # really, tensor to tuple by now!
-    return tuple(
-        char_to_sign(s[i // config.stacking] - 1, i % config.stacking)
-        for i in my_range
-    )
-
-
-def array_to_string(array0):  # (dtype=long) tensor to tensor
-    # code updated to make it clearer that we don't want to change the original array!
-    array = array0.clone()
-    rotate(array)
-    if score:  # for testing purposes: does the randomisation respect score?
-        if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
-            raise RuntimeError("array not +-1",array)
-        scores = score(torch.stack((array0,array.view(na))))
-        if torch.abs(scores[0]-scores[1]) > 1e-5:
-            raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
+def array_to_string(signs):  # int8 tensor to long tensor
+    B = signs.shape[0]
+    signs1 = torch.zeros((B, 4, nn_pad), device=device, dtype=torch.int64)
+    signs1[:,:,:nn] = signs.view(B,4,nn)
     # Convert -1 → 0, +1 → 1
-    array1 = (1+array>>1).view(nm,nn)
-    # pad if necessary
-    if not nice:
-        array1 = F.pad(array1, (0, segment_string_length*config.stacking-nn), mode='constant', value=0)
-    # Compute integer encoding using vectorized matrix multiplication
-    return 1 + array1.view(string_length, config.stacking).matmul(powers_of_two)
+    signs1 += 1
+    signs1 >>= 1
+    return (signs1.view(B, string_length, config.stacking) << bit_positions).sum(dim=2)
 
 
 # -----------------------------------------------------------------------------
@@ -248,33 +222,37 @@ def array_to_string(array0):  # (dtype=long) tensor to tensor
 
 
 class CharDataset(Dataset):
-    def __init__(self, words, block_size):
+    def __init__(self, words):
         self.words = words
-        self.block_size = block_size
     def __len__(self):
         return len(self.words)
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        ix = array_to_string(self.words[idx])
-        x = torch.cat([torch.tensor([0], dtype=torch.long), ix])
-        y = torch.cat([ix, torch.tensor([-1], dtype=torch.long)])  # index -1 will mask the loss at the inactive locations
-        return x, y
-
+        # code updated to make it clearer that we don't want to change the original array!
+        array0 = self.words[idx]
+        array = array0.clone()
+        rotate(array)
+        if score:  # for testing purposes: does the randomisation respect score?
+            if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
+                raise RuntimeError("array not +-1",array)
+            scores = score(torch.stack((array0,array.view(na))))
+            if torch.abs(scores[0]-scores[1]) > 1e-5:
+                raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
+        return array
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     test_set_size = config.test_set_size
-    block_size = config.block_size
     vocab_size = config.vocab_size  # should one check that this is correct?
     training_batch_size = config.training_batch_size
     data_len = len(data)
     if test_set_size >= data_len:
         raise SystemExit("training_size must be greater than test_set_size")
     print(f"number of examples in the dataset: {data_len}")
-    print(f"max word length+1: {block_size}")
+    print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
 
     # these parameters are adjusted dynamically during the run
@@ -295,8 +273,7 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    # convert to torch tensors
-    data = torch.tensor(list(data), dtype=torch.long).share_memory_()
+    data.share_memory_()
     for i in range(test_set_size):
         j = torch.randint(i, data_len, ()).item()
         data[[i, j]] = data[[j, i]]
@@ -305,8 +282,8 @@ def train(data, **kwargs):
     print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
 
     # wrap in dataset objects
-    train_dataset = CharDataset(train_data, block_size)
-    test_dataset = CharDataset(test_data, block_size)
+    train_dataset = CharDataset(train_data)
+    test_dataset = CharDataset(test_data)
 
     # init optimiser
     if device.startswith('cuda'):
@@ -319,7 +296,7 @@ def train(data, **kwargs):
     train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
     batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
     # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = [torch.stack(ts, dim=0) for ts in zip(*test_dataset)]  # just get it all
+    test_sample = array_to_string(torch.stack([ts for ts in test_dataset], dim=0).to(device)).cpu()  # just get it all, and encode it too
 
     # training loop
     step = 0
@@ -336,7 +313,7 @@ def train(data, **kwargs):
             batch = next(batch_iter)
         # Train on the current batch
         # feed into the model
-        logits, loss = model(*(t.to(device, non_blocking=True) for t in batch))
+        logits, loss = model(array_to_string(batch.to(device, non_blocking=True)), compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
         
@@ -351,7 +328,6 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-#            print(f"{step=}, {lr_sched(step)=} ", end='\t')
             print(f"{step=} ", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
@@ -362,10 +338,12 @@ def train(data, **kwargs):
             # save the model to disk if it has improved
             if test_loss < best_loss:
                 save_model()
+                sys.stdout.flush()
                 best_loss = test_loss
                 save_step = step
             else:
                 print('') # to have nicely aligned test / train stats :)
+                sys.stdout.flush()
                 if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
             if step == max_steps:  # termination condition 2: hard cutoff
@@ -375,26 +353,24 @@ def train(data, **kwargs):
         file.write(f'training: {best_loss=} at {save_step=}\n')
 
 
-# def crop(row):
-#    return tuple(row[:next((i for i, x in enumerate(row) if x == 0), len(row))])
-
-if not device.startswith('cuda'):
+if True: # not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
+    @torch.no_grad()
     def sample():
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        num_batches = config.sample_size // config.sample_batch_size
-        new_arrays_set = set()
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-        for _ in range(num_batches):
+        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
+        for i in range(0, config.sample_size, config.sample_batch_size):
+            j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
             X.zero_()
-            generate(X, config.block_size-1, do_sample=True)
-            new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X)
-        return new_arrays_set
+            generate(X, config.block_size, do_sample=True)
+            arrays_cpu[i:j] = string_to_array(X)
+        return arrays_cpu
 else:
-    # sample with CPU double buffering
+    # sample with CPU double buffering TODO reinstate at some point
     stream = torch.cuda.Stream()
     @torch.no_grad()
     def sample():
@@ -404,11 +380,11 @@ else:
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
-        new_arrays_set = set()
+        arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
-            return new_arrays_set
+            return arrays_cpu
         X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
-        X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
+        arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
         for i in range(num_batches+1):
@@ -418,10 +394,10 @@ else:
                 print('*', end=''); sys.stdout.flush()
                 with torch.cuda.stream(stream):
                     X.zero_()
-                    generate(X, config.block_size-1, do_sample=True)
-                    X_cpu[1-idx].copy_(X, non_blocking=True)
+                    generate(X, config.block_size, do_sample=True)
+                    arrays_cpu[1-idx].copy_(string_to_array(X), non_blocking=True)
                     stream.record_event(event[1-idx])
             if i > 0:
-                new_arrays_set.update(string_to_array(row[1:].tolist()) for row in X_cpu[idx])
+                arrays_cpu_full = torch.cat((arrays_cpu, arrays_cpu[idx]), dim=0)  # TODO clearly not optimized!
             idx = 1 - idx
         return new_arrays_set
