@@ -164,7 +164,7 @@ print("order of symmetry: ", rndmod.prod().item())
 def rotate(array):
     array=array.view(-1,na)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    array3=array[:,:3*nn2].view(-1,3,nn2)
+    #array3=array[:,:3*nn2].view(-1,3,nn2)
     array1=array[:,3*nn2:]
     # symmetry: random permute
     #array3.copy_(array3[:,perms[rnd[0]]])

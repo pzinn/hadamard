@@ -353,7 +353,7 @@ def mysort(arrays, scores):
     a.copy_(sorted_a)
     """
     # 2nd phase: cyclically permute/reflect the remaining length nn part
-    a=arrays[:,m*nn2:]
+    a=arrays[:,3*nn2:]
     fft_a = torch.fft.rfft(a, dim=1)  # use fft to quickly compute scalar product with some random vector for ordering
     sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
@@ -384,7 +384,7 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
-    #mysort(arrays, scores)
+    mysort(arrays, scores)
     return (arrays, scores, gens)
 
 def best_from(arrays, scores, gens):
