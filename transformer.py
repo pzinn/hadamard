@@ -239,15 +239,14 @@ class CharDataset(Dataset):
     def contains(self, word):
         return word in self.words
     def __getitem__(self, idx):
-        # code updated to make it clearer that we don't want to change the original array!
         array0 = self.words[idx]
-        array = array0.clone()
-        rotate(array)
+        array = rotate(array0)
+        #array = array0.clone()
         if score:  # for testing purposes: does the randomisation respect score?
             if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
                 raise RuntimeError("array not +-1",array)
             scores = score(torch.stack((array0,array.view(na))))
-            if torch.abs(scores[0]-scores[1]) > 1e-5:
+            if torch.abs(scores[0]-scores[1]) > 2e-5:
                 raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
         return array
 

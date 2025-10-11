@@ -147,24 +147,39 @@ config = ModelConfig(**hparams)
 # symmetries
 from itertools import permutations
 import torch
+import math
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
 perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
-rndmod = torch.tensor([len(perms), 2*nn, 2], dtype=torch.int64)
+# Prepare automorphisms
+aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
+aut_inds1 = [ torch.tensor([(i*j)%nn for j in range(nn)]) for i in aut]
+aut_inds3 = [ torch.tensor([min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]) for i in aut]
+
+rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
-def rotate(array):
-    array=array.view(-1,na)
+def rotate(array0):
+    arrayx = torch.empty_like(array0)
+    array0 = array0.view(-1,na)
+    array = arrayx.view(-1,na)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    array03=array0[:,:3*nn2].view(-1,3,nn2)
+    array01=array0[:,3*nn2:]
     array3=array[:,:3*nn2].view(-1,3,nn2)
     array1=array[:,3*nn2:]
+    # automorphism
+    i = rnd[1].item()
+    array1.copy_(array01[:,aut_inds1[i]])
+    array3.copy_(array03[:,:,aut_inds3[i]])
     # symmetry: random permute
     array3.copy_(array3[:,perms[rnd[0]]])
     # symmetry: second rotation/flip
-    array1.copy_(torch.roll(array1 if rnd[1] < nn else torch.flip(array1, (1,)), shifts=rnd[1].item(), dims=1))
+    array1.copy_(torch.roll(array1 if rnd[2] < nn else torch.flip(array1, (1,)), shifts=rnd[2].item(), dims=1))
     # symmetry: random signs
-    array1 *= rnd[2]*2-1
+    array1 *= rnd[3]*2-1
+    return arrayx
 
 
 
