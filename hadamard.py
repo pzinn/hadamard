@@ -572,10 +572,23 @@ def mysort(arrays, scores):
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
-    # 1st phase: permute the 3xnn2 parts
+    # 0th phase: cyclically permute/reflect/negate the 3*nn
     B = arrays.shape[0]
     m=3
     a=arrays[:,:m*nn].view(B,m,nn)
+    fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
+    sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
+    sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
+    sps = torch.cat([sp_rot, sp_rev], dim=2)   # (B, m, 2 * nn)
+    flat_idx = sps.abs().sum(dim=1).argmax(dim=1)         # (B,) over 2*nn options
+    # Gather the chosen transform from the original 'a'
+    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(1) * base.unsqueeze(0)
+    idx = ( signed_base + flat_idx.unsqueeze(1)) % nn
+    transformed = a.gather(2, idx.unsqueeze(1).expand(B,m,nn))  # (B, m, nn)
+    # negate if the chosen scalar product is > 0
+    chosen_sps = sps.gather(2, flat_idx.unsqueeze(1).expand(B,m).unsqueeze(2)).squeeze(2)  # (B,m)
+    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(2) * transformed)
+    # 1st phase: permute the 3xnn parts
     # start with identity permutation for each batch
     perm = torch.arange(m, device=device).expand(B, m).clone()
     # stable sort by last key first, then previous..., up to first column
