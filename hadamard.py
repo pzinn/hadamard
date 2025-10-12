@@ -424,8 +424,8 @@ def improve3(m):
     for j in range(4):
         ffs1 = ffs - ff[:,j]
         # the ambitious version
-        threshold = 1 - .2 * torch.rand((), device=device) # randomise a bit
-        mask = (ffs1.real <= threshold).all(dim=1)
+        #threshold = 1 - .2 * torch.rand((), device=device) # randomise a bit
+        mask = (ffs1.real <= 1).all(dim=1)
         M = mask.sum()
         print(f'success rate ({j}) {M/B}')
         if M > 0:
