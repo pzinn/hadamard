@@ -2,7 +2,6 @@
 # coding: utf-8
 
 # a script to count matrices up to all symmetries. takes input from stdin
-# "sym" version
 
 import torch
 import math
