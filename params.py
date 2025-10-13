@@ -20,8 +20,8 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 1_000_000
-training_size = sample_size//5  # must be > test_set_size
+sample_size = 400_000
+training_size = sample_size//10  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01

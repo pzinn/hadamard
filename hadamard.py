@@ -289,7 +289,6 @@ for i in range(3):
 wrng_all[3*nn2:,3*(nn2+1):] = wrng3
 
 # improve: greedy 2-bit switch per block
-# TODO: rewrite using wrng_all
 @torch.inference_mode()
 def improve2(x,scores):
     print("improve2 ", end=''); sys.stdout.flush()
