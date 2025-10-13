@@ -280,7 +280,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
-wrng = cst * w ** torch.outer(rng0,rng)  # careful, compared to sym, no factor of 2 here
+wrng = cst * w ** torch.outer(rng0,rng)  # careful, compared to sym, no factor of 2 here TODO undo
 wrng012 = -(wrng + torch.conj(wrng))[1:nn2+1]
 wrng3 = -torch.conj(wrng)
 wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=complex_dtype)
@@ -299,14 +299,16 @@ def improve2(x,scores):
     fl = f.view(B,4*(nn2+1))
     fmod = torch.empty_like(f)
     flmod = fmod.view(B,4*(nn2+1))
-    for j in range(4):
+    perm = torch.randperm(4, device=device)
+    for j0 in range(4):
+        j=perm[j0]
         r1=j*nn2
         r=nn2 if j<3 else nn
         r2=r+r1
         p = torch.randperm(r, device=device) + r1
         for i in range(1,r):
             for ii in range(i):
-                delta = x[:, p[i]] - x[:, p[ii]]
+                delta = x[:, p[i]] - x[:, p[ii]]  # TODO better with view toward 2k-bit flip
                 torch.mul(delta.to(complex_dtype).unsqueeze(1), wrng_all[p[i]]-wrng_all[p[ii]], out=flmod)
                 flmod.add_(fl)
                 deltanz_inds = torch.nonzero(delta, as_tuple=True)[0]
