@@ -37,6 +37,7 @@ n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
+temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
@@ -87,8 +88,7 @@ except FileNotFoundError:
 
 import ast
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay']
-
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay', 'temperature']
 
 # hparams can be updated in command line
 for param in hparams_list:
