@@ -177,8 +177,10 @@ def rotate(array0):
     array1=array[:,3*nn2:]
     # automorphism
     i = rnd[0].item()
-    array1.copy_(array01[:,aut_inds1[i]])
-    array3.copy_(array03[:,:,aut_inds3[i]])
+    #array1.copy_(array01[:,aut_inds1[i]])
+    #array3.copy_(array03[:,:,aut_inds3[i]])
+    array1.index_copy_(1,aut_inds1[i],array01)  # does the *inverse* of commented out line
+    array3.index_copy_(2,aut_inds3[i],array03)
     # symmetry: second rotation/flip
     array1.copy_(torch.roll(array1 if rnd[1] < nn else torch.flip(array1, (1,)), shifts=rnd[1].item(), dims=1))
     #
