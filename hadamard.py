@@ -322,6 +322,43 @@ def improve2(x,scores):
                 cnt += torch.sum(improved)
     print(f'{cnt/B}')
 
+# greedy random 2k-bit flip: almost never succeeds
+@torch.inference_mode()
+def improve2b(x,scores):
+    print("improve2b ", end=''); sys.stdout.flush()
+    B=x.shape[0]
+    # precompute fft
+    f = fft(unfold(x))
+    fl = f.view(B,4*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B,4*(nn2+1))
+    if debugging:
+        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for k in range(4,12,2):
+        if debugging:
+            cnt.zero_()
+        for _ in range(k*k*na):
+            j=torch.randint(4,()).item()
+            r1=j*nn2
+            r=nn2 if j<3 else nn
+            r2=r+r1
+            inds = torch.multinomial(torch.ones(r, device=device), num_samples=k, replacement=False)+r1
+            s = x[:, inds].sum(dim=1)
+            zerosum_inds = torch.nonzero(s==0, as_tuple=True)[0]
+            torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
+            flmod.add_(fl)
+            new_scores = score_fft(fmod[zerosum_inds])
+            improved = new_scores < scores[zerosum_inds]
+            improved_inds = zerosum_inds[improved]
+            fl[improved_inds] = flmod[improved_inds]
+            x[improved_inds.unsqueeze(1),inds] *= -1
+            if debugging:
+                cnt += improved.sum()
+            scores[improved_inds] = new_scores[improved]
+        if debugging:
+            print(f'{k=} {cnt/B}')
+
+
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=real_dtype)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
 sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(4)], indexing='ij')
@@ -461,6 +498,14 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve2
+    """
+    start_timer = timer()
+    for _ in range(config.num_improve):
+        improve2b(arrays, scores)
+    if debugging:
+        print(f"improve2b time: {timer() - start_timer}")
+    """
+    scores = score(arrays)  # don't trust improve2b
     start_timer = timer()
     for _ in range(config.num_improve):
         improve1(arrays, scores)
