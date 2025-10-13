@@ -552,8 +552,6 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"improve1 time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve1
-    if debugging:
-        print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     mysort(arrays, scores)
