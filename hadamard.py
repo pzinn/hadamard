@@ -280,7 +280,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
-wrng = 2 * cst * w ** torch.outer(rng0,rng)
+wrng = cst * w ** torch.outer(rng0,rng)  # careful, compared to sym, no factor of 2 here
 wrng012 = -(wrng + torch.conj(wrng))[1:nn2+1]
 wrng3 = -torch.conj(wrng)
 wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=complex_dtype)
@@ -291,26 +291,34 @@ wrng_all[3*nn2:,3*(nn2+1):] = wrng3
 # improve: greedy 2-bit switch per block
 # TODO: rewrite using wrng_all
 @torch.inference_mode()
-def improve2(arrays_tensor,scores):
+def improve2(x,scores):
     print("improve2 ", end=''); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(4):
-        if k<3:
-            x=arrays_tensor[:,k*nn2:(k+1)*nn2]
-        else:
-            x=arrays_tensor[:,3*nn2:]
-        for i in range(1,x.shape[1]):
-            xi = x[:,i].clone()
-            for j in range(i):
-                x[:, i] = x[:, j]
-                x[:, j] = xi
-                new_scores = score(arrays_tensor)
-                mask = new_scores < scores
-                cnt += torch.sum(mask)
-                xi[mask] = x[mask, i]  # make these changes permanent
-                x[~mask, j] = x[~mask, i]  # Only revert for elements where no improvement
-                x[~mask, i] = xi[~mask]
-                scores[mask] = new_scores[mask]  # Update scores accordingly
+    B=x.shape[0]
+    # precompute fft
+    f = fft(unfold(x))
+    fl = f.view(B,4*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B,4*(nn2+1))
+    for j in range(4):
+        r1=j*nn2
+        r=nn2 if j<3 else nn
+        r2=r+r1
+        p = torch.randperm(r, device=device) + r1
+        for i in range(1,r):
+            for ii in range(i):
+                delta = x[:, p[i]] - x[:, p[ii]]
+                torch.mul(delta.to(complex_dtype).unsqueeze(1), wrng_all[p[i]]-wrng_all[p[ii]], out=flmod)
+                flmod.add_(fl)
+                deltanz_inds = torch.nonzero(delta, as_tuple=True)[0]
+                new_scores = score_fft(fmod[deltanz_inds])
+                improved = new_scores < scores[deltanz_inds]
+                improved_inds = deltanz_inds[improved]
+                fl[improved_inds] = flmod[improved_inds]
+                x[improved_inds.unsqueeze(1),p[i]] *= -1
+                x[improved_inds.unsqueeze(1),p[ii]] *= -1
+                scores[improved_inds] = new_scores[improved]
+                cnt += torch.sum(improved)
     print(f'{cnt/x.shape[0]}')
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
@@ -380,7 +388,7 @@ def parallel_improve(arrays, scores, gens):
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2(arrays, scores)
-    #scores = score(arrays)  # don't trust improve2
+    scores = score(arrays)  # don't trust improve2
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
