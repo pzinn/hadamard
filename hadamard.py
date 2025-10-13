@@ -318,7 +318,76 @@ def improve2(x,scores):
                 x[improved_inds.unsqueeze(1),p[ii]] *= -1
                 scores[improved_inds] = new_scores[improved]
                 cnt += torch.sum(improved)
-    print(f'{cnt/x.shape[0]}')
+    print(f'{cnt/B}')
+
+sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=real_dtype)
+psw, ksw = sw0.shape  # psw = ksw choose ksw/2
+sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(4)], indexing='ij')
+sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, 4)    # (p^4, 4)
+sw = sw0[sw_idx].reshape(-1, 4 * ksw)
+
+@torch.inference_mode()
+def improve1(x,scores):  # optimal 4x4 bit switch
+    print(f"improve1 ", end=''); sys.stdout.flush()
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    B=x.shape[0]
+    f = fft(unfold(x))
+    fl = f.view(B,4*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B,4*(nn2+1))
+    # first find 4x(2+2) locations for optimal flips
+    best_scores = torch.full((B,4,2,2), float('inf'), dtype=real_dtype, device=device)
+    inds = torch.empty((B,4,2,2), dtype=torch.long, device=device)
+    for j in range(4):
+        r1=j*nn2
+        r=nn2 if j<3 else nn
+        r2=r+r1
+        for i in range(r1,r2):
+            torch.mul(x[:, i].to(complex_dtype).unsqueeze(1), wrng_all[i], out=flmod)
+            flmod.add_(fl)
+            scores1 = score_fft(fmod)
+            mask = x[: ,i] > 0
+            minuses = torch.nonzero(~mask, as_tuple=True)[0]
+            pluses = torch.nonzero(mask, as_tuple=True)[0]
+            # update minuses
+            mask = scores[minuses].unsqueeze(1) < best_scores[minuses,j,0]  # (B,2)
+            # mask[:,0] means highest score
+            minuses1=minuses[mask[:,0]]
+            best_scores[minuses1,j,0,1]=best_scores[minuses1,j,0,0]
+            best_scores[minuses1,j,0,0]=scores1[minuses1]
+            inds[minuses1,j,0,1]=inds[minuses1,j,0,0]
+            inds[minuses1,j,0,0]=i
+            # mask[:,1] means next to highest score
+            minuses1=minuses[~mask[:,0] & mask[:,1]]
+            best_scores[minuses1,j,0,1]=scores1[minuses1]
+            inds[minuses1,j,0,1]=i
+            # update pluses
+            mask = scores[pluses].unsqueeze(1) < best_scores[pluses,j,1]  # (B,2)
+            # mask[:,0] means highest score
+            pluses1=pluses[mask[:,0]]
+            best_scores[pluses1,j,1,1]=best_scores[pluses1,j,1,0]
+            best_scores[pluses1,j,1,0]=scores1[pluses1]
+            inds[pluses1,j,1,1]=inds[pluses1,j,1,0]
+            inds[pluses1,j,1,0]=i
+            # mask[:,1] means next to highest score
+            pluses1=pluses[~mask[:,0] & mask[:,1]]
+            best_scores[pluses1,j,1,1]=scores1[pluses1]
+            inds[pluses1,j,1,1]=i
+    # now try every combo
+    inds = inds.view(B,16)
+    base = torch.arange(B, device=device)
+    #print(inds,x,scores)
+    cur=torch.gather(x, 1, inds)
+    for i in range(sw.shape[0]):
+        x[base.unsqueeze(1), inds] = sw[i]
+        new_scores = score(x)  # TODO use fft
+        #print(x,new_scores)
+        improved = new_scores < scores
+        scores[improved] = new_scores[improved]
+        cur[improved] = sw[i]
+        cnt += torch.sum(improved)
+    x.scatter_(1, inds, cur)
+    print(f'{cnt/B}')
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
@@ -387,7 +456,15 @@ def parallel_improve(arrays, scores, gens):
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2(arrays, scores)
+    if debugging:
+        print(f"improve2 time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve2
+    start_timer = timer()
+    for _ in range(config.num_improve):
+        improve1(arrays, scores)
+    if debugging:
+        print(f"improve1 time: {timer() - start_timer}")
+    scores = score(arrays)  # don't trust improve1
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
