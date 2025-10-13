@@ -428,6 +428,36 @@ def improve1(x,scores):  # optimal 4x4 bit switch
     x.scatter_(1, inds, cur)
     print(f'{cnt/B}')
 
+@torch.inference_mode()
+def improve3(arrays):
+    print(f"improve3 ", end=''); sys.stdout.flush()
+    B=arrays.shape[0]
+    m = unfold(arrays)
+    f = fft(m)
+    ff = f*f.conj()
+    ffs = ff.sum(dim=1)
+    lst = []
+    for j in range(4):
+        ffs1 = ffs - ff[:,j]
+        # the ambitious version
+        mask = (ffs1.real <= 1).all(dim=1)
+        M = mask.sum()
+        print(f'success rate ({j}) {M/B}')
+        if M > 0:
+            x = arrays[mask].clone()
+            h = torch.sqrt(1-ffs1[mask])
+            if j==3:
+                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                x[:, 3*nn2:] = torch.where(hh > 0, 1., -1.)
+            else:
+                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
+                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                hh = torch.where(hh > 0, 1., -1.)
+                x[:,j*nn2:(j+1)*nn2] = hh[:,0:1]*hh[:,1:nn2+1]
+            lst.append(x)
+    return torch.cat(lst, dim=0) if len(lst) > 0 else None
+
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
         r1=j*nn2
@@ -488,9 +518,19 @@ def mysort(arrays, scores):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step A: fix k
+    # step A: demultiply data, fix k
+    start_timer = timer()
+    arrays1=improve3(arrays)
+    if debugging:
+        print(f"improve3 time: {timer() - start_timer}")
+    if arrays1 is not None:
+        gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
+        arrays = torch.cat((arrays,arrays1),dim=0)
+        gens = torch.cat((gens,gens1),dim=0)
     fixk(arrays)
     scores = score(arrays)  # Recompute scores
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
     start_timer = timer()
     for _ in range(config.num_improve):
