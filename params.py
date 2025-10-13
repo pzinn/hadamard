@@ -6,8 +6,8 @@ n = 140  # size of matrix
 nn = n // 4  # size of basic block. must be odd for this version!
 nn2 = (nn-1)//2
 
-k0 = [-1, 3, 7, -9]  # sum of squares must be n, for the first 3, k0=nn-2 [4] which fixes their sign, last one is just odd
-# TODO fix signs automatically
+k0 = [1, 3, 7, -9]  # sum of squares must be n, for the first 3, k0=2-nn=nn [4] which fixes their sign, last one is just odd
+k0 = [i if (nn-i)%4 == 0 else -i for i in k0]  # fix signs if necessary
 #k = [8, 9, 10, 13]  # taking into account symmetry, this is the amount of say +1s
 k = [(k0[j]+nn-2)//4 if j<3 else (k0[j]+nn)//2 for j in range(4)]
 # for the first 3, 2k+1 - 2(nn2-k) = k0 or k=(k0+nn-2)/4 ; for the last, k-(nn-k)=k0 or k=(k0+nn)/2
