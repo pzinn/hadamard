@@ -156,12 +156,14 @@ from itertools import permutations
 import torch
 import math
 
+# Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
+perms = torch.tensor(list(p for p in permutations(range(3)) if k[p[0]]==k[0] and k[p[1]]==k[1] and k[p[2]]==k[2]))
 # Prepare automorphisms
 aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds1 = [ torch.tensor([(i*j)%nn for j in range(nn)]) for i in aut]
 aut_inds3 = [ torch.tensor([min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]) for i in aut]
 
-rndmod = torch.tensor([len(aut), 2*nn], dtype=torch.int64)
+rndmod = torch.tensor([len(perms), len(aut), 2*nn], dtype=torch.int64)
 
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
@@ -176,13 +178,16 @@ def rotate(array0):
     array3=array[:,:3*nn2].view(-1,3,nn2)
     array1=array[:,3*nn2:]
     # automorphism
-    i = rnd[0].item()
+    i = rnd[1].item()
     #array1.copy_(array01[:,aut_inds1[i]])
     #array3.copy_(array03[:,:,aut_inds3[i]])
     array1.index_copy_(1,aut_inds1[i],array01)  # does the *inverse* of commented out line
     array3.index_copy_(2,aut_inds3[i],array03)
-    # symmetry: second rotation/flip
-    array1.copy_(torch.roll(array1 if rnd[1] < nn else torch.flip(array1, (1,)), shifts=rnd[1].item(), dims=1))
+    # symmetry: random permute
+    if len(perms) > 1:
+        array3.copy_(array3[:,perms[rnd[0]]])  # here can't use index_copy_ because source=target
+     # symmetry: second rotation/flip
+    array1.copy_(torch.roll(array1 if rnd[2] < nn else torch.flip(array1, (1,)), shifts=rnd[2].item(), dims=1))
     #
     return arrayx
 
