@@ -384,24 +384,28 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
+    start_timer = timer()
     mysort(arrays, scores)
+    if debugging:
+        print(f"mysort time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
 def best_from(arrays, scores, gens):
-    if arrays.shape[0] <= config.training_size:
-        return arrays, scores, gens
-    # selecting first *then* deduplicate for efficiency -- might result in fewer data than expected
-    scores, idx = torch.topk(scores, k=config.training_size, largest=False, sorted=False)
-    arrays = arrays[idx]
-    gens = gens[idx]
+    # deduplicate
     arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
-    U = arrays.shape[0]
-    min_gens = torch.empty(U, device=device, dtype=torch.uint8)  # contents irrelevant
+    B = arrays.shape[0]
+    min_gens = torch.empty(B, device=device, dtype=torch.uint8)
     min_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
     # normally scores should be equal but who knows
-    min_scores = torch.empty(U, device=device, dtype=real_dtype)  # contents irrelevant
+    min_scores = torch.empty(B, device=device, dtype=real_dtype)
     min_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
-    return arrays, min_scores, min_gens
+    # select
+    if B <= config.training_size:
+        return arrays, min_scores, min_gens
+    scores, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
+    arrays = arrays[idx]
+    gens = min_gens[idx]
+    return arrays, scores, gens
 
 def batch_improve(arrays0, scores0, gens0):
     torch.set_float32_matmul_precision('highest')
