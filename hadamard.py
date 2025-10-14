@@ -113,8 +113,6 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Hadamard gen tally: {hada_tally}")
 
     if prefix == "selected":  # don't spam with H-matrices...
-        if not hasattr(record_stats, "hada_tensor"):
-            record_stats.hada_tensor = torch.empty((0,na), dtype=torch.int8)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays[hada_inds]), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
@@ -707,6 +705,7 @@ def main():
     # logging: text stats file + fancy (tensorboard or wandb)
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
+    record_stats.hada_tensor = torch.empty((0,na), dtype=torch.int8)  # empty the hadamard list
 
     # scoring
     init_score_function()
