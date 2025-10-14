@@ -265,7 +265,6 @@ wrng_all[3*nn2:,3*(nn2+1):] = wrng3
 k=10
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
-    start_timer = timer()
     print(f"improve1p ", end=''); sys.stdout.flush()
     B=arrays.shape[0]
     active_rows = torch.nonzero(scores>=eps, as_tuple=True)[0]  # don't bother with H-matrices
@@ -309,7 +308,6 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
             scores[improved_rows] = new_scores[improved]
             arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
         if not mask.any():
-            print(f"improve1p time: {timer() - start_timer}")
             break
         active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
 
@@ -408,7 +406,7 @@ def improve2(x,scores):
     for k in range(2,10):
         if debugging:
             cnt.zero_()
-        for _ in range(params.num_improve*na):
+        for _ in range(na):
             inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
             flmod.add_(fl)
@@ -647,16 +645,18 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
+    start_timer = timer()
     improve1p(arrays, scores)
     scores = score(arrays)  # don't trust improve1p
-    improve2(arrays, scores)
-    scores = score(arrays)  # don't trust improve2
-    """
+    if debugging:
+        print(f"improve1p time: {timer() - start_timer}")
+    #
     start_timer = timer()
-    improve2(arrays, scores)
+    for _ in range(config.num_improve):
+        improve2(arrays, scores)
+        scores = score(arrays)  # don't trust improve2
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
-    """
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     mysort(arrays, scores)
