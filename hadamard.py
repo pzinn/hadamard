@@ -280,7 +280,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
-wrng = cst * w ** torch.outer(rng0,rng)  # careful, compared to sym, no factor of 2 here TODO undo
+wrng = 2* cst * w ** torch.outer(rng0,rng)
 wrng012 = -(wrng + torch.conj(wrng))[1:nn2+1]
 wrng3 = -torch.conj(wrng)
 wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=complex_dtype)
@@ -309,7 +309,7 @@ def improve2(x,scores):
         for i in range(1,r):
             for ii in range(i):
                 delta = x[:, p[i]] - x[:, p[ii]]  # TODO better with view toward 2k-bit flip
-                torch.mul(delta.to(complex_dtype).unsqueeze(1), wrng_all[p[i]]-wrng_all[p[ii]], out=flmod)
+                torch.mul(delta.to(complex_dtype).unsqueeze(1), .5*(wrng_all[p[i]]-wrng_all[p[ii]]), out=flmod)
                 flmod.add_(fl)
                 deltanz_inds = torch.nonzero(delta, as_tuple=True)[0]
                 new_scores = score_fft(fmod[deltanz_inds])
@@ -322,7 +322,7 @@ def improve2(x,scores):
                 cnt += torch.sum(improved)
     print(f'{cnt/B}')
 
-# greedy random 2k-bit flip: almost never succeeds
+# greedy random 2k-bit flip
 @torch.inference_mode()
 def improve2b(x,scores):
     print("improve2b ", end=''); sys.stdout.flush()
@@ -538,13 +538,11 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve2
-    """
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2b(arrays, scores)
     if debugging:
         print(f"improve2b time: {timer() - start_timer}")
-    """
     scores = score(arrays)  # don't trust improve2b
     start_timer = timer()
     for _ in range(config.num_improve):
