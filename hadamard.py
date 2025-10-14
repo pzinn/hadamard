@@ -173,9 +173,9 @@ def init_score_function():
             else:
                 f = f[:, :, 1:]
             ff = f[:, :3, :].pow(2).sum(dim=1)
-            f.mul_(f.conj())  # f = f * f.conj()
-            ff.mul_(ff.conj())  # ff = ff * ff.conj()
-            s -= torch.log(torch.real(ff+f[:, 3]*(2*f.sum(dim=1)-f[:, 3]))).sum(dim=1)
+            f2 = f * f.conj()  # f.mul_(f.conj())  # can't do that since f is kept
+            ff.mul_(ff.conj())
+            s -= torch.log(torch.real(ff+f2[:, 3]*(2*f2.sum(dim=1)-f2[:, 3]))).sum(dim=1)
             return 2*s
         @torch.inference_mode()
         def score(m):
@@ -398,7 +398,7 @@ def improve2(x,scores):
     for k in range(2,10):
         if debugging:
             cnt.zero_()
-        for _ in range(params.num_improve*na):
+        for _ in range(na):
             inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
             flmod.add_(fl)
@@ -412,6 +412,35 @@ def improve2(x,scores):
             scores[improved_inds] = new_scores[improved_inds]
         if debugging:
             print(f'{k=} {cnt/B}')
+        # recompute scores for accuracy?
+        # f = fft(x)
+        # scores = score(x)
+
+"""
+# greedy random k-bit flip -- slower version
+@torch.inference_mode()
+def improve2w(x,scores):
+    B=x.shape[0]
+    if debugging:
+        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for k in range(1,10):
+        if debugging:
+            cnt.zero_()
+        for _ in range(na):
+            inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
+            x[:, inds] *= -1
+            new_scores = score(x)
+            x[:, inds] *= -1
+            improved = new_scores < scores
+            improved_inds = torch.nonzero(improved, as_tuple=True)[0]
+            x[improved_inds.unsqueeze(1),inds] *= -1
+            if debugging:
+                cnt += improved.sum()
+            #print(inds,cnt)
+            scores[improved_inds] = new_scores[improved_inds]
+        if debugging:
+            print(f'{k=} {cnt/B}')
+"""
 
 @torch.inference_mode()
 def improve3(m):
@@ -643,16 +672,18 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
-    improve1p(arrays, scores)
-    scores = score(arrays)  # don't trust improve1p
-    improve2(arrays, scores)
-    scores = score(arrays)  # don't trust improve2
-    """
     start_timer = timer()
-    improve2(arrays, scores)
+    improve1p(arrays, scores)
+    if debugging:
+        print(f"improve1p time: {timer() - start_timer}")
+    scores = score(arrays)  # don't trust improve1p
+    #
+    start_timer = timer()
+    for _ in range(config.num_improve):
+        improve2(arrays, scores)
+        scores = score(arrays)  # don't trust improve2
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
-    """
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     mysort(arrays, scores)
