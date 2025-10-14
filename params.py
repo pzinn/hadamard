@@ -27,7 +27,7 @@ training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
 training_steps = 50_000  # will be adjusted dynamically (to be less than that)
-num_improve = 3  # number of times data get improved per generation. only used by improve2
+num_improve = 1  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4
@@ -42,8 +42,7 @@ score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
 num_workers = 6  # for cpu parallelisation
 
-resume = False  # whether to resume a previous run
-# resume = True
+resume = False  # False | True -- whether to resume a previous run
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
 # training parameters can be different though

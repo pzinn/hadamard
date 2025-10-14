@@ -443,25 +443,48 @@ def improve3(arrays):
     ffs = ff.sum(dim=1)
     lst = []
     for j in range(4):
+        r1=j*nn2
+        r2=(j+1)*nn2 if j<3 else na
         ffs1 = ffs - ff[:,j]
         # the ambitious version
         mask = (ffs1.real <= 1).all(dim=1)
-        M = mask.sum()
-        print(f'success rate ({j}) {M/B}')
-        if M > 0:
-            x = arrays[mask].clone()
-            h = torch.sqrt(1-ffs1[mask])
+        M = mask.sum().item()
+        if M == 0:
+            continue
+        x = arrays[mask].clone()
+        h = torch.sqrt(1-ffs1[mask])
+        inds = torch.arange(M, device=device)
+        mask = torch.ones(M, dtype=torch.bool, device=device)  # for future use
+        t = 0
+        while True:
+            t += 1
+            if t == config.num_improve*200_000:  # give up at some point
+                mask[inds] = False  # get rid of remaining bad
+                lst.append(x[mask])
+                if debugging:
+                    print(f'failed {M}/{x.shape[0]}')
+                break
             if j==3:
-                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
-                x[:, 3*nn2:] = torch.where(hh > 0, 1., -1.)
+                h[inds,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+                hh = torch.fft.irfft(h[inds],n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                x[inds, 3*nn2:] = torch.where(hh > 0, 1., -1.)
             else:
-                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
-                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                h[inds,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
+                hh = torch.fft.irfft(h[inds],n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
                 hh = torch.where(hh > 0, 1., -1.)
-                x[:,j*nn2:(j+1)*nn2] = hh[:,0:1]*hh[:,1:nn2+1]
-            lst.append(x)
-    return torch.cat(lst, dim=0) if len(lst) > 0 else None
+                x[inds,r1:r2] = hh[:,0:1]*hh[:,1:nn2+1]
+            bad = (x[inds, r1:r2]==1).sum(dim=1) != k[j]
+            inds = inds[bad]
+            M = inds.shape[0]
+            if M == 0:
+                lst.append(x)  # victory
+                break
+        print(f'({j}) {mask.sum()/B}')
+    if len(lst) == 0:
+        return None
+    arrays1 = torch.cat(lst, dim=0)
+    #fixk(arrays1)
+    return arrays1
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
@@ -471,6 +494,8 @@ def fixk(arrays):  # fix k's. shouldn't happen too often
             kk = (arrays[:, r1:r2]==1).sum(dim=1)
             mask1 = kk < k[j]
             mask2 = kk > k[j]
+            #if debugging:
+            #    print(f'fixk: ({j}) {mask1.sum()+mask2.sum()}')
             if not mask1.any() and not mask2.any():
                 break
             arrays[mask1, torch.randint(r1,r2,())] = 1  # lazy
@@ -524,6 +549,7 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step A: demultiply data, fix k
+    fixk(arrays)
     start_timer = timer()
     arrays1=improve3(arrays)
     if debugging:
@@ -532,7 +558,6 @@ def parallel_improve(arrays, scores, gens):
         gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
         arrays = torch.cat((arrays,arrays1),dim=0)
         gens = torch.cat((gens,gens1),dim=0)
-    fixk(arrays)
     scores = score(arrays)  # Recompute scores
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
