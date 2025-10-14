@@ -334,15 +334,22 @@ def improve2b(x,scores):
     flmod = fmod.view(B,4*(nn2+1))
     if debugging:
         cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(4,12,2):
+    for k in range(2,12,2):
         if debugging:
             cnt.zero_()
-        for _ in range(k*k*na):
-            j=torch.randint(4,()).item()
+        # create all at once a bunch of subsets to sample
+        lst=[]
+        for j in range(4):
             r1=j*nn2
             r=nn2 if j<3 else nn
             r2=r+r1
-            inds = torch.multinomial(torch.ones(r, device=device), num_samples=k, replacement=False)+r1
+            lst.append(r1+torch.topk(torch.rand(nn**2, r, device=device), k).indices.sort(dim=1).values)
+        all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
+        n_inds = all_inds.shape[0]
+        perm = torch.randperm(n_inds)
+        for i in range(n_inds):
+            #inds = torch.multinomial(torch.ones(r, device=device), num_samples=k, replacement=False)+r1
+            inds = all_inds[perm[i]]
             s = x[:, inds].sum(dim=1)
             zerosum_inds = torch.nonzero(s==0, as_tuple=True)[0]
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
@@ -532,12 +539,14 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
+    """
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2(arrays, scores)
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve2
+    """
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2b(arrays, scores)
