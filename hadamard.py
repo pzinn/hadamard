@@ -341,7 +341,7 @@ def improve2b(x,scores):
             r1=j*nn2
             r=nn2 if j<3 else nn
             r2=r+r1
-            lst.append(r1+torch.topk(torch.rand(nn**2, r, device=device), k).indices.sort(dim=1).values)
+            lst.append(r1+torch.topk(torch.rand(nn**2*2//k, r, device=device), k).indices.sort(dim=1).values)
         all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
         n_inds = all_inds.shape[0]
         perm = torch.randperm(n_inds)
@@ -460,7 +460,7 @@ def improve3(arrays):
         t = 0
         while True:
             t += 1
-            if t == config.num_improve*1_000:  # give up at some point
+            if t == config.num_improve*100:  # give up at some point
                 mask[inds] = False  # get rid of remaining bad
                 lst.append(x[mask])
                 if debugging:
@@ -472,7 +472,7 @@ def improve3(arrays):
                 th[:,1:] = 2 * torch.pi * torch.rand((M,nn2),device=device)
                 th.requires_grad_(True)
                 opt = torch.optim.AdamW([th], lr=1e-2)
-                inner_steps=1000
+                inner_steps=10*na
                 for _ in range(inner_steps):
                     opt.zero_grad(set_to_none=True)
                     with torch.amp.autocast(device,enabled=True):
