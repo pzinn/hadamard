@@ -35,6 +35,7 @@ n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+gen_decay = .1 # [0., .025, .05, .075, .1, .15, .2]
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
@@ -84,7 +85,8 @@ except FileNotFoundError:
 
 import ast
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers']
+hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay']
+
 
 # hparams can be updated in command line
 for param in hparams_list:
@@ -179,11 +181,11 @@ def rotate(array0):
     array3=array[:,:3*nn2].view(-1,3,nn2)
     array1=array[:,3*nn2:]
     # automorphism
-    i = rnd[1].item()
+    #i = rnd[1].item()
     #array1.copy_(array01[:,aut_inds1[i]])
     #array3.copy_(array03[:,:,aut_inds3[i]])
-    array1.index_copy_(1,aut_inds1[i],array01)  # does the *inverse* of commented out line
-    array3.index_copy_(2,aut_inds3[i],array03)
+    array1.index_copy_(1,aut_inds1[rnd[1]],array01)  # does the *inverse* of commented out line
+    array3.index_copy_(2,aut_inds3[rnd[1]],array03)
     # symmetry: random permute
     if len(perms) > 1:
         array3.copy_(array3[:,perms[rnd[0]]])  # here can't use index_copy_ because source=target
