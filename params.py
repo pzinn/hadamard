@@ -149,7 +149,7 @@ import math
 
 # Prepare automorphisms
 aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
-aut_inds = [ torch.tensor([(i*j)%nn for j in range(nn)]) for i in aut]
+aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
 perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)

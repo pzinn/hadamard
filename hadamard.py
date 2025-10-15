@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds
 import logger
 import transformer
 # logging/debugging
@@ -645,6 +645,28 @@ def mysort(arrays, scores):
         scores2 = score(arrays)
         if (scores1-scores2).abs().max() > eps:
             raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
+
+aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)  # variant of aut that stops at nn2
+aut_inds_gpu = aut_inds.to(device=device)
+
+def apply_aut(idx,arrays0):
+    B = arrays0.shape[0]
+    arrays04 = arrays0.view(B,4,nn)
+    arrays = torch.empty_like(arrays0)
+    arrays4 = arrays[:,:3*nn2].view(B,4,nn)
+    # automorphism
+    base = torch.arange(B, device=device)
+    inds = aut_inds_gpu[idx]
+    arrays4[base[:,None,None], torch.arange(4, device=device)[None,:,None],inds[:,None,:]] = arrays04
+    return arrays
+
+def find_aut(arrays):
+    f = fft(unfold(arrays))
+    f = f.abs().sum(dim=1)  # (B,nn2+1)
+    idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
+    # now apply aut
+    arrays1 = apply_aut(idx, arrays)
+    return arrays1
 
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
