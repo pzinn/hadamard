@@ -353,7 +353,7 @@ def train(data, **kwargs):
             else:
                 print('') # to have nicely aligned test / train stats :)
                 sys.stdout.flush()
-                if test_loss - best_loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
+                if test_loss - loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
             if step == max_steps:  # termination condition 2: hard cutoff
                 break
