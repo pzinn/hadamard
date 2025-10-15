@@ -761,7 +761,7 @@ def main():
                 arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
             print(f'***Loading initial sample from {init_sample}***')
         except FileNotFoundError:
-            arrays = []
+            arrays = torch.empty((0,na), dtype=torch.int8)
     else:
         arrays = None
 
