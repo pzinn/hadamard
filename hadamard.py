@@ -460,7 +460,7 @@ def improve3(arrays):
         t = 0
         while True:
             t += 1
-            if t == config.num_improve*10_000:  # give up at some point
+            if t == config.num_improve*1_000:  # give up at some point
                 mask[inds] = False  # get rid of remaining bad
                 lst.append(x[mask])
                 if debugging:
@@ -472,12 +472,12 @@ def improve3(arrays):
                 th[:,1:] = 2 * torch.pi * torch.rand((M,nn2),device=device)
                 th.requires_grad_(True)
                 opt = torch.optim.AdamW([th], lr=1e-2)
-                inner_steps=100
+                inner_steps=1000
                 for _ in range(inner_steps):
                     opt.zero_grad(set_to_none=True)
                     with torch.amp.autocast(device,enabled=True):
                         x2 = 1/cst*torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)
-                        loss = ((x2**2-1)**2).sum()
+                        loss = ((torch.tanh(x2).sum(dim=1)-(2*k[3]-nn))**2).sum(dim=0)
                     scaler.scale(loss).backward()
                     scaler.unscale_(opt)
                     with torch.no_grad():
@@ -485,7 +485,7 @@ def improve3(arrays):
                             th.grad[:, 0] = 0    # freeze index 0 for all rows
                     scaler.step(opt)
                     scaler.update()
-                hh = torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                hh = torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)
                 x[inds, 3*nn2:] = torch.where(hh > 0, 1., -1.)
             else:
                 h[inds,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
@@ -498,7 +498,7 @@ def improve3(arrays):
             if M == 0:
                 lst.append(x)  # victory
                 break
-        print(f'({j}) {mask.sum()/B}')
+        print(f'({j}) {t} {mask.sum()/B}')
     if len(lst) == 0:
         return None
     arrays1 = torch.cat(lst, dim=0)
