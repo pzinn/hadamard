@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nn, nn2, k, device, resume, resume_training, random_seed, is_sweep, debugging, config
+from params import n, na, nn, nn2, k, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds1, aut_inds3
 import logger
 import transformer
 # logging/debugging
@@ -545,6 +545,35 @@ def mysort(arrays, scores):
         if (scores1-scores2).abs().max() > eps:
             raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
 
+aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)  # variant of aut that stops at nn2
+aut_inds1_gpu = aut_inds1.to(device=device)
+aut_inds3_gpu = aut_inds3.to(device=device)
+
+def apply_aut(idx,arrays0):
+    B = arrays0.shape[0]
+    arrays03=arrays0[:,:3*nn2].view(-1,3,nn2)
+    arrays01=arrays0[:,3*nn2:]
+    inds1 = aut_inds1_gpu[idx]
+    inds3 = aut_inds3_gpu[idx]
+    arrays = torch.empty_like(arrays0)
+    arrays3=arrays[:,:3*nn2].view(-1,3,nn2)
+    arrays1=arrays[:,3*nn2:]
+    # automorphism
+    base = torch.arange(B, device=device)
+    arrays1[base[:,None], inds1] = arrays01
+    arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    return arrays
+
+
+def find_aut(arrays):
+    f = fft(unfold(arrays))
+    f = f.abs().sum(dim=1)  # (B,nn2+1)
+    idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
+    # now apply aut
+    arrays1 = apply_aut(idx, arrays)
+    return arrays1
+
+
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
@@ -584,7 +613,8 @@ def parallel_improve(arrays, scores, gens):
     scores = score(arrays)  # don't trust improve1
     # step C: rotate the arrays to a standard form
     start_timer = timer()
-    mysort(arrays, scores)
+    arrays = find_aut(arrays)  # do automorphisms
+    mysort(arrays, scores)  # then the rest
     if debugging:
         print(f"mysort time: {timer() - start_timer}")
     return (arrays, scores, gens)
