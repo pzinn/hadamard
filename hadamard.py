@@ -350,8 +350,8 @@ def improve2b(x,scores):
             inds = all_inds[perm[i]]
             s = x[:, inds].sum(dim=1)
             zerosum_inds = torch.nonzero(s==0, as_tuple=True)[0]
-            torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
-            flmod.add_(fl)
+            torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)  # should we do zerosum only?
+            flmod.add_(fl)  # should we do zerosum only?
             new_scores = score_fft(fmod[zerosum_inds])
             improved = new_scores < scores[zerosum_inds]
             improved_inds = zerosum_inds[improved]
@@ -433,9 +433,11 @@ def improve1(x,scores):  # optimal 4x4 bit switch
     x.scatter_(1, inds, cur)
     print(f'{cnt/B}')
 
-@torch.inference_mode()
 def improve3(arrays):
     print(f"improve3 ", end=''); sys.stdout.flush()
+    #
+    scaler = torch.amp.GradScaler(device,enabled=True)
+    #
     B=arrays.shape[0]
     m = unfold(arrays)
     f = fft(m)
@@ -458,15 +460,32 @@ def improve3(arrays):
         t = 0
         while True:
             t += 1
-            if t == config.num_improve*200_000:  # give up at some point
+            if t == config.num_improve*10_000:  # give up at some point
                 mask[inds] = False  # get rid of remaining bad
                 lst.append(x[mask])
                 if debugging:
                     print(f'failed {M}/{x.shape[0]}')
                 break
             if j==3:
-                h[inds,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-                hh = torch.fft.irfft(h[inds],n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
+                th = torch.empty((M,nn2+1),device=device)
+                th[:,0].zero_()
+                th[:,1:] = 2 * torch.pi * torch.rand((M,nn2),device=device)
+                th.requires_grad_(True)
+                opt = torch.optim.AdamW([th], lr=1e-2)
+                inner_steps=100
+                for _ in range(inner_steps):
+                    opt.zero_grad(set_to_none=True)
+                    with torch.amp.autocast(device,enabled=True):
+                        x2 = 1/cst*torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)
+                        loss = ((x2**2-1)**2).sum()
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(opt)
+                    with torch.no_grad():
+                        if th.grad is not None:
+                            th.grad[:, 0] = 0    # freeze index 0 for all rows
+                    scaler.step(opt)
+                    scaler.update()
+                hh = torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
                 x[inds, 3*nn2:] = torch.where(hh > 0, 1., -1.)
             else:
                 h[inds,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
