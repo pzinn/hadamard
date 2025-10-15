@@ -54,20 +54,48 @@ def mysort(arrays):
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(1) * transformed)
 
 # Prepare automorphisms
-aut = [ i for i in range(2,nn) if math.gcd(i,nn) == 1 ]
-aut_inds1 = [ torch.tensor([(i*j)%nn for j in range(nn)], device=device) for i in aut]
-aut_inds3 = [ torch.tensor([min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)], device=device) for i in aut]
+aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
+aut_inds1 = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut], device=device)
+aut_inds3 = torch.tensor([[min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]  for i in aut], device=device)
+aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)
 
-def rotate(i,arrays0,arrays):
+def apply_aut(idx,arrays0):
+    B = arrays0.shape[0]
     arrays03=arrays0[:,:3*nn2].view(-1,3,nn2)
     arrays01=arrays0[:,3*nn2:]
+    inds1 = aut_inds1[idx]
+    inds3 = aut_inds3[idx]
+    arrays = torch.empty_like(arrays0)
     arrays3=arrays[:,:3*nn2].view(-1,3,nn2)
     arrays1=arrays[:,3*nn2:]
     # automorphism
-    arrays1.copy_(arrays01[:,aut_inds1[i]])
-    arrays3.copy_(arrays03[:,:,aut_inds3[i]])
+    #arrays1.copy_(torch.gather(arrays01, 1, inds1))  # WRONG WAY!
+    #arrays3.copy_(torch.gather(arrays03, 2, inds3.unsqueeze(1).expand(-1,3,-1)))
+    base = torch.arange(B, device=device)
+    arrays1[base.unsqueeze(1), inds1] = arrays01
+    arrays3[base.unsqueeze(1).unsqueeze(2), torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    return arrays
 
-vec2 = torch.rand((na,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
+# need a score that's invariant under other symmetries: permute, dihedral symmetry of last one (but not full permutation!)
+# idea: take say sum of abs of fft, these will be just permuted by automorphism -> find smallest entry whose index is prime with nn?
+
+one = torch.tensor([[1]],device=device,dtype=torch.float32)
+def mir(a):
+    return torch.cat((one.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
+def unfold(m0):
+    return torch.stack((mir(m0[:,:nn2]),
+                        mir(m0[:,nn2:2*nn2]),
+                        mir(m0[:,2*nn2:3*nn2]),
+                        m0[:,3*nn2:]),dim=1)
+def fft(m):
+    return torch.fft.rfft(m, dim=2)
+
+def find_aut(arrays):
+    f = fft(unfold(arrays))
+    f = f.abs().sum(dim=1)  # (B,nn2+1)
+    idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
+    arrays1 = apply_aut(idx, arrays)
+    return arrays1
 
 filename = sys.argv[1]
 try:
@@ -78,20 +106,9 @@ except FileNotFoundError:
     sys.exit(1)
 arrays = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
 len0 = arrays.shape[0]
-mysort(arrays)
-
-arrays0 = arrays.clone()
-s = (arrays*vec2).sum(dim=1)
-arrays1 = torch.empty_like(arrays)
-for i in range(len(aut)):
-    rotate(i,arrays0,arrays1)
-    mysort(arrays1)
-    s1 = (arrays1*vec2).sum(dim=1)
-    mask = s1 < s
-    arrays[mask]=arrays1[mask]
-    s[mask]=s1[mask]
-
-h = torch.unique(arrays.to(torch.int8), dim=0, sorted=False)
+arrays1 = find_aut(arrays)
+mysort(arrays1)
+h = torch.unique(arrays1.to(torch.int8), dim=0, sorted=False)
 #h = set(tuple(a) for a in arrays.tolist())
 len1 = len(h)
 print(f'{len1}/{len0}')

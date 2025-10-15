@@ -154,8 +154,10 @@ import math
 perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
 # Prepare automorphisms
 aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
-aut_inds1 = [ torch.tensor([(i*j)%nn for j in range(nn)]) for i in aut]
-aut_inds3 = [ torch.tensor([min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]) for i in aut]
+aut_inds1 = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
+aut_inds3 = torch.tensor([[min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]  for i in aut])
+#aut_inds1 = [ torch.tensor([(i*j)%nn for j in range(nn)]) for i in aut]
+#aut_inds3 = [ torch.tensor([min((i*j)%nn,nn-(i*j)%nn)-1 for j in range(1,nn2+1)]) for i in aut]
 
 rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2], dtype=torch.int64)
 nrnd = rndmod.shape
