@@ -704,8 +704,9 @@ def best_from(arrays, scores, gens):
     # select
     if B <= config.training_size:
         return arrays, min_scores, min_gens
-    scores, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(min_scores - config.gen_decay * min_gens, k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
+    scores = scores[idx]
     gens = min_gens[idx]
     return arrays, scores, gens
 
