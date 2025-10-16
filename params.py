@@ -29,7 +29,7 @@ n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
-gen_decay = .01 #  [0., .02, .04, .06, .08, .1]
+gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
