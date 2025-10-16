@@ -25,7 +25,7 @@ if debugging:
 
 @torch.inference_mode()
 def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=real_dtype) - 1
+    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
 
 # MAIN-DEFINITIONS #
 """
@@ -130,7 +130,7 @@ def record_stats(arrays, scores, gens, prefix=""):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 cst = 1 / math.sqrt(n)
-one = torch.tensor([[1]],device=device,dtype=real_dtype)
+one = torch.tensor([[1]],device=device,dtype=torch.int8)
 def mir(a):
     return torch.cat((one.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
 def unfold(m0):
@@ -138,7 +138,7 @@ def unfold(m0):
                         mir(m0[:,nn2:2*nn2]),
                         mir(m0[:,2*nn2:3*nn2]),
                         m0[:,3*nn2:]),dim=1)
-one_cpu = torch.tensor([[1]],device='cpu',dtype=real_dtype)
+one_cpu = torch.tensor([[1]],device='cpu',dtype=torch.int8)
 def mir_cpu(a):
     return torch.cat((one_cpu.expand(a.shape[0],1),a,torch.flip(a,(1,))),dim=1)
 def unfold_cpu(m0):
@@ -216,7 +216,7 @@ def batch_generator(arrays):
     B = arrays.shape[0]
     for i in range(0, B, config.score_batch_size):
         j = i + config.score_batch_size
-        yield arrays[i:j].to(device=device, dtype=real_dtype)
+        yield arrays[i:j].to(device=device)
 
 """
 def random_batch_generator():
@@ -237,7 +237,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
             arrays_gpu = generate_random_arrays(config.sample_size, device)
             arrays = arrays_gpu.to(device='cpu', dtype=torch.int8)
         else:
-            arrays_gpu = arrays.to(device=device, dtype=real_dtype)
+            arrays_gpu = arrays.to(device=device)
         return arrays, parallel_score(arrays_gpu)
     scores = torch.empty((0,), dtype=real_dtype)
     if arrays is None:
@@ -715,17 +715,17 @@ def batch_improve(arrays0, scores0, gens0):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     if config.score_batch_size is None:
-        arrays, scores, gens = parallel_improve(arrays0.to(device=device, dtype=real_dtype), scores0.to(device=device), gens0.to(device=device))
+        arrays, scores, gens = parallel_improve(arrays0.to(device=device), scores0.to(device=device), gens0.to(device=device))
         # select
         arrays, scores, gens = best_from(arrays, scores, gens)
     else:
         B = arrays0.shape[0]
-        arrays = torch.empty((0,na), dtype=real_dtype, device=device)
+        arrays = torch.empty((0,na), dtype=torch.int8, device=device)
         scores = torch.empty((0,), dtype=real_dtype, device=device)
         gens = torch.empty((0,), dtype=torch.uint8, device=device)
         for i in range(0, B, config.score_batch_size):
             j = i + config.score_batch_size
-            new_arrays, new_scores, new_gens = parallel_improve(arrays0[i:j].to(device=device, dtype=real_dtype), scores0[i:j].to(device=device), gens0[i:j].to(device=device))
+            new_arrays, new_scores, new_gens = parallel_improve(arrays0[i:j].to(device=device), scores0[i:j].to(device=device), gens0[i:j].to(device=device))
             arrays = torch.cat((arrays, new_arrays), dim=0)
             scores = torch.cat((scores, new_scores), dim=0)
             gens = torch.cat((gens, new_gens), dim=0)
