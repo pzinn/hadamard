@@ -435,9 +435,6 @@ def improve1(x,scores):  # optimal 4x4 bit switch
 
 def improve3(arrays):
     print(f"improve3 ", end=''); sys.stdout.flush()
-    #
-    scaler = torch.amp.GradScaler(device,enabled=True)
-    #
     B=arrays.shape[0]
     m = unfold(arrays)
     f = fft(m)
@@ -455,50 +452,17 @@ def improve3(arrays):
             continue
         x = arrays[mask].clone()
         h = torch.sqrt(1-ffs1[mask])
-        inds = torch.arange(M, device=device)
-        mask = torch.ones(M, dtype=torch.bool, device=device)  # for future use
-        t = 0
-        while True:
-            t += 1
-            if t == config.num_improve*100:  # give up at some point
-                mask[inds] = False  # get rid of remaining bad
-                lst.append(x[mask])
-                if debugging:
-                    print(f'failed {M}/{x.shape[0]}')
-                break
-            if j==3:
-                th = torch.empty((M,nn2+1),device=device)
-                th[:,0].zero_()
-                th[:,1:] = 2 * torch.pi * torch.rand((M,nn2),device=device)
-                th.requires_grad_(True)
-                opt = torch.optim.AdamW([th], lr=1e-2)
-                inner_steps=10*na
-                for _ in range(inner_steps):
-                    opt.zero_grad(set_to_none=True)
-                    with torch.amp.autocast(device,enabled=True):
-                        x2 = 1/cst*torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)
-                        loss = ((torch.tanh(x2).sum(dim=1)-(2*k[3]-nn))**2).sum(dim=0)
-                    scaler.scale(loss).backward()
-                    scaler.unscale_(opt)
-                    with torch.no_grad():
-                        if th.grad is not None:
-                            th.grad[:, 0] = 0    # freeze index 0 for all rows
-                    scaler.step(opt)
-                    scaler.update()
-                hh = torch.fft.irfft(h[inds] * torch.exp(1j * th),n=nn,dim=1)
-                x[inds, 3*nn2:] = torch.where(hh > 0, 1., -1.)
-            else:
-                h[inds,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
-                hh = torch.fft.irfft(h[inds],n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
-                hh = torch.where(hh > 0, 1., -1.)
-                x[inds,r1:r2] = hh[:,0:1]*hh[:,1:nn2+1]
-            bad = (x[inds, r1:r2]==1).sum(dim=1) != k[j]
-            inds = inds[bad]
-            M = inds.shape[0]
-            if M == 0:
-                lst.append(x)  # victory
-                break
-        print(f'({j}) {t} {mask.sum()/B}')
+        if j==3:
+            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+            x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+        else:
+            h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
+            hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+            x2 = hh[:,0:1]*hh[:,1:nn2+1]
+        topk = torch.topk(x2, k[j], dim=1).indices
+        x[:,r1:r2] = -1
+        x[:,r1:r2].scatter_(1, topk, 1)
+        print(f'({j}) {M/B}')
     if len(lst) == 0:
         return None
     arrays1 = torch.cat(lst, dim=0)
