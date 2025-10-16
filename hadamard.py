@@ -655,9 +655,11 @@ def apply_aut(idx,arrays0):
     arrays = torch.empty_like(arrays0)
     arrays4 = arrays[:,:3*nn2].view(B,4,nn)
     # automorphism
-    base = torch.arange(B, device=device)
+    #base = torch.arange(B, device=device)
     inds = aut_inds_gpu[idx]
-    arrays4[base[:,None,None], torch.arange(4, device=device)[None,:,None],inds[:,None,:]] = arrays04
+    #arrays4[base[:,None,None], torch.arange(4, device=device)[None,:,None],inds[:,None,:]] = arrays04
+    inds_expanded = inds.unsqueeze(1).expand(-1, 4, -1)
+    arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
 def find_aut(arrays):
