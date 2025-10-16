@@ -544,7 +544,9 @@ def apply_aut(idx,arrays0):
     # automorphism
     base = torch.arange(B, device=device)
     arrays1[base[:,None], inds1] = arrays01
-    arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    #arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    inds3_expanded = inds3.unsqueeze(1).expand(-1, 3, -1)
+    arrays3.scatter_(2, inds3_expanded, arrays03)
     return arrays
 
 
