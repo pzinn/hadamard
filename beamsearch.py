@@ -20,7 +20,7 @@ if device.startswith('cuda'):
     torch.cuda.manual_seed_all(random_seed)
 
 real_dtype = torch.float32
-n = 236   # must be a multiple of 4
+n = 140   # must be a multiple of 4
 assert(n%4==0)
 nn = n//4 # must be odd
 assert(nn%2==1)
@@ -161,9 +161,10 @@ def apply_aut(idx,arrays0):
     # automorphism
     base = torch.arange(B, device=device)
     arrays1[base[:,None], inds1] = arrays01
-    arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    #arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
+    inds3_expanded = inds3.unsqueeze(1).expand(-1, 3, -1)
+    arrays3.scatter_(2, inds3_expanded, arrays03)
     return arrays
-
 
 def find_aut(arrays):
     f = fft(unfold(arrays))
