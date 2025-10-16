@@ -580,11 +580,9 @@ vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter,
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
-def mysort(arrays, scores):
+def derotate(arrays):
     if params.test_score:
         scores1 = score(arrays)
-        if (scores-scores1).abs().max() > eps:
-            raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
     # 1st phase: permute the 3xnn2 parts
     B = arrays.shape[0]
     m=3
@@ -638,6 +636,12 @@ def apply_aut(idx,arrays0):
     #arrays3[base[:,None,None], torch.arange(3, device=device)[None,:,None],inds3[:,None,:]] = arrays03
     inds3_expanded = inds3.unsqueeze(1).expand(-1, 3, -1)
     arrays3.scatter_(2, inds3_expanded, arrays03)
+    if params.test_score:
+        scores0 = score(arrays0)
+        scores = score(arrays)
+        if (scores0-scores).abs().max() > eps:
+            raise RuntimeError("score incorrect", scores0, scores, (scores0-scores).abs().max().item(),(scores0-scores).abs().mean().item())
+
     return arrays
 
 
@@ -689,9 +693,9 @@ def parallel_improve(arrays, scores, gens):
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)  # do automorphisms
-    mysort(arrays, scores)  # then the rest
+    derotate(arrays)  # then the rest
     if debugging:
-        print(f"mysort time: {timer() - start_timer}")
+        print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
 def best_from(arrays, scores, gens):
@@ -708,7 +712,7 @@ def best_from(arrays, scores, gens):
         return arrays, min_scores, min_gens
     _, idx = torch.topk(min_scores * (1 + config.gen_decay * (params.gen - min_gens)), k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
-    scores = scores[idx]
+    scores = min_scores[idx]
     gens = min_gens[idx]
     return arrays, scores, gens
 
