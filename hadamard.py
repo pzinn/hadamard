@@ -364,7 +364,7 @@ def improve2b(x,scores):
             print(f'{k=} {cnt/B}')
 
 
-sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=real_dtype)
+sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
 sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(4)], indexing='ij')
 sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, 4)    # (p^4, 4)

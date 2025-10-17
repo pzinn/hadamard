@@ -7,6 +7,7 @@ nn = n // 4  # size of basic block. must be odd for this version!
 nn2 = (nn-1)//2
 
 k0 = [1, 3, 7, -9]  # sum of squares must be n, for the first 3, k0=2-nn=nn [4] which fixes their sign, last one is just odd
+assert(sum(i*i for i in k0) == n)
 k0 = [i if (nn-i)%4 == 0 else -i for i in k0]  # fix signs if necessary
 #k = [8, 9, 10, 13]  # taking into account symmetry, this is the amount of say +1s
 k = [(k0[j]+nn-2)//4 if j<3 else (k0[j]+nn)//2 for j in range(4)]
