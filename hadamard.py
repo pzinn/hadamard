@@ -393,7 +393,6 @@ def improve2c(x,scores):
         for i in range(n_inds):
             inds = all_inds[perm[i]]
             xx = torch.roll(x[:, inds], shifts=1, dims=1)
-            #torch.matmul((xx-x[:, inds]).to(complex_dtype), .5*wrng_all[inds], out=flmod)
             torch.matmul((x[:, inds]-xx).to(complex_dtype), .5*wrng_all[inds], out=flmod)
             flmod.add_(fl)
             new_scores = score_fft(fmod)
@@ -494,7 +493,6 @@ def improve3(arrays):
         if M == 0:
             continue
         x = arrays[mask].clone()
-        lst.append(x)
         old_x = x.clone()
         h = torch.sqrt(1-ffs1[mask])
         for t in range(100):  # ?
@@ -516,11 +514,13 @@ def improve3(arrays):
             old_scores = scores
             old_x.copy_(x)
         print(f'({j}) {M/B}')
+        lst.append((x,scores))
     if len(lst) == 0:
-        return None
-    arrays1 = torch.cat(lst, dim=0)
-    #fixk(arrays1)
-    return arrays1
+        return None, None
+    x_lst, scores_lst = zip(*lst)
+    x = torch.cat(x_lst, dim=0)
+    scores = torch.cat(scores_lst, dim=0)
+    return x, scores
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
@@ -622,14 +622,15 @@ def parallel_improve(arrays, scores, gens):
     # step A: demultiply data, fix k
     fixk(arrays)
     start_timer = timer()
-    arrays1=improve3(arrays)
+    arrays1, scores1 = improve3(arrays)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
     if arrays1 is not None:
         gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
-        arrays = torch.cat((arrays,arrays1),dim=0)
-        gens = torch.cat((gens,gens1),dim=0)
-    scores = score(arrays)  # Recompute scores
+        arrays = torch.cat((arrays,arrays1), dim=0)
+        gens = torch.cat((gens,gens1), dim=0)
+        scores = torch.cat((scores,scores1), dim=0)
+    # scores = score(arrays)  # Recompute scores
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
