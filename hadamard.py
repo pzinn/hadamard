@@ -435,32 +435,37 @@ def improve3(arrays):
         mask = (ffs1.real <= 1).all(dim=1)
         M = mask.sum()
         print(f'success rate ({j}) {M/B}')
-        if M > 0:
-            x = arrays[mask].clone()
-            h = torch.sqrt(1-ffs1[mask])
+        if M == 0:
+            continue
+        x = arrays[mask].clone()
+        old_x = x.clone()
+        h = torch.sqrt(1-ffs1[mask])
+        for t in range(100):  # ?
             if j==3:
                 h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
                 hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
-                x[:, 3*nn2:] = torch.where(hh > 0, 1., -1.)
+                x[:, 3*nn2:] = -1
+                x[:, 3*nn2:].masked_fill(hh > 0, 1)
             else:
                 h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
                 hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
-                hh = torch.where(hh > 0, 1., -1.)
-                x[:,j*nn2:(j+1)*nn2] = hh[:,0:1]*hh[:,1:nn2+1]
-            lst.append(x)
-    return torch.cat(lst, dim=0) if len(lst) > 0 else None
-    """
-    # the less ambitious version -- but maybe should be kept? though all it does is increase # samples?
-    z, _ = ffs.real.max(dim=1)
-    if debugging:
-        print(f'success {(z<=1).sum()/B}')
-    z=torch.max(z,torch.tensor(1))
-    ffs /= z.unsqueeze(1)
-    h = torch.sqrt(1-ffs)
-    h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((B,nn2),device=device))
-    x2=torch.fft.irfft(h,n=nn,dim=1)
-    return torch.cat((x1,torch.where(x2 > 0, 1., -1.)),dim=1)
-    """
+                hh = hh[:,0:1]*hh[:,1:nn2+1]
+                x[:,j*nn2:(j+1)*nn2] = -1
+                x[:,j*nn2:(j+1)*nn2].masked_fill(hh > 0, 1)
+            scores = score(x)  # TODO better?
+            if t>0:
+                mask = scores > old_scores  # no good ones
+                x[mask] = old_x[mask]
+                scores[mask] = old_scores[mask]
+            old_scores = scores
+            old_x.copy_(x)
+        lst.append((x,scores))
+    if len(lst) == 0:
+        return None, None
+    x_lst, scores_lst = zip(*lst)
+    x = torch.cat(x_lst, dim=0)
+    scores = torch.cat(scores_lst, dim=0)
+    return x, scores
 
 """
 # failed gradient descent
@@ -660,11 +665,10 @@ def parallel_improve(arrays, scores, gens):
     #scores = score(arrays)  # Recompute scores in parallel -- for accuracy reasons, safer
     # step A: demultiply data
     start_timer = timer()
-    arrays1=improve3(arrays)
+    arrays1, scores1 = improve3(arrays)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
     if arrays1 is not None:
-        scores1 = score(arrays1)
         gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
         if debugging:
             # analyse two batches separately
