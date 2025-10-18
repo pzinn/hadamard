@@ -344,6 +344,7 @@ def improve2b(x,scores):
             lst.append(r1+torch.topk(torch.rand(nn**2*2//k, r, device=device), k).indices.sort(dim=1).values)
         all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
         n_inds = all_inds.shape[0]
+        #print("temp",k,n_inds)
         perm = torch.randperm(n_inds)
         for i in range(n_inds):
             #inds = torch.multinomial(torch.ones(r, device=device), num_samples=k, replacement=False)+r1
@@ -363,6 +364,47 @@ def improve2b(x,scores):
         if debugging:
             print(f'{k=} {cnt/B}')
 
+# greedy random k-bit rotate
+@torch.inference_mode()
+def improve2c(x,scores):
+    print("improve2c ", end=''); sys.stdout.flush()
+    B=x.shape[0]
+    # precompute fft
+    f = fft(unfold(x))
+    fl = f.view(B,4*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B,4*(nn2+1))
+    if debugging:
+        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for k in range(3,13,2): # 3,5,..,11
+        if debugging:
+            cnt.zero_()
+        # create all at once a bunch of subsets to sample
+        lst=[]
+        for j in range(4):
+            r1=j*nn2
+            r=nn2 if j<3 else nn
+            r2=r+r1
+            lst.append(r1+torch.topk(torch.rand((1<<(12-k)), r, device=device), k).indices.sort(dim=1).values)
+        all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
+        n_inds = all_inds.shape[0]
+        #print("temp",k,n_inds)
+        perm = torch.randperm(n_inds)
+        for i in range(n_inds):
+            inds = all_inds[perm[i]]
+            xx = torch.roll(x[:, inds], shifts=1, dims=1)
+            #torch.matmul((xx-x[:, inds]).to(complex_dtype), .5*wrng_all[inds], out=flmod)
+            torch.matmul((x[:, inds]-xx).to(complex_dtype), .5*wrng_all[inds], out=flmod)
+            flmod.add_(fl)
+            new_scores = score_fft(fmod)
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
+            fl[improved_inds] = flmod[improved_inds]
+            x[improved_inds.unsqueeze(1),inds] = xx[improved_inds]
+            scores[improved_inds] = new_scores[improved_inds]
+            if debugging:
+                cnt += improved_inds.shape[0]
+        if debugging:
+            print(f'{k=} {cnt/B}')
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
@@ -580,19 +622,11 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
-    """
     start_timer = timer()
     for _ in range(config.num_improve):
-        improve2(arrays, scores)
+        improve2c(arrays, scores)
     if debugging:
-        print(f"improve2 time: {timer() - start_timer}")
-    scores = score(arrays)  # don't trust improve2
-    """
-    start_timer = timer()
-    for _ in range(config.num_improve):
-        improve2b(arrays, scores)
-    if debugging:
-        print(f"improve2b time: {timer() - start_timer}")
+        print(f"improve2c time: {timer() - start_timer}")
     scores = score(arrays)  # don't trust improve2b
     start_timer = timer()
     for _ in range(config.num_improve):
