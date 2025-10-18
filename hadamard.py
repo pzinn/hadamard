@@ -278,7 +278,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
-wrng = 2* cst * w ** torch.outer(rng0,rng)
+wrng = 2 * cst * w ** torch.outer(rng0,rng)
 wrng012 = -(wrng + torch.conj(wrng))[1:nn2+1]
 wrng3 = -torch.conj(wrng)
 wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=complex_dtype)
@@ -475,6 +475,7 @@ def improve1(x,scores):  # optimal 4x4 bit switch
     x.scatter_(1, inds, cur)
     print(f'{cnt/B}')
 
+@torch.inference_mode()
 def improve3(arrays):
     print(f"improve3 ", end=''); sys.stdout.flush()
     B=arrays.shape[0]
@@ -493,17 +494,27 @@ def improve3(arrays):
         if M == 0:
             continue
         x = arrays[mask].clone()
+        lst.append(x)
+        old_x = x.clone()
         h = torch.sqrt(1-ffs1[mask])
-        if j==3:
-            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-            x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
-        else:
-            h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
-            hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
-            x2 = hh[:,0:1]*hh[:,1:nn2+1]
-        topk = torch.topk(x2, k[j], dim=1).indices
-        x[:,r1:r2] = -1
-        x[:,r1:r2].scatter_(1, topk, 1)
+        for t in range(100):  # ?
+            if j==3:
+                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+                x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+            else:
+                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
+                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+                x2 = hh[:,0:1]*hh[:,1:nn2+1]
+            topk = torch.topk(x2, k[j], dim=1).indices
+            x[:,r1:r2] = -1
+            x[:,r1:r2].scatter_(1, topk, 1)
+            scores = score(x)  # TODO better?
+            if t>0:
+                mask = scores > old_scores  # no good ones
+                x[mask] = old_x[mask]
+                scores[mask] = old_scores[mask]
+            old_scores = scores
+            old_x.copy_(x)
         print(f'({j}) {M/B}')
     if len(lst) == 0:
         return None
