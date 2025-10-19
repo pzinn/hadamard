@@ -653,7 +653,7 @@ def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B,4,nn)
     arrays = torch.empty_like(arrays0)
-    arrays4 = arrays[:,:3*nn2].view(B,4,nn)
+    arrays4 = arrays.view(B,4,nn)
     # automorphism
     #base = torch.arange(B, device=device)
     inds = aut_inds_gpu[idx]
