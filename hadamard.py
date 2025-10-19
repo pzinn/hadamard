@@ -445,13 +445,13 @@ def improve3(arrays):
                 h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
                 hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
                 x[:, 3*nn2:] = -1
-                x[:, 3*nn2:].masked_fill(hh > 0, 1)
+                x[:, 3*nn2:].masked_fill_(hh > 0, 1)
             else:
                 h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
                 hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
                 hh = hh[:,0:1]*hh[:,1:nn2+1]
                 x[:,j*nn2:(j+1)*nn2] = -1
-                x[:,j*nn2:(j+1)*nn2].masked_fill(hh > 0, 1)
+                x[:,j*nn2:(j+1)*nn2].masked_fill_(hh > 0, 1)
             scores = score(x)  # TODO better?
             if t>0:
                 mask = scores > old_scores  # no good ones
