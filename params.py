@@ -36,13 +36,13 @@ n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
-gen_decay = .1 # [0., .025, .05, .075, .1, .15, .2]
+gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 1024  # must be less than training_size, no more than 10% ideally
-num_workers = 6  # for cpu parallelisation
+num_workers = 4  # for cpu parallelisation
 
 resume = False  # False | True -- whether to resume a previous run
 # if True, obviously, Hadamard parameters must be the same
@@ -66,7 +66,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = ''  # '' | 'tensorboard' | 'wandb'
+logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
