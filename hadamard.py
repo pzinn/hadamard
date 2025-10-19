@@ -475,27 +475,25 @@ def improve1(x,scores):  # optimal 4x4 bit switch
     print(f'{cnt/B}')
 
 @torch.inference_mode()
-def improve3(arrays):
+def improve3(arrays, scores):
     print(f"improve3 ", end=''); sys.stdout.flush()
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B=arrays.shape[0]
-    m = unfold(arrays)
-    f = fft(m)
+    f = fft(unfold(arrays))
     ff = f*f.conj()
     ffs = ff.sum(dim=1)
-    lst = []
     for j in range(4):
         r1=j*nn2
         r2=(j+1)*nn2 if j<3 else na
         ffs1 = ffs - ff[:,j]
         # the ambitious version
-        mask = (ffs1.real <= 1).all(dim=1)
-        M = mask.sum().item()
+        inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
+        M = inds.shape[0]
         if M == 0:
             continue
-        x = arrays[mask].clone()
-        old_x = x.clone()
-        h = torch.sqrt(1-ffs1[mask])
-        for t in range(100):  # ?
+        x = arrays[inds].clone()
+        h = torch.sqrt(1-ffs1[inds])
+        for t in range(1000):  # ?
             if j==3:
                 h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
                 x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
@@ -506,21 +504,12 @@ def improve3(arrays):
             topk = torch.topk(x2, k[j], dim=1).indices
             x[:,r1:r2] = -1
             x[:,r1:r2].scatter_(1, topk, 1)
-            scores = score(x)  # TODO better?
-            if t>0:
-                mask = scores > old_scores  # no good ones
-                x[mask] = old_x[mask]
-                scores[mask] = old_scores[mask]
-            old_scores = scores
-            old_x.copy_(x)
-        print(f'({j}) {M/B}')
-        lst.append((x,scores))
-    if len(lst) == 0:
-        return None, None
-    x_lst, scores_lst = zip(*lst)
-    x = torch.cat(x_lst, dim=0)
-    scores = torch.cat(scores_lst, dim=0)
-    return x, scores
+            new_scores = score(x)  # TODO better?
+            improved = new_scores < scores[inds]
+            arrays[inds[improved]] = x[improved]
+            scores[inds[improved]] = new_scores[improved]
+            cnt += improved.sum()
+        print(f'({j}) {M/B} {cnt/B}')
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
@@ -622,17 +611,9 @@ def parallel_improve(arrays, scores, gens):
     # step A: demultiply data, fix k
     fixk(arrays)
     start_timer = timer()
-    arrays1, scores1 = improve3(arrays)
+    improve3(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
-    if arrays1 is not None:
-        gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
-        arrays = torch.cat((arrays,arrays1), dim=0)
-        gens = torch.cat((gens,gens1), dim=0)
-        scores = torch.cat((scores,scores1), dim=0)
-    # scores = score(arrays)  # Recompute scores
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
     start_timer = timer()
     for _ in range(config.num_improve):
