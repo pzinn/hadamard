@@ -69,7 +69,8 @@ parser.add_argument("--bignum", action="store_true", help="Enable debug logging"
 import subprocess
 try:
     version = subprocess.check_output(
-        ["git", "show", "-s", "--pretty=%D %h"], stderr=subprocess.DEVNULL
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        stderr=subprocess.DEVNULL
     ).strip().decode()
 except subprocess.CalledProcessError:
     version = "git not available"
