@@ -21,22 +21,22 @@ fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
 def mysort(arrays):
-    # 1st phase: cyclically permute/reflect/negate the 3*nn
+    # 1st phase: cyclically permute/reflect/negate the 4*nn
     B = arrays.shape[0]
     m=4
     a=arrays.view(B,m,nn)
     fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
-    sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
-    sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
+    sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
+    sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sps = torch.cat([sp_rot, sp_rev], dim=2)   # (B, m, 2 * nn)
-    flat_idx = sps.abs().sum(dim=1).argmax(dim=1)         # (B,) over 2*nn options
+    flat_idx = sps.abs().argmax(dim=2)         # (B, m) over 2*nn options
     # Gather the chosen transform from the original 'a'
-    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(1) * base.unsqueeze(0)
-    idx = ( signed_base + flat_idx.unsqueeze(1)) % nn
-    transformed = a.gather(2, idx.unsqueeze(1).expand(B,m,nn))  # (B, m, nn)
+    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(-1) * base
+    idx = ( signed_base + flat_idx.unsqueeze(-1)) % nn
+    transformed = a.gather(2, idx)  # (B, m, nn)
     # negate if the chosen scalar product is > 0
-    chosen_sps = sps.gather(2, flat_idx.unsqueeze(1).expand(B,m).unsqueeze(2)).squeeze(2)  # (B,m)
-    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(2) * transformed)
+    chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
+    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
     # 1st phase: permute the 3xnn parts
     # start with identity permutation for each batch
     perm = torch.arange(m, device=device).expand(B, m).clone()
