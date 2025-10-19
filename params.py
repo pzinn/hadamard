@@ -153,8 +153,8 @@ aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
-rndmod = torch.tensor([len(perms), len(aut), nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+perms = torch.tensor(list(p for p in permutations(range(4))), dtype=torch.long)
+rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
@@ -166,13 +166,12 @@ def rotate(array0):
     # automorphisms
     array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
     # symmetry: random permute
-    array[:,:3] = array[:,perms[rnd[0]]]
+    array.copy_(array[:,perms[rnd[0]]])
     # symmetry: random rotation/flip
-    array.copy_(torch.roll(array, shifts=rnd[2].item(), dims=2))
-    # symmetry: second rotation/flip
-    array[:,3] = torch.roll(array[:,3] if rnd[3] < nn else torch.flip(array[:,3], (1,)), shifts=rnd[3].item(), dims=1)
+    for j in range(4):
+        array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
     # symmetry: random signs
-    array.mul_((rnd[4:8]*2-1).unsqueeze(1))
+    array.mul_((rnd[6:10]*2-1).unsqueeze(1))
     #
     return arrayx
 

@@ -57,6 +57,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     if B == 0:
         return
     # compute autocorrelation by MC
+    """
     mc_size = 1000
     perms = params.perms.tolist()
     s = torch.tensor(0., device=arrays.device)
@@ -83,6 +84,8 @@ def record_stats(arrays, scores, gens, prefix=""):
     s /= (mc_size * na)
     s=s.item()
     print(f"Correlation: {s}")
+    """
+    s=0
 
     # now scores
     # if debugging:
@@ -133,68 +136,20 @@ cst = 1 / math.sqrt(n)
 
 def init_score_function():
     global score, score_cpu, score_fft, fft
-    if config.score_function != 'fft log determinant':
-        # Generate row indices for circulant
-        indices = torch.arange(nn, device=device).repeat(nn, 1)  # Shape: (nn, nn)
-        shifts = torch.arange(nn, device=device).unsqueeze(1)  # Shape: (nn, 1)
-        rolled_indices = (indices - shifts) % nn  # Shape: (nn, nn)
-        V = torch.arange(2*n, device=device).reshape(8, nn)  # Shape: (8,nn) -- the original array and its negation, for convenience
-        X = V[:, rolled_indices]
-        X[3] = torch.flip(X[3], dims=[1])
-        X[7] = torch.flip(X[7], dims=[1])
-        full_indices = torch.cat([
-            torch.cat((X[0], X[1], X[2], X[3]), dim=1),
-            torch.cat((X[5], X[0], X[7], X[2]), dim=1),
-            torch.cat((X[6], X[3], X[0], X[5]), dim=1),
-            torch.cat((X[7], X[6], X[1], X[0]), dim=1)
-        ], dim=0)
-        # create the n x n block circulant matrix out of the n bits
-        def block_circulant(x):
-            return torch.cat((x, -x), dim=1)[..., full_indices]
-        # for device=='cuda', float is pretty much compulsory
-    # float16 may be faster but may lead to accuracy issues
-    if config.score_function == 'log determinant':
-        def score(m):
-            return n/2 * math.log(n) - torch.linalg.slogdet(block_circulant(m))[1]
-    elif config.score_function == 'fft log determinant':
+    if config.score_function == 'fft log determinant':
         nm=4
         @torch.inference_mode()
         def fft(m):
             return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
         @torch.inference_mode()
         def score_fft(f):  # score in terms of precomputed fft
-            # we do separately real pieces for accuracy reasons
-            s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
-            if nn % 2 == 0:
-                s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
-                f = f[:, :, 1:-1]
-            else:
-                f = f[:, :, 1:]
-            ff = f[:, :3, :].pow(2).sum(dim=1)
-            f2 = f * f.conj()  # f.mul_(f.conj())  # can't do that since f is kept
-            ff.mul_(ff.conj())
-            s -= torch.log(torch.real(ff+f2[:, 3]*(2*f2.sum(dim=1)-f2[:, 3]))).sum(dim=1)
-            return 2*s
+            s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+            return s[:,0]+2*s[:,1:].sum(dim=1)
         @torch.inference_mode()
         def score(m):
             return score_fft(fft(m))
         def score_cpu(m):
             return score_fft(fft(m))
-    elif config.score_function == 'quartic':
-        score_threshold = n**1.5
-        score_normalisation = 2*math.sqrt(n)
-        def score(m):
-            C = block_circulant(m)
-            nrm = torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2)))
-            return (nrm-score_threshold)/score_normalisation
-    elif config.score_function == 'one':
-        score_threshold = 0
-        score_normalisation = n
-        Idn = n * torch.eye(n, device=device, dtype=real_dtype)
-        def score(m):
-            C = block_circulant(m)
-            nrm = torch.linalg.matrix_norm(torch.matmul(C, torch.transpose(C, 1, 2))-Idn, ord=1)
-            return (nrm-score_threshold)/score_normalisation
     else:
         raise Exception('unknown score_function')
 
@@ -599,10 +554,11 @@ def mysort(arrays, scores):
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
-    # 0th phase: cyclically permute/reflect/negate the 3*nn
+    # 1st phase: cyclically permute/reflect/negate the 4*nn *individually*
+    # TODO
     B = arrays.shape[0]
-    m=3
-    a=arrays[:,:m*nn].view(B,m,nn)
+    m=4
+    a = arrays.view(B,m,nn)
     fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
     sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
@@ -615,7 +571,7 @@ def mysort(arrays, scores):
     # negate if the chosen scalar product is > 0
     chosen_sps = sps.gather(2, flat_idx.unsqueeze(1).expand(B,m).unsqueeze(2)).squeeze(2)  # (B,m)
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(2) * transformed)
-    # 1st phase: permute the 3xnn parts
+    # 2nd phase: permute the 4xnn parts
     # start with identity permutation for each batch
     perm = torch.arange(m, device=device).expand(B, m).clone()
     # stable sort by last key first, then previous..., up to first column
@@ -627,20 +583,6 @@ def mysort(arrays, scores):
     # apply permutation to rows
     sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
     a.copy_(sorted_a)
-    # 2nd phase: cyclically permute/reflect/negate the remaining length nn part
-    a=arrays[:,m*nn:]
-    fft_a = torch.fft.rfft(a, dim=1)  # use fft to quickly compute scalar product with some random vector for ordering
-    sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
-    sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
-    sps = torch.cat([sp_rot, sp_rev], dim=1)   # (B, 2 * nn)
-    flat_idx = sps.abs().argmax(dim=1)         # (B,) over 2*nn options
-    # Gather the chosen transform from the original 'a'
-    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(1) * base.unsqueeze(0)
-    idx = ( signed_base + flat_idx.unsqueeze(1)) % nn
-    transformed = a.gather(1, idx)  # (B, nn)
-    # negate if the chosen scalar product is > 0
-    chosen_sps = sps.gather(1, flat_idx.unsqueeze(1)).squeeze(1)  # (B,)
-    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(1) * transformed)
     if params.test_score:
         scores2 = score(arrays)
         if (scores1-scores2).abs().max() > eps:
@@ -653,11 +595,9 @@ def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B,4,nn)
     arrays = torch.empty_like(arrays0)
-    arrays4 = arrays[:,:3*nn2].view(B,4,nn)
+    arrays4 = arrays.view(B,4,nn)
     # automorphism
-    #base = torch.arange(B, device=device)
     inds = aut_inds_gpu[idx]
-    #arrays4[base[:,None,None], torch.arange(4, device=device)[None,:,None],inds[:,None,:]] = arrays04
     inds_expanded = inds.unsqueeze(1).expand(-1, 4, -1)
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays

@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 import sys
 
-nn = 35  # size of basic block. must be odd for this version!
+nn = 35  # size of basic block
 n = 4 * nn  # size of matrix
 na = 4 * nn  # length of array
 
@@ -21,10 +21,10 @@ fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
 def mysort(arrays):
-    # 0th phase: cyclically permute/reflect/negate the 3*nn
+    # 1st phase: cyclically permute/reflect/negate the 3*nn
     B = arrays.shape[0]
-    m=3
-    a=arrays[:,:m*nn].view(B,m,nn)
+    m=4
+    a=arrays.view(B,m,nn)
     fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
     sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
@@ -49,20 +49,6 @@ def mysort(arrays):
     # apply permutation to rows
     sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
     a.copy_(sorted_a)
-    # 2nd phase: cyclically permute/reflect/negate the remaining length nn part
-    a=arrays[:,m*nn:]
-    fft_a = torch.fft.rfft(a, dim=1)  # use fft to quickly compute scalar product with some random vector for ordering
-    sp_rot = torch.fft.irfft(fft_conj_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
-    sp_rev = torch.fft.irfft(fft_vec[None, :] * fft_a, n=nn, dim=1)  # (B, nn)
-    sps = torch.cat([sp_rot, sp_rev], dim=1)   # (B, 2 * nn)
-    flat_idx = sps.abs().argmax(dim=1)         # (B,) over 2*nn options
-    # Gather the chosen transform from the original 'a'
-    signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(1) * base.unsqueeze(0)
-    idx = ( signed_base + flat_idx.unsqueeze(1)) % nn
-    transformed = a.gather(1, idx)  # (B, nn)
-    # negate if the chosen scalar product is > 0
-    chosen_sps = sps.gather(1, flat_idx.unsqueeze(1)).squeeze(1)  # (B,)
-    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(1) * transformed)
 
 # Prepare automorphisms
 aut = [ i for i in range(2,nn) if math.gcd(i,nn) == 1 ]

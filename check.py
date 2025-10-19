@@ -11,15 +11,18 @@ np.set_printoptions(threshold=sys.maxsize)
 
 
 def upblock(x):
+    n = x.shape[0]
+    nn = n // 4
     _aa, _bb, _cc, _dd = x.reshape(4, -1)
     A = sl.circulant(_aa)
     B = sl.circulant(_bb)
     C = sl.circulant(_cc)
-    D = np.fliplr(sl.circulant(_dd))
-    return np.block([[A, B, C, D],
-                     [-B, A, -D, C],
-                     [-C, D, A, -B],
-                     [-D, -C, B, A]])
+    D = sl.circulant(_dd)
+    F = np.fliplr(np.identity(nn))
+    return np.block([[A, B@F, C@F, D@F],
+                     [-B@F, A, -F@D, F@C],
+                     [-C@F, F@D, A, -F@B],
+                     [-D@F, -F@C, F@B, A]])
 
 
 def score(a):
