@@ -232,7 +232,9 @@ def improve2c(x,scores):
     flmod = fmod.view(B,4*(nn2+1))
     if debugging:
         cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(3,13,2): # 3,5,..,11
+    k = 3  # 3,5,..,11
+    ns = 5 * n  # dunno
+    while ns > 0 and k <= nn2:
         if debugging:
             cnt.zero_()
         # create all at once a bunch of subsets to sample
@@ -241,7 +243,7 @@ def improve2c(x,scores):
             r1=j*nn
             r=nn
             r2=r+r1
-            lst.append(r1+torch.topk(torch.rand((1<<(12-k)), r, device=device), k).indices.sort(dim=1).values)
+            lst.append(r1+torch.topk(torch.rand(ns, r, device=device), k).indices.sort(dim=1).values)
         all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
         n_inds = all_inds.shape[0]
         #print("temp",k,n_inds)
@@ -260,6 +262,8 @@ def improve2c(x,scores):
                 cnt += improved_inds.shape[0]
         if debugging:
             print(f'{k=} {cnt/B}')
+        ns >>= 1
+        k += 2
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
