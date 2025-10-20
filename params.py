@@ -2,8 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 35  # size of basic block
-n = 4 * nn  # size of matrix
+n = 140  # size of matrix
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -19,12 +18,12 @@ learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 200_000  # will be adjusted dynamically (to be less than that)
+training_steps = 100_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 6
-n_embd = 128
+n_layer = 4
+n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -59,7 +58,7 @@ random_seed = int(time.time())  # 1746533706
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()
