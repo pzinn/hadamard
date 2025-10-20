@@ -69,6 +69,7 @@ def print_arrays(a):
 
 # for keeping track of stats
 def record_stats(arrays, scores, gens, prefix=""):
+    print(f"{prefix} stats:")
     B = len(arrays)
     if B == 0:
         return
@@ -486,7 +487,6 @@ def improve3(arrays, scores):
         r1=j*nn2
         r2=(j+1)*nn2 if j<3 else na
         ffs1 = ffs - ff[:,j]
-        # the ambitious version
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
@@ -608,7 +608,7 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step A: demultiply data, fix k
+    # step A: fix k
     fixk(arrays)
     start_timer = timer()
     improve3(arrays, scores)
@@ -618,15 +618,15 @@ def parallel_improve(arrays, scores, gens):
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2c(arrays, scores)
+        scores = score(arrays)  # don't trust improve2c
     if debugging:
         print(f"improve2c time: {timer() - start_timer}")
-    scores = score(arrays)  # don't trust improve2b
     start_timer = timer()
     for _ in range(config.num_improve):
         improve1(arrays, scores)
+        scores = score(arrays)  # don't trust improve1
     if debugging:
         print(f"improve1 time: {timer() - start_timer}")
-    scores = score(arrays)  # don't trust improve1
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)  # do automorphisms
