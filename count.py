@@ -37,7 +37,8 @@ def mysort(arrays):
     # negate if the chosen scalar product is > 0
     chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    # 1st phase: permute the 3xnn parts
+    """
+    # 2nd phase: permute the 4xnn parts
     # start with identity permutation for each batch
     perm = torch.arange(m, device=device).expand(B, m).clone()
     # stable sort by last key first, then previous..., up to first column
@@ -49,6 +50,7 @@ def mysort(arrays):
     # apply permutation to rows
     sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
     a.copy_(sorted_a)
+    """
 
 # Prepare automorphisms
 aut = [ i for i in range(2,nn) if math.gcd(i,nn) == 1 ]
