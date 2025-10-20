@@ -399,25 +399,20 @@ def improve2(x,scores):
     fl = f.view(B,4*(nn2+1))
     fmod = torch.empty_like(f)
     flmod = fmod.view(B,4*(nn2+1))
-    if debugging:
-        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
     for k in range(2,10):
-        if debugging:
-            cnt.zero_()
+        cnt.zero_()
         for _ in range(na):
             inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
             flmod.add_(fl)
             new_scores = score_fft(fmod)
-            improved = new_scores < scores
-            improved_inds = torch.nonzero(improved, as_tuple=True)[0]
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]
             fl[improved_inds] = flmod[improved_inds]
             x[improved_inds.unsqueeze(1),inds] *= -1
-            if debugging:
-                cnt += improved.sum()
+            cnt += improved.sum()
             scores[improved_inds] = new_scores[improved_inds]
-        if debugging:
-            print(f'{k=} {cnt/B}')
+        print(f'{k=} {cnt} ({cnt/B})')
 
 @torch.inference_mode()
 def improve3(arrays, scores):
@@ -428,6 +423,7 @@ def improve3(arrays, scores):
     ff = f*f.conj()
     ffs = ff.sum(dim=1)
     for j in range(4):
+        cnt.zero_()
         r1=j*nn2
         r2=(j+1)*nn2 if j<3 else na
         ffs1 = ffs - ff[:,j]
@@ -453,7 +449,7 @@ def improve3(arrays, scores):
             arrays[inds[improved]] = x[improved]
             scores[inds[improved]] = new_scores[improved]
             cnt += improved.sum()
-        print(f'({j}) {M/B} {cnt/B}')
+        print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 """
 # failed gradient descent
