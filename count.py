@@ -12,15 +12,17 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 import sys
 
 nn = 35  # size of basic block
-n = 4 * nn  # size of matrix
-na = 4 * nn  # length of array
+nm = 4
+n = nm * nn  # size of matrix
+na = nm * nn  # length of array
+nn2 = (nn-1)//2
 
 
 vec = torch.rand((nn,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
-def mysort(arrays):
+def derotate(arrays):
     # 1st phase: cyclically permute/reflect/negate the 4*nn
     B = arrays.shape[0]
     m=4
@@ -37,8 +39,7 @@ def mysort(arrays):
     # negate if the chosen scalar product is > 0
     chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    """
-    # 2nd phase: permute the 4xnn parts
+    # 1st phase: permute the 3xnn parts
     # start with identity permutation for each batch
     perm = torch.arange(m, device=device).expand(B, m).clone()
     # stable sort by last key first, then previous..., up to first column
@@ -50,19 +51,34 @@ def mysort(arrays):
     # apply permutation to rows
     sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
     a.copy_(sorted_a)
-    """
 
 # Prepare automorphisms
 aut = [ i for i in range(2,nn) if math.gcd(i,nn) == 1 ]
-aut_inds = [ torch.tensor([(i*j)%nn for j in range(nn)], device=device) for i in aut]
+aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut], device=device)
+aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)
 
-def rotate(i,arrays0,arrays):
-    arrays0=arrays0.view(-1,4,nn)
-    arrays=arrays.view(-1,4,nn)
+def fft(m):
+    return torch.fft.rfft(m.view(-1, nm, nn), dim=2)
+
+def apply_aut(idx,arrays0):
+    B = arrays0.shape[0]
+    arrays04 = arrays0.view(B,4,nn)
+    arrays = torch.empty_like(arrays0)
+    arrays4 = arrays.view(B,4,nn)
     # automorphism
-    arrays.copy_(arrays0[:,:,aut_inds[i]])
+    inds = aut_inds[idx]
+    inds_expanded = inds.unsqueeze(1).expand(-1, 4, -1)
+    arrays4.scatter_(2, inds_expanded, arrays04)
+    return arrays
 
-vec2 = torch.rand((na,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
+def find_aut(arrays):
+    f = fft(arrays)
+    f = f.abs().sum(dim=1)  # (B,nn2+1)
+    idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
+    # now apply aut
+    arrays1 = apply_aut(idx, arrays)
+    return arrays1
+
 
 filename = sys.argv[1]
 try:
@@ -73,20 +89,10 @@ except FileNotFoundError:
     sys.exit(1)
 arrays = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
 len0 = arrays.shape[0]
-mysort(arrays)
+arrays1 = find_aut(arrays)
+derotate(arrays1)
 
-arrays0 = arrays.clone()
-s = (arrays*vec2).sum(dim=1)
-arrays1 = torch.empty_like(arrays)
-for i in range(len(aut)):
-    rotate(i,arrays0,arrays1)
-    mysort(arrays1)
-    s1 = (arrays1*vec2).sum(dim=1)
-    mask = s1 < s
-    arrays[mask]=arrays1[mask]
-    s[mask]=s1[mask]
-
-h = torch.unique(arrays.to(torch.int8), dim=0, sorted=False)
+h = torch.unique(arrays1.to(torch.int8), dim=0, sorted=False)
 #h = set(tuple(a) for a in arrays.tolist())
 len1 = len(h)
 print(f'{len1}/{len0}')
