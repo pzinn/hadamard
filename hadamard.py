@@ -375,13 +375,11 @@ def improve2c(x,scores):
     fl = f.view(B,4*(nn2+1))
     fmod = torch.empty_like(f)
     flmod = fmod.view(B,4*(nn2+1))
-    if debugging:
-        cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
     k = 3  # 3,5,..,11
     ns = 5 * n  # dunno
     while ns > 0 and k <= nn2:
-        if debugging:
-            cnt.zero_()
+        cnt.zero_()
         # create all at once a bunch of subsets to sample
         lst=[]
         for j in range(4):
@@ -403,10 +401,8 @@ def improve2c(x,scores):
             fl[improved_inds] = flmod[improved_inds]
             x[improved_inds.unsqueeze(1),inds] = xx[improved_inds]
             scores[improved_inds] = new_scores[improved_inds]
-            if debugging:
-                cnt += improved_inds.shape[0]
-        if debugging:
-            print(f'{k=} {cnt/B}')
+            cnt += improved_inds.shape[0]
+        print(f'{k=} {cnt} ({cnt/B})')
         ns >>= 1
         k += 2
 
@@ -490,6 +486,7 @@ def improve3(arrays, scores):
     for j in range(4):
         r1=j*nn2
         r2=(j+1)*nn2 if j<3 else na
+        cnt.zero_()
         ffs1 = ffs - ff[:,j]
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
@@ -513,7 +510,7 @@ def improve3(arrays, scores):
             arrays[inds[improved]] = x[improved]
             scores[inds[improved]] = new_scores[improved]
             cnt += improved.sum()
-        print(f'({j}) {M/B} {cnt/B}')
+        print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
     for j in range(4):
