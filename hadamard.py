@@ -44,13 +44,6 @@ def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe re
     return torch.cat([generate_random_blocks(batch_size, nn, k[j], device) for j in range(4)], dim=1)
 
 # MAIN-DEFINITIONS #
-"""
-def best_from(arrays_dict):
-    # preserves ordering
-    items = arrays_dict.items()
-    smallest_keys = {k for k, _ in heapq.nsmallest(config.training_size, items, key=lambda item: item[1][0])}  # heapq requires no nan
-    return {k: v for k, v in items if k in smallest_keys or v[0] < eps}  # always keep H-matrices
-"""
 
 def write_arrays_buffer(buffer, a):
     plus, minus = ord('+'), ord('-')
@@ -488,8 +481,9 @@ def best_from(arrays, scores, gens):
     # select
     if B <= config.training_size:
         return arrays, min_scores, min_gens
-    scores, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(min_scores * (1 + config.gen_decay * (params.gen - min_gens)), k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
+    scores = min_scores[idx]
     gens = min_gens[idx]
     return arrays, scores, gens
 
