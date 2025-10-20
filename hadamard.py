@@ -53,6 +53,7 @@ def print_arrays(a):
 
 # for keeping track of stats
 def record_stats(arrays, scores, gens, prefix=""):
+    print(f"{prefix} stats:")
     B = len(arrays)
     if B == 0:
         return
@@ -542,7 +543,7 @@ vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter,
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
-def mysort(arrays, scores):
+def derotate(arrays, scores):
     if params.test_score:
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
@@ -595,7 +596,7 @@ def apply_aut(idx,arrays0):
     return arrays
 
 def find_aut(arrays):
-    f = fft(unfold(arrays))
+    f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
     idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
     # now apply aut
@@ -625,9 +626,10 @@ def parallel_improve(arrays, scores, gens):
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
-    mysort(arrays, scores)
+    arrays = find_aut(arrays)
+    derotate(arrays, scores)
     if debugging:
-        print(f"mysort time: {timer() - start_timer}")
+        print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
 def best_from(arrays, scores, gens):
