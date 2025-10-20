@@ -396,40 +396,33 @@ def improve2w(x,scores):
 """
 
 @torch.inference_mode()
-def improve3(m):
+def improve3(arrays, scores):
     print(f"improve3 ", end=''); sys.stdout.flush()
-    B=m.shape[0]
-    f = fft(m)
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    B = arrays.shape[0]
+    f = fft(arrays)
     ff = f*f.conj()
     ffs = ff.sum(dim=1)
-    lst = []
+    a = arrays.view(B, 4, nn)
     for j in range(4):
         ffs1 = ffs - ff[:,j]
-        # the ambitious version
-        #threshold = 1 - .2 * torch.rand((), device=device) # randomise a bit
-        mask = (ffs1.real <= 1).all(dim=1)
-        M = mask.sum()
-        print(f'success rate ({j}) {M/B}')
-        if M > 0:
-            x = m[mask].clone()
-            h = torch.sqrt(1-ffs1[mask])
+        inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
+        M = inds.shape[0]
+        if M == 0:
+            continue
+        x = a[inds].clone()
+        h = torch.sqrt(1-ffs1[inds])
+        for t in range(1000):  # ?
             h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-            hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter since we're gonna sign it
-            x[:, j*nn:(j+1)*nn] = torch.where(hh > 0, 1., -1.)
-            lst.append(x)
-    return torch.cat(lst, dim=0) if len(lst) > 0 else None
-    """
-    # the less ambitious version -- but maybe should be kept? though all it does is increase # samples?
-    z, _ = ffs.real.max(dim=1)
-    if debugging:
-        print(f'success {(z<=1).sum()/B}')
-    z=torch.max(z,torch.tensor(1))
-    ffs /= z.unsqueeze(1)
-    h = torch.sqrt(1-ffs)
-    h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((B,nn2),device=device))
-    x2=torch.fft.irfft(h,n=nn,dim=1)
-    return torch.cat((x1,torch.where(x2 > 0, 1., -1.)),dim=1)
-    """
+            x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+            x[:, j] = -1
+            x[:, j].masked_fill_(x2 > 0, 1)
+            new_scores = score(x)  # TODO better?
+            improved = new_scores < scores[inds]
+            a[inds[improved],j] = x[improved,j]
+            scores[inds[improved]] = new_scores[improved]
+            cnt += improved.sum()
+        print(f'({j}) {M/B} {cnt/B}')
 
 """
 # failed gradient descent
@@ -612,26 +605,11 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    #scores = score(arrays)  # Recompute scores in parallel -- for accuracy reasons, safer
     # step A: demultiply data
     start_timer = timer()
-    arrays1=improve3(arrays)
+    improve3(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
-    if arrays1 is not None:
-        scores1 = score(arrays1)
-        gens1 = torch.full((arrays1.shape[0],),params.gen,device=device,dtype=torch.uint8)
-        if debugging:
-            # analyse two batches separately
-            print(f"pre -improve batch 0:")
-            record_stats(arrays, scores, gens)
-            print(f"pre -improve batch 1:")
-            record_stats(arrays1, scores1, gens1)
-        arrays = torch.cat((arrays,arrays1),dim=0)
-        scores = torch.cat((scores,scores1),dim=0)
-        gens = torch.cat((gens,gens1),dim=0)
-    if device.startswith('cuda'):
-        torch.cuda.empty_cache()  # Free memory
     # step B: main improvement
     start_timer = timer()
     improve1p(arrays, scores)
