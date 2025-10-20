@@ -53,6 +53,7 @@ def print_arrays(a):
 
 # for keeping track of stats
 def record_stats(arrays, scores, gens, prefix=""):
+    print(f"{prefix} stats:")
     B = len(arrays)
     if B == 0:
         return
@@ -587,7 +588,7 @@ vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter,
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
-def mysort(arrays, scores):
+def derotate(arrays, scores):
     if params.test_score:
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
@@ -686,9 +687,9 @@ def parallel_improve(arrays, scores, gens):
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
-    mysort(arrays, scores)
+    derotate(arrays, scores)
     if debugging:
-        print(f"mysort time: {timer() - start_timer}")
+        print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
 def best_from(arrays, scores, gens):
