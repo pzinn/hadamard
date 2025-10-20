@@ -657,7 +657,7 @@ def apply_aut(idx,arrays0):
     return arrays
 
 def find_aut(arrays):
-    f = fft(unfold(arrays))
+    f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
     idx = f[:,aut1].argmax(dim=1)   # (B,) over nn2+1 options
     # now apply aut
@@ -687,6 +687,7 @@ def parallel_improve(arrays, scores, gens):
         print(f"improve2 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
+    arrays = find_aut(arrays)
     derotate(arrays, scores)
     if debugging:
         print(f"derotate time: {timer() - start_timer}")
