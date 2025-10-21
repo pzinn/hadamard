@@ -132,7 +132,7 @@ class ModelConfig:
         self.__dict__.update(kwargs)
         # Automatically computed values
         if isinstance(self.stacking, int):
-            self.block_size = 4 * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
+            self.block_size = nm * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
             self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
     def update(self):
         if is_sweep:
@@ -154,7 +154,7 @@ aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(4))), dtype=torch.long)
+perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
 rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
@@ -169,7 +169,7 @@ def rotate(array0):
     # symmetry: random permute
     array.copy_(array[:,perms[rnd[0]]])
     # symmetry: random rotation/flip
-    for j in range(4):
+    for j in range(nm):
         array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
     # symmetry: random signs
     array.mul_((rnd[6:10]*2-1).unsqueeze(1))
