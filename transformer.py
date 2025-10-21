@@ -137,7 +137,6 @@ def init_model():
     global model_path
     global bit_positions
     global string_length
-    global nn_pad
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -146,8 +145,6 @@ def init_model():
     # stuff for coding/decoding arrays
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
-    segment_string_length = string_length // 4
-    nn_pad = segment_string_length * config.stacking
 
 def load_model():
     if model.need_reload:
@@ -204,14 +201,12 @@ def evaluate(sample):
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
-    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, 4, nn_pad)
-    return signs[:,:,:nn].to(dtype=torch.int8).view(B,na)
+    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn, 4)
+    return signs.transpose(1,2).to(dtype=torch.int8,memory_format=torch.contiguous_format).view(B,na)
 
 def array_to_string(signs):  # int8 tensor to long tensor
     B = signs.shape[0]
-    signs1 = torch.zeros((B, 4, nn_pad), device=device, dtype=torch.int64)
-    signs1[:,:,:nn] = signs.view(B,4,nn)
-    # Convert -1 → 0, +1 → 1
+    signs1 = signs.view(B,4,nn).transpose(1,2).to(dtype=torch.int64)
     signs1 += 1
     signs1 >>= 1
     return (signs1.view(B, string_length, config.stacking) << bit_positions).sum(dim=2)

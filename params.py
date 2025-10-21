@@ -26,7 +26,7 @@ n_layer = 4
 n_embd = 64
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
-stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+stacking = 4 # 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
@@ -59,7 +59,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -132,8 +132,8 @@ class ModelConfig:
         self.__dict__.update(kwargs)
         # Automatically computed values
         if isinstance(self.stacking, int):
-            self.block_size = 4 * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
-            self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
+            self.block_size = nn # 4 * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
+            self.vocab_size = 1 << 4 # self.stacking  # vocab_size is all the possible characters
     def update(self):
         if is_sweep:
             import wandb
