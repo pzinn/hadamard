@@ -646,13 +646,11 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    #scores = score(arrays)  # Recompute scores in parallel -- for accuracy reasons, safer
-    # step A: demultiply data
+    # step A: improvement
     start_timer = timer()
     improve3(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
-    # step B: main improvement
     start_timer = timer()
     improve1p(arrays, scores)
     scores = score(arrays)  # don't trust improve1p
@@ -665,7 +663,11 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve2
     if debugging:
         print(f"improve2 time: {timer() - start_timer}")
-    # step C: rotate the arrays to a standard form
+    start_timer = timer()
+    improve3(arrays, scores)
+    if debugging:
+        print(f"improve3 time: {timer() - start_timer}")
+    # step B: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)  # do automorphisms
     derotate(arrays)  # then the rest
