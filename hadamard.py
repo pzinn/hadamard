@@ -391,28 +391,34 @@ def improve3(arrays, scores):
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
-    ff = f*f.conj()
-    ffs = ff.sum(dim=1) + fx
     a = arrays.view(B, nm, nn)
     for j in range(nm):
         cnt.zero_()
-        ffs1 = ffs - ff[:,j]
+        ff = f*f.conj()
+        ffs1 = ff.sum(dim=1) + fx - ff[:,j]
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
             continue
-        x = a[inds].clone()
-        h = torch.sqrt(1-ffs1[inds])
-        for t in range(1000):  # ?
-            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-            x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
-            x[:, j] = -1
-            x[:, j].masked_fill_(x2 > 0, 1)
-            new_scores = score(x)  # TODO better?
+        h = f[inds,j] * torch.sqrt((1-ffs1[inds])/ff[inds,j])
+        fmod = torch.empty((M,nn2+1), device=device, dtype=complex_dtype)
+        x = torch.empty((M,nn), device=device, dtype=torch.int8)
+        x2 = torch.empty((M,nn), device=device, dtype=real_dtype)
+        for t in range(100*n):  # ?
+            torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
+            x.fill_(-1)
+            x.masked_fill_(x2 > 0, 1)
+            torch.fft.rfft(x, dim=1, out=fmod)
+            fmod *= cst
+            s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
+            new_scores = s[:,0]+2*s[:,1:].sum(dim=1)
             improved = new_scores < scores[inds]
-            a[inds[improved],j] = x[improved,j]
-            scores[inds[improved]] = new_scores[improved]
-            cnt += improved.sum()
+            improved_inds = inds[improved]
+            a[improved_inds,j] = x[improved]
+            scores[improved_inds] = new_scores[improved]
+            f[improved_inds,j] = fmod[improved]
+            cnt += improved_inds.shape[0]
+            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
         print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 """
