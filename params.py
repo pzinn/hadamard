@@ -166,7 +166,8 @@ def rotate(array0):
     array = arrayx.view(-1,nm,nn)  # can do batches too (not currently used)
     rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
     # automorphisms
-    array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
+    #array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
+    array.copy_(array0)
     # symmetry: random permute
     array.copy_(array[:,perms[rnd[0]]])
     # symmetry: random rotation/flip

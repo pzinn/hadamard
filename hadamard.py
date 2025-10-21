@@ -618,7 +618,7 @@ def parallel_improve(arrays, scores, gens):
         print(f"improve3 time: {timer() - start_timer}")
     # step B: rotate the arrays to a standard form
     start_timer = timer()
-    arrays = find_aut(arrays)
+    #arrays = find_aut(arrays)
     derotate(arrays, scores)
     if debugging:
         print(f"derotate time: {timer() - start_timer}")
