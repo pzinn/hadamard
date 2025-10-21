@@ -205,12 +205,12 @@ def evaluate(sample):
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:,:,:nn].to(dtype=torch.int8).view(B,na)
+    return signs[:,:,:nn].to(dtype=torch.int8).view(B, na)
 
 def array_to_string(signs):  # int8 tensor to long tensor
     B = signs.shape[0]
-    signs1 = torch.zeros((B, 4, nn_pad), device=device, dtype=torch.int64)
-    signs1[:,:,:nn] = signs.view(B,nm,nn)
+    signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int64)
+    signs1[:,:,:nn] = signs.view(B, nm, nn)
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1

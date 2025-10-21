@@ -128,7 +128,7 @@ def record_stats(arrays, scores, gens, prefix=""):
 
 cst = 1 / math.sqrt(n)
 
-fx = torch.tensor([0.0381356,0.479851,0.059463,0.231382,0.111233,0.373705,0.0884201,0.353283,0.339076,0.131191,0.0717628,0.393197,0.0526708,0.176228,0.548869,0.141959,0.201827,0.225109,0.0527215,0.510939,0.0900806,0.0684812,0.405004,0.210722,0.553078,0.447543,0.0780186,0.49006,0.194283,0.275773,0.275773,0.194283,0.49006,0.0780186,0.447543,0.553078,0.210722,0.405004,0.0684812,0.0900806,0.510939,0.0527215,0.225109,0.201827,0.141959,0.548869,0.176228,0.0526708,0.393197,0.0717628,0.131191,0.339076,0.353283,0.0884201,0.373705,0.111233,0.231382,0.059463,0.479851], device=device, dtype=real_dtype)  # example for n=236
+fx = torch.tensor([0.0381356,0.479851,0.059463,0.231382,0.111233,0.373705,0.0884201,0.353283,0.339076,0.131191,0.0717628,0.393197,0.0526708,0.176228,0.548869,0.141959,0.201827,0.225109,0.0527215,0.510939,0.0900806,0.0684812,0.405004,0.210722,0.553078,0.447543,0.0780186,0.49006,0.194283,0.275773], device=device, dtype=real_dtype)  # example for n=236
 
 def init_score_function():
     global score, score_cpu, score_fft, fft
@@ -555,7 +555,7 @@ def derotate(arrays, scores):
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
     # 2nd phase: permute the 4xnn parts
     # start with identity permutation for each batch
-    perm = torch.arange(m, device=device).expand(B, m).clone()
+    perm = torch.arange(nm, device=device).expand(B, nm).clone()
     # stable sort by last key first, then previous..., up to first column
     for k in range(nn):
         key = a[:, :, k]                 # (B, m)

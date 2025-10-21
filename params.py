@@ -2,7 +2,8 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 140  # size of matrix
+n = 236  # size of matrix
+nn = n // 4  # size of basic block
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -12,31 +13,31 @@ score_function = 'fft log determinant'
 # score_function = 'one'
 
 # training parameters
-sample_size = 400_000
-training_size = sample_size//10  # must be > test_set_size
-learning_rate = 2e-3
+sample_size = 5_000_000
+training_size = 500_000  # must be > test_set_size
+learning_rate = 5e-4
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
-max_iterations = 30
-training_steps = 100_000  # will be adjusted dynamically (to be less than that)
+max_iterations = 200
+training_steps = 250_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 4
-n_embd = 64
+n_layer = 6
+n_embd = 128
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
-temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+temperature = 1 # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
-sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
-score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = 1024  # must be less than training_size, no more than 10% ideally
-num_workers = 6  # for cpu parallelisation
+sample_batch_size = sample_size // 100  # for sampling. must be a divisor of sample_size
+score_batch_size = 1_000_000  # for scoring/improving. None means no batching
+test_set_size = 4096  # must be less than training_size, no more than 10% ideally
+num_workers = 4  # for cpu parallelisation
 
-resume = False  # whether to resume a previous run
+resume = True  # whether to resume a previous run
 # resume = True
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
@@ -59,7 +60,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
