@@ -160,7 +160,7 @@ import torch
 import math
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(3)) if k[p[0]]==k[0] and k[p[1]]==k[1] and k[p[2]]==k[2]))
+perms = torch.tensor(list(p for p in permutations(range(3)) if [k[i] for i in p]==k[:3]))
 # Prepare automorphisms
 aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds1 = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
