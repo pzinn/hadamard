@@ -34,7 +34,7 @@ gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 # less important parameters
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = 1024  # must be less than training_size, no more than 10% ideally
+test_set_size = 4096  # must be less than training_size, no more than 10% ideally
 num_workers = 6  # for cpu parallelisation
 
 resume = False  # whether to resume a previous run
