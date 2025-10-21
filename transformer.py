@@ -254,12 +254,10 @@ def train(data, **kwargs):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
-    test_set_size = config.test_set_size
+    data_len = len(data)
+    test_set_size = min(config.test_set_size, data_len//2)
     vocab_size = config.vocab_size  # should one check that this is correct?
     training_batch_size = config.training_batch_size
-    data_len = len(data)
-    if test_set_size >= data_len:
-        raise SystemExit("training_size must be greater than test_set_size")
     print(f"number of examples in the dataset: {data_len}")
     print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
