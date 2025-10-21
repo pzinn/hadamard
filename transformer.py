@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nn2, device, config, resume_training, rotate
+from params import na, nn, nn2, nm, device, config, resume_training, rotate
 import logger
 
 # -----------------------------------------------------------------------------
@@ -146,7 +146,7 @@ def init_model():
     # stuff for coding/decoding arrays
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
-    segment_string_length = string_length // 4
+    segment_string_length = string_length // nm
     nn_pad = segment_string_length * config.stacking
 
 def load_model():
@@ -204,13 +204,13 @@ def evaluate(sample):
 @torch.no_grad()
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
-    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, 4, nn_pad)
+    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
     return signs[:,:,:nn].to(dtype=torch.int8).view(B,na)
 
 def array_to_string(signs):  # int8 tensor to long tensor
     B = signs.shape[0]
     signs1 = torch.zeros((B, 4, nn_pad), device=device, dtype=torch.int64)
-    signs1[:,:,:nn] = signs.view(B,4,nn)
+    signs1[:,:,:nn] = signs.view(B,nm,nn)
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1

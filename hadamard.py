@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds
 import logger
 import transformer
 # logging/debugging
@@ -128,16 +128,17 @@ def record_stats(arrays, scores, gens, prefix=""):
 
 cst = 1 / math.sqrt(n)
 
+fx = torch.tensor([0.0381356,0.479851,0.059463,0.231382,0.111233,0.373705,0.0884201,0.353283,0.339076,0.131191,0.0717628,0.393197,0.0526708,0.176228,0.548869,0.141959,0.201827,0.225109,0.0527215,0.510939,0.0900806,0.0684812,0.405004,0.210722,0.553078,0.447543,0.0780186,0.49006,0.194283,0.275773,0.275773,0.194283,0.49006,0.0780186,0.447543,0.553078,0.210722,0.405004,0.0684812,0.0900806,0.510939,0.0527215,0.225109,0.201827,0.141959,0.548869,0.176228,0.0526708,0.393197,0.0717628,0.131191,0.339076,0.353283,0.0884201,0.373705,0.111233,0.231382,0.059463,0.479851], device=device, dtype=real_dtype)  # example for n=236
+
 def init_score_function():
     global score, score_cpu, score_fft, fft
     if config.score_function == 'fft log determinant':
-        nm=4
         @torch.inference_mode()
         def fft(m):
             return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
         @torch.inference_mode()
         def score_fft(f):  # score in terms of precomputed fft
-            s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+            s = -2*torch.log(fx+torch.real(f*f.conj()).sum(dim=1))
             return s[:,0]+2*s[:,1:].sum(dim=1)
         @torch.inference_mode()
         def score(m):
@@ -195,8 +196,8 @@ rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
 wrng = 2 * cst * w ** torch.outer(rng0,rng)
 wrng1 = -torch.conj(wrng)
-wrng_all = torch.zeros((na,4*(nn2+1)), device=device, dtype=complex_dtype)
-for i in range(4):
+wrng_all = torch.zeros((na,nm*(nn2+1)), device=device, dtype=complex_dtype)
+for i in range(nm):
     wrng_all[i*nn:(i+1)*nn,i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
 k = 9
@@ -213,9 +214,9 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
         cur_rows = active_rows
         while True:
             f = fft(arrays[cur_rows])  # better than flip updating for accuracy
-            fl = f.view(-1,4*(nn2+1))
+            fl = f.view(-1,nm*(nn2+1))
             fmod = torch.empty_like(f)
-            flmod = fmod.view(-1, 4*(nn2+1))
+            flmod = fmod.view(-1, nm*(nn2+1))
             for j in range(na):
                 torch.mul(arrays[cur_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
                 flmod.add_(fl)
@@ -232,7 +233,7 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
         _, indsk = torch.topk(scores1[active_rows], k, dim=1, sorted=False, largest=False)
         cur=torch.gather(arrays[active_rows], 1, indsk)
         f = fft(arrays[active_rows])
-        fl = f.view(M, 4*(nn2+1))
+        fl = f.view(M, nm*(nn2+1))
         mask = torch.zeros((M,), device=device, dtype=torch.bool)
         for i in range(1,1<<k):
             j = (i & -i).bit_length() - 1  # index of bit to flip
@@ -337,9 +338,9 @@ def improve2(x,scores):
     B=x.shape[0]
     # precompute fft
     f = fft(x)
-    fl = f.view(B,4*(nn2+1))
+    fl = f.view(B,nm*(nn2+1))
     fmod = torch.empty_like(f)
-    flmod = fmod.view(B,4*(nn2+1))
+    flmod = fmod.view(B,nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     for k in range(2,10):
         cnt.zero_()
@@ -391,9 +392,9 @@ def improve3(arrays, scores):
     B = arrays.shape[0]
     f = fft(arrays)
     ff = f*f.conj()
-    ffs = ff.sum(dim=1)
-    a = arrays.view(B, 4, nn)
-    for j in range(4):
+    ffs = ff.sum(dim=1) + fx
+    a = arrays.view(B, nm, nn)
+    for j in range(nm):
         cnt.zero_()
         ffs1 = ffs - ff[:,j]
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
@@ -537,10 +538,9 @@ def derotate(arrays, scores):
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
-    # 1st phase: cyclically permute/reflect/negate the 4*nn
+    # 1st phase: cyclically permute/reflect/negate the nm*nn
     B = arrays.shape[0]
-    m=4
-    a=arrays.view(B,m,nn)
+    a=arrays.view(B,nm,nn)
     fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
     sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
@@ -575,12 +575,12 @@ aut_inds_gpu = aut_inds.to(device=device)
 
 def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
-    arrays04 = arrays0.view(B,4,nn)
+    arrays04 = arrays0.view(B,nm,nn)
     arrays = torch.empty_like(arrays0)
-    arrays4 = arrays.view(B,4,nn)
+    arrays4 = arrays.view(B,nm,nn)
     # automorphism
     inds = aut_inds_gpu[idx]
-    inds_expanded = inds.unsqueeze(1).expand(-1, 4, -1)
+    inds_expanded = inds.unsqueeze(1).expand(-1, nm, -1)
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
