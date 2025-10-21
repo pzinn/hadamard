@@ -96,7 +96,8 @@ class Transformer(torch.nn.Module):
 
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = torch.nn.Embedding(config.block_size, config.n_embd),
+            wpe_4 = torch.nn.Embedding(4, config.n_embd),
+            wpe_nn = torch.nn.Embedding(nn_pad, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -115,8 +116,9 @@ class Transformer(torch.nn.Module):
         t = idx.shape[1] + 1
         pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x = pos_emb.expand(b, t, config.n_embd).clone()
+        pos_emb_4 = self.transformer.wpe_4(pos // nn_pad)  # position embeddings of shape (1, t, n_embd)
+        pos_emb_nn = self.transformer.wpe_nn(pos % nn_pad)  # position embeddings of shape (1, t, n_embd)
+        x = (pos_emb_4+pos_emb_nn).expand(b, t, config.n_embd).clone()
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
         x[:,1:,:] += tok_emb
         for block in self.transformer.h:
@@ -138,16 +140,17 @@ def init_model():
     global bit_positions
     global string_length
     global nn_pad
-    model = Transformer(config)
-    model.to(device)
-    model.need_reload = True
-    model = torch.compile(model)
-    model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
     string_length = config.block_size  # TODO REMOVE
     segment_string_length = string_length // 4
     nn_pad = segment_string_length * config.stacking
+    #
+    model = Transformer(config)
+    model.to(device)
+    model.need_reload = True
+    model = torch.compile(model)
+    model_path = os.path.join(params.work_dir, "model.pt")
 
 def load_model():
     if model.need_reload:
