@@ -138,6 +138,7 @@ def init_model():
     global bit_positions
     global string_length
     global nn_pad
+    global segment_string_length
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -165,31 +166,34 @@ def save_model():
 
 
 @torch.no_grad()
-def generate(idx, max_new_tokens, do_sample=False, top_k=None):
+def generate(idx, do_sample=False, top_k=None):
     """
     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
     the sequence max_new_tokens times, feeding the predictions back into the model each time.
     Most likely you'll want to make sure to be in model.eval() mode of operation for this.
     """
-    block_size = model.get_block_size()
-    for i in range(max_new_tokens):
-        idx_cond = idx[:, :i]
-        # forward the model to get the logits for the index in the sequence
-        logits, _ = model(idx_cond)
-        # pluck the logits at the final step and scale by desired temperature
-        logits = logits[:, -1, :] / config.temperature
-        # optionally crop the logits to only the top k options
-        if top_k is not None:
-            v, _ = torch.topk(logits, top_k)
-            logits[logits < v[:, [-1]]] = -float('Inf')
-        # apply softmax to convert logits to (normalized) probabilities
-        probs = F.softmax(logits, dim=-1)
-        # either sample from the distribution or take the most likely element
-        if do_sample:
-            idx[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-        else:
-            _, idx[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
-
+    #block_size = model.get_block_size()
+    for j in range(4):
+        for i in range(j*segment_string_length,string_length):
+            idx_cond = idx[:, :i]
+            # forward the model to get the logits for the index in the sequence
+            logits, _ = model(idx_cond)
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / config.temperature
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # either sample from the distribution or take the most likely element
+            if do_sample:
+                idx[:, i] = torch.multinomial(probs, num_samples=1).squeeze(1)
+            else:
+                _, idx[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
+        # !
+        if j<3:
+            idx[:, j*segment_string_length:(j+1)*segment_string_length] = idx[i, 3*segment_string_length:]
 
 @torch.inference_mode()
 def evaluate(sample):
@@ -365,7 +369,7 @@ if True: # not device.startswith('cuda'):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
             X.zero_()
-            generate(X, config.block_size, do_sample=True)
+            generate(X, do_sample=True)
             arrays_cpu[i:j] = string_to_array(X)
         return arrays_cpu
 else:
