@@ -611,11 +611,11 @@ def parallel_improve(arrays, scores, gens):
         torch.cuda.empty_cache()  # Free memory
     # step A: fix k
     fixk(arrays)
+    # step B: main improvement
     start_timer = timer()
     improve3(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
-    # step B: main improvement
     start_timer = timer()
     for _ in range(config.num_improve):
         improve2c(arrays, scores)
@@ -628,6 +628,10 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve1
     if debugging:
         print(f"improve1 time: {timer() - start_timer}")
+    start_timer = timer()
+    improve3(arrays, scores)
+    if debugging:
+        print(f"improve3 time: {timer() - start_timer}")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)  # do automorphisms
