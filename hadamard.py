@@ -210,7 +210,6 @@ for i in range(nm):
 k = 9
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
-    start_timer = timer()
     print(f"improve1p ", end=''); sys.stdout.flush()
     B=arrays.shape[0]
     active_rows = torch.nonzero(scores>=eps, as_tuple=True)[0]  # don't bother with H-matrices
@@ -221,7 +220,7 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
         cur_rows = active_rows
         while True:
             f = fft(arrays[cur_rows])  # better than flip updating for accuracy
-            fl = f.view(-1,nm*(nn2+1))
+            fl = f.view(-1, nm*(nn2+1))
             fmod = torch.empty_like(f)
             flmod = fmod.view(-1, nm*(nn2+1))
             for j in range(na):
@@ -254,7 +253,6 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
             scores[improved_rows] = new_scores[improved]
             arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
         if not mask.any():
-            print(f"improve1p time: {timer() - start_timer}")
             break
         active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
 
@@ -342,12 +340,13 @@ def improve2(x,scores):
 # greedy random k-bit flip
 @torch.inference_mode()
 def improve2(x,scores):
+    print(f"improve2 ", end=''); sys.stdout.flush()
     B=x.shape[0]
     # precompute fft
     f = fft(x)
-    fl = f.view(B,nm*(nn2+1))
+    fl = f.view(B, nm*(nn2+1))
     fmod = torch.empty_like(f)
-    flmod = fmod.view(B,nm*(nn2+1))
+    flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     for k in range(2,10):
         cnt.zero_()
@@ -554,7 +553,7 @@ def derotate(arrays, scores):
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
     # 1st phase: cyclically permute/reflect/negate the nm*nn
     B = arrays.shape[0]
-    a=arrays.view(B,nm,nn)
+    a=arrays.view(B, nm, nn)
     fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
     sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
@@ -567,7 +566,7 @@ def derotate(arrays, scores):
     # negate if the chosen scalar product is > 0
     chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
     a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    # 2nd phase: permute the 4xnn parts
+    # 2nd phase: permute the nmxnn parts
     # start with identity permutation for each batch
     perm = torch.arange(nm, device=device).expand(B, nm).clone()
     # stable sort by last key first, then previous..., up to first column
@@ -590,12 +589,12 @@ aut_inds_gpu = aut_inds.to(device=device)
 @torch.inference_mode()
 def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
-    arrays04 = arrays0.view(B,nm,nn)
+    arrays04 = arrays0.view(B, nm, nn)
     arrays = torch.empty_like(arrays0)
-    arrays4 = arrays.view(B,nm,nn)
+    arrays4 = arrays.view(B, nm, nn)
     # automorphism
     inds = aut_inds_gpu[idx]
-    inds_expanded = inds.unsqueeze(1).expand(-1, nm, -1)
+    inds_expanded = inds.unsqueeze(1).expand(B, nm, nn)
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
