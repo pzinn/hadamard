@@ -128,7 +128,14 @@ def record_stats(arrays, scores, gens, prefix=""):
 
 cst = 1 / math.sqrt(n)
 
-fx = torch.tensor([0.0381356,0.479851,0.059463,0.231382,0.111233,0.373705,0.0884201,0.353283,0.339076,0.131191,0.0717628,0.393197,0.0526708,0.176228,0.548869,0.141959,0.201827,0.225109,0.0527215,0.510939,0.0900806,0.0684812,0.405004,0.210722,0.553078,0.447543,0.0780186,0.49006,0.194283,0.275773], device=device, dtype=real_dtype)  # example for n=236
+#fx = torch.tensor([0.0381356,0.479851,0.059463,0.231382,0.111233,0.373705,0.0884201,0.353283,0.339076,0.131191,0.0717628,0.393197,0.0526708,0.176228,0.548869,0.141959,0.201827,0.225109,0.0527215,0.510939,0.0900806,0.0684812,0.405004,0.210722,0.553078,0.447543,0.0780186,0.49006,0.194283,0.275773], device=device, dtype=real_dtype)  # example for n=236
+
+# if nn is prime = 3 [4], here's the Legendre choice:
+assert(nn % 4 == 3)
+fx = torch.full((nn2+1,), nn+1, device=device, dtype=real_dtype)
+fx[0] = 1.
+fx /= n
+# TODO prime = 1 [4] is barely more complicated
 
 def init_score_function():
     global score, score_cpu, score_fft, fft
@@ -539,6 +546,7 @@ vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter,
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
+@torch.inference_mode()
 def derotate(arrays, scores):
     if params.test_score:
         scores1 = score(arrays)
@@ -579,6 +587,7 @@ def derotate(arrays, scores):
 aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)  # variant of aut that stops at nn2
 aut_inds_gpu = aut_inds.to(device=device)
 
+@torch.inference_mode()
 def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B,nm,nn)
@@ -590,6 +599,7 @@ def apply_aut(idx,arrays0):
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
+@torch.inference_mode()
 def find_aut(arrays):
     f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
