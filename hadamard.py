@@ -481,35 +481,46 @@ def improve3(arrays, scores):
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B=arrays.shape[0]
     f = fft(unfold(arrays))
-    ff = f*f.conj()
-    ffs = ff.sum(dim=1)
     for j in range(4):
+        cnt.zero_()
         r1=j*nn2
         r2=(j+1)*nn2 if j<3 else na
-        cnt.zero_()
-        ffs1 = ffs - ff[:,j]
+        ff = f*f.conj()
+        ffs1 = ff.sum(dim=1) - ff[:,j]
+        # the ambitious version
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
             continue
-        x = arrays[inds].clone()
-        h = torch.sqrt(1-ffs1[inds])
-        for t in range(1000):  # ?
+        h = f[inds,j] * torch.sqrt((1-ffs1[inds])/ff[inds,j])
+        fmod = torch.empty((M,nn2+1), device=device, dtype=complex_dtype)
+        x = torch.empty((M,nn), device=device, dtype=torch.int8)
+        x2 = torch.empty((M,nn), device=device, dtype=real_dtype)
+        for t in range(100*n):  # ?
+            torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
+            x.fill_(-1)
             if j==3:
-                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
-                x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
+                topk = torch.topk(x2, k[j], dim=1).indices
+                x.scatter_(1, topk, 1)
             else:
-                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
-                hh = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
-                x2 = hh[:,0:1]*hh[:,1:nn2+1]
-            topk = torch.topk(x2, k[j], dim=1).indices
-            x[:,r1:r2] = -1
-            x[:,r1:r2].scatter_(1, topk, 1)
-            new_scores = score(x)  # TODO better?
+                topk = torch.topk(x2[:,0:1]*x2[:,1:nn2+1], k[j], dim=1).indices
+                x.scatter_(1, topk+1, 1)  # +1 because of initial 1
+                x.scatter_(1, nn-1-topk, 1)  # the mirror image
+            torch.fft.rfft(x, dim=1, out=fmod)
+            fmod *= cst
+            s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
+            new_scores = s[:,0]+2*s[:,1:].sum(dim=1)
             improved = new_scores < scores[inds]
-            arrays[inds[improved]] = x[improved]
+            improved_inds = inds[improved]
             scores[inds[improved]] = new_scores[improved]
-            cnt += improved.sum()
+            f[improved_inds,j] = fmod[improved]
+            cnt += improved_inds.shape[0]
+            if j==3:
+                arrays[inds[improved],r1:r2] = x[improved]
+                h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+            else:
+                arrays[inds[improved],r1:r2] = x[improved,1:nn2+1]
+                h[:,1:] *= 2*torch.randint(2, (M,nn2), device=device)-1
         print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 def fixk(arrays):  # fix k's. shouldn't happen too often
