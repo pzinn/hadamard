@@ -87,7 +87,7 @@ try:
 except FileNotFoundError:
     print(f"Error: File '{filename}' not found.")
     sys.exit(1)
-arrays = torch.tensor(arrays, dtype=score_type, device=device)  # Convert to tensor
+arrays = torch.tensor(arrays, dtype=torch.int8, device=device)  # Convert to tensor
 len0 = arrays.shape[0]
 arrays1 = find_aut(arrays)
 derotate(arrays1)

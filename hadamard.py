@@ -604,22 +604,23 @@ def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     # step A: improvement
-    start_timer = timer()
-    improve3(arrays, scores)
-    if debugging:
-        print(f"improve3 time: {timer() - start_timer}")
-    start_timer = timer()
-    improve1p(arrays, scores)
-    if debugging:
-        print(f"improve1p time: {timer() - start_timer}")
-    scores = score(arrays)  # don't trust improve1p
-    #
-    start_timer = timer()
     for _ in range(config.num_improve):
+        start_timer = timer()
+        improve3(arrays, scores)
+        if debugging:
+            print(f"improve3 time: {timer() - start_timer}")
+        #
+        start_timer = timer()
+        improve1p(arrays, scores)
+        if debugging:
+            print(f"improve1p time: {timer() - start_timer}")
+        scores = score(arrays)  # don't trust improve1p
+        #
+        start_timer = timer()
         improve2(arrays, scores)
+        if debugging:
+            print(f"improve2 time: {timer() - start_timer}")
         scores = score(arrays)  # don't trust improve2
-    if debugging:
-        print(f"improve2 time: {timer() - start_timer}")
     start_timer = timer()
     improve3(arrays, scores)
     if debugging:
