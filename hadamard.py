@@ -51,7 +51,10 @@ def record_stats(arrays, scores, gens, prefix=""):
     if B == 0:
         return
     # compute autocorrelation by MC
+    mc_size = 1000
+    s = (arrays[torch.randint(B,(mc_size,))] * arrays[torch.randint(B,(mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)
     """
+    # proper/slow way: REDO ONE DAY
     mc_size = 1000
     perms = params.perms.tolist()
     s = torch.tensor(0., device=arrays.device)
@@ -75,11 +78,10 @@ def record_stats(arrays, scores, gens, prefix=""):
             if sss>ss:
                 ss=sss
         s += ss
-    s /= (mc_size * na)
+    s /= mc_size * na
+    """
     s=s.item()
     print(f"Correlation: {s}")
-    """
-    s=0
 
     # now scores
     # if debugging:
