@@ -201,6 +201,7 @@ for i in range(nm):
     wrng_all[i*nn:(i+1)*nn,i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
 k = 9
+gray_code = [ (i & -i).bit_length() - 1 for i in range(1,1<<k) ]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
     print(f"improve1p ", end=''); sys.stdout.flush()
@@ -234,17 +235,18 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
         f = fft(arrays[active_rows])
         fl = f.view(M, nm*(nn2+1))
         mask = torch.zeros((M,), device=device, dtype=torch.bool)
-        for i in range(1,1<<k):
-            j = (i & -i).bit_length() - 1  # index of bit to flip
+        for j in gray_code:
             inds = indsk[:,j]  # actual index for each sample
             fl += cur[:,j].unsqueeze(1) * wrng_all[inds]
             cur[:,j] *= -1  # need to keep track of these two
             new_scores = score_fft(f)
             improved = new_scores < scores[active_rows]
-            mask[improved] = True  # these will get saved for next round
-            improved_rows = active_rows[improved]
-            scores[improved_rows] = new_scores[improved]
-            arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+            if improved.any():
+                mask[improved] = True  # these will get saved for next round
+                improved_rows = active_rows[improved]
+                scores[improved_rows] = new_scores[improved]
+                #arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+                arrays.index_put_((improved_rows.unsqueeze(1).expand(-1,k), indsk[improved]), cur[improved])
         if not mask.any():
             break
         active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
