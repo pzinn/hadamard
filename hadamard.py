@@ -574,6 +574,7 @@ vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter,
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
+@torch.inference_mode()
 def derotate(arrays):
     if params.test_score:
         scores1 = score(arrays)
@@ -615,6 +616,7 @@ aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device
 aut_inds1_gpu = aut_inds1.to(device=device)
 aut_inds3_gpu = aut_inds3.to(device=device)
 
+@torch.inference_mode()
 def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
     arrays03=arrays0[:,:3*nn2].view(-1,3,nn2)
@@ -638,7 +640,7 @@ def apply_aut(idx,arrays0):
 
     return arrays
 
-
+@torch.inference_mode()
 def find_aut(arrays):
     f = fft(unfold(arrays))
     f = f.abs().sum(dim=1)  # (B,nn2+1)
