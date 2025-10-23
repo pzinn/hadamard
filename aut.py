@@ -48,12 +48,17 @@ except FileNotFoundError:
     sys.exit(1)
 arrays = torch.tensor(arrays, dtype=torch.int8, device=device)  # Convert to tensor
 B = arrays.shape[0]
+print(f"number of data: {B}")
 arrays = arrays.view(B,nm,nn)
-for j in range(3):
-    for k in range(2*nn):
-        arrays1 = torch.roll(arrays[:,j] if k < nn else torch.flip(arrays[:,j], (1,)), shifts=k, dims=1)
+for k in range(2*nn):
+    arrays1 = torch.roll(arrays if k < nn else torch.flip(arrays, (2,)), shifts=k, dims=2)
+    flag = False
+    for j in range(3):
         for jj in range(j if k>0 else j+1,4):
-            mask1 = (arrays1 == arrays[:,jj]).all(dim=1)
-            mask2 = (-arrays1 == arrays[:,jj]).all(dim=1)
+            mask1 = (arrays1[:,j] == arrays[:,jj]).all(dim=1)
+            mask2 = (-arrays1[:,j] == arrays[:,jj]).all(dim=1)
             if mask1.any() or mask2.any():
-                print(j,k,jj,mask1.sum(),mask2.sum())
+                flag=True
+                print(f"{j} {jj} {k} : {mask1.sum().item()} {mask2.sum().item()}", end='\t')
+    if flag:
+        print("")
