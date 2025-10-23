@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# a script to count matrices up to all symmetries. takes input from stdin
+# a script to count matrices up to all symmetries
 
 import torch
 import math
