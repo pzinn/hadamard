@@ -4,7 +4,9 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft
+
+from pt import optimise_parallel_tempering
 import logger
 import transformer
 # logging/debugging
@@ -128,26 +130,6 @@ def record_stats(arrays, scores, gens, prefix=""):
     if prefix:
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
-cst = 1 / math.sqrt(n)
-
-def init_score_function():
-    global score, score_cpu, score_fft, fft
-    if config.score_function == 'fft log determinant':
-        @torch.inference_mode()
-        def fft(m):
-            return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
-        @torch.inference_mode()
-        def score_fft(f):  # score in terms of precomputed fft
-            s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
-            return s[:,0]+2*s[:,1:].sum(dim=1)
-        @torch.inference_mode()
-        def score(m):
-            return score_fft(fft(m))
-        def score_cpu(m):
-            return score_fft(fft(m))
-    else:
-        raise Exception('unknown score_function')
-
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats. also generates random data at gen 0
 def parallel_score(arrays):
@@ -191,6 +173,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
     return arrays, scores
 
 # precompute roots of unity for fft delta
+cst = 1 / math.sqrt(n)
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
@@ -605,29 +588,39 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step A: improvement
+    # step A: parallel tempering
+    start_timer = timer()
+    optimise_parallel_tempering(arrays, scores)
+    if debugging:
+        print(f"pt time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens)
+    # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
         improve3(arrays, scores)
         if debugging:
             print(f"improve3 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens)
         #
         start_timer = timer()
         improve1p(arrays, scores)
         if debugging:
             print(f"improve1p time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens)
         scores = score(arrays)  # don't trust improve1p
         #
         start_timer = timer()
         improve2(arrays, scores)
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens)
         scores = score(arrays)  # don't trust improve2
     start_timer = timer()
     improve3(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
-    # step B: rotate the arrays to a standard form
+        record_stats(arrays, scores, gens)
+    # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)
     derotate(arrays, scores)
@@ -680,9 +673,6 @@ def main():
     logger.init_logging()
     record_stats.has_run = False  # we could leave it undefined, but not in case of sweep
     record_stats.hada_tensor = torch.empty((0,na), dtype=torch.int8)  # empty the hadamard list
-
-    # scoring
-    init_score_function()
 
     # initialise transformer
     transformer.init_model()
@@ -749,7 +739,7 @@ def main():
             max_steps = int(config.training_steps*coeff)
             eval_freq = int(500*coeff)
             start_timer = timer()
-            transformer.train(arrays, score=score_cpu if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
+            transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
@@ -762,8 +752,8 @@ def main():
         new_arrays, new_scores = batch_score(new_arrays)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
-        arrays = torch.cat((arrays, new_arrays), dim=0)
-        scores = torch.cat((scores, new_scores), dim=0)
+        arrays = torch.cat((new_arrays, arrays), dim=0)
+        scores = torch.cat((new_scores, scores), dim=0)
         gens = torch.cat((gens, new_gens), dim=0)
         if debugging:
             print(f"sampling time: {timer() - start_timer}")

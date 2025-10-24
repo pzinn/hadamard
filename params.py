@@ -176,3 +176,13 @@ def rotate(array0):
     #
     return arrayx
 
+cst = 1 / math.sqrt(n)
+def fft(m):
+    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
+@torch.inference_mode()
+def score_fft(f):  # score in terms of precomputed fft
+    s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+    return s[:,0]+2*s[:,1:].sum(dim=1)
+def score(m):
+    return score_fft(fft(m))
+
