@@ -2,7 +2,7 @@ import torch
 from params import na, score, device
 
 # parallel tempering
-invT = torch.logspace(0, 2.5, 10, device=device)  # inverse temperatures for tempering TODO choose wisely/autotune
+invT = torch.logspace(2.5, 0, 10, device=device)  # inverse temperatures for tempering TODO choose wisely/autotune
 nT = len(invT)
 
 #torch.set_printoptions(threshold=nT,sci_mode=False)
@@ -61,12 +61,12 @@ def optimise_parallel_tempering(x, scores, iterations=5000, swap_interval=50):
     x = x.view(nT, BperT, na)
     acc_mavg = 0.0
     for t in range(iterations):
-        k = 1 + (t // 100) % 3  # TODO fix
+        k = 1 + t % 3  # TODO fix
         # --- local search per temperature ---
         improve_T(x, scores, k=k)
         #print((scores-score(x).view(nT,BperT)).abs().max())  # TESTING
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores)
-            print(f"{t:5d}: swap_acc≈{acc:.3f} mean score={scores.mean()} {scores.mean(1)}")
+            print(f"{t:5d}: swap_acc≈{acc:.3f} mean score={scores.mean()} {scores.mean(1).tolist()}")
 
