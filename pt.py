@@ -27,7 +27,7 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     scores[accept] = scores_prop[accept]
 
 @torch.no_grad()
-def attempt_swaps(x, scores):
+def attempt_swaps(x, scores, gens):
     """
     x: (nT, BperT, n)
     scores: (nT, BperT)
@@ -47,18 +47,22 @@ def attempt_swaps(x, scores):
             swap_mask = accept[:, None]            # (BperT,1)
             x1, x2 = x[i].clone(), x[i+1].clone()
             s1, s2 = E1.clone(), E2.clone()
+            g1, g2 = gens[i].clone(), gens[i+1].clone()
             x[i] = torch.where(swap_mask, x2, x1)
             x[i+1] = torch.where(swap_mask, x1, x2)
             scores[i] = torch.where(accept, s2, s1)
             scores[i+1] = torch.where(accept, s1, s2)
+            gens[i] = torch.where(accept, g2, g1)
+            gens[i+1] = torch.where(accept, g1, g2)
     acc_rate = accepted.float() / total
     return acc_rate
 
-def optimise_parallel_tempering(x, scores, iterations=5000, swap_interval=50):
+def optimise_parallel_tempering(x, scores, gens, iterations=5000, swap_interval=50):
     B = x.shape[0]
     BperT = B // nT  # should divide please
-    scores = scores.view(nT, BperT)
     x = x.view(nT, BperT, na)
+    scores = scores.view(nT, BperT)
+    gens = gens.view(nT, BperT)
     acc_mavg = 0.0
     for t in range(iterations):
         k = 1 + t % 3  # TODO fix
@@ -67,6 +71,6 @@ def optimise_parallel_tempering(x, scores, iterations=5000, swap_interval=50):
         #print((scores-score(x).view(nT,BperT)).abs().max())  # TESTING
         # --- replica swaps ---
         if t % swap_interval == 0:
-            acc = attempt_swaps(x, scores)
+            acc = attempt_swaps(x, scores, gens)
             print(f"{t:5d}: swap_acc≈{acc:.3f} mean score={scores.mean()} {scores.mean(1).tolist()}")
 
