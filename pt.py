@@ -2,44 +2,49 @@ import torch
 from params import na, score, device
 
 # parallel tempering
-T_vals = torch.logspace(0, -2.5, 10, device=device)  # temperatures for tempering TODO choose wisely/autotune
-nT = len(T_vals)
+invT = torch.logspace(0, 2.5, 10, device=device)  # inverse temperatures for tempering TODO choose wisely/autotune
+nT = len(invT)
 
 #torch.set_printoptions(threshold=nT,sci_mode=False)
 
 @torch.inference_mode()
-def improve_T(x, scores, k, T):  # random k-bit flip at finite T
-    B=x.shape[0]
-    flip_inds = torch.randint(0, na, (B, k), device=device)
+def improve_T(x, scores, k):  # random k-bit flip at finite T.
+    #nT, BperT, na = x.shape
+    BperT=x.shape[1]
+    #flip_inds = torch.randint(na, (nT, BperT, k), device=device)
+    flip_inds = torch.rand((nT, BperT, na), device=device).topk(k, dim=2).indices
     # propose flips
-    x_prop = x.clone()
-    x_prop.scatter_(1, flip_inds, -x.gather(1, flip_inds))
-    scores_prop = score(x_prop)
+    flip_vals = x.gather(2, flip_inds)
+    x.scatter_(2, flip_inds, -flip_vals)
+    scores_prop = score(x).view(nT, BperT)
     # Metropolis acceptance
     dE = scores_prop - scores
-    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE / T))
-    x[accept] = x_prop[accept]
+    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    # broadcast the mask to k bits and gather flips to revert
+    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
+    # reflip only rejected ones
+    x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
     scores[accept] = scores_prop[accept]
 
 @torch.no_grad()
 def attempt_swaps(x, scores):
     """
-    x: (nT, B_per_T, n)
-    scores: (nT, B_per_T)
+    x: (nT, BperT, n)
+    scores: (nT, BperT)
     """
     accepted = 0
     total = 0
     for i in range(nT - 1):
-        T1, T2 = T_vals[i], T_vals[i+1]
-        E1, E2 = scores[i], scores[i+1]              # (B_per_T,)
-        dE = (E2 - E1) * (1/T1 - 1/T2)
+        invT1, invT2 = invT[i], invT[i+1]
+        E1, E2 = scores[i], scores[i+1]              # (BperT,)
+        dE = (E2 - E1) * (invT1 - invT2)
         prob = torch.exp(-dE)
         accept = (torch.rand_like(prob) < prob)
         accepted += accept.sum()
         total += accept.numel()  # lazy
         # swap where accepted
         if accept.any():
-            swap_mask = accept[:, None]            # (B_per_T,1)
+            swap_mask = accept[:, None]            # (BperT,1)
             x1, x2 = x[i].clone(), x[i+1].clone()
             s1, s2 = E1.clone(), E2.clone()
             x[i] = torch.where(swap_mask, x2, x1)
@@ -51,19 +56,17 @@ def attempt_swaps(x, scores):
 
 def optimise_parallel_tempering(x, scores, iterations=5000, swap_interval=50):
     B = x.shape[0]
-    B_per_T = B // nT  # should divide please
-    scores = scores.view(nT, B_per_T)
-    x = x.view(nT, B_per_T, na)
+    BperT = B // nT  # should divide please
+    scores = scores.view(nT, BperT)
+    x = x.view(nT, BperT, na)
     acc_mavg = 0.0
     for t in range(iterations):
         k = 1 + (t // 100) % 3  # TODO fix
         # --- local search per temperature ---
-        for i in range(nT):
-            improve_T(x[i], scores[i], k=k, T=T_vals[i])
-        #print((scores-score(x).view(nT,B_per_T)).abs().max())  # TESTING
+        improve_T(x, scores, k=k)
+        #print((scores-score(x).view(nT,BperT)).abs().max())  # TESTING
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores)
-            acc_mavg = 0.9 * acc_mavg + 0.1 * acc.item()  # exponential moving avg
-            print(f"{t:5d}: swap_acc≈{acc_mavg:.3f} mean score={scores.mean()} {scores.mean(1)}")
+            print(f"{t:5d}: swap_acc≈{acc:.3f} mean score={scores.mean()} {scores.mean(1)}")
 
