@@ -5,8 +5,7 @@ import math
 import torch
 import params
 from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft
-
-from pt import optimise_parallel_tempering
+from pt import optimise_parallel_tempering, nT
 import logger
 import transformer
 # logging/debugging
@@ -590,7 +589,10 @@ def parallel_improve(arrays, scores, gens):
         torch.cuda.empty_cache()  # Free memory
     # step A: parallel tempering
     start_timer = timer()
-    optimise_parallel_tempering(arrays, scores)
+    scores, inds = torch.sort(scores, descending=True)
+    arrays = arrays[inds]
+    B = (arrays.shape[0]*3//4//nT)*nT  # roughly 3/4
+    optimise_parallel_tempering(arrays[:B], scores[:B])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens)
