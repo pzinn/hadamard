@@ -113,7 +113,7 @@ class Transformer(torch.nn.Module):
         b = idx0.shape[0]
         idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1] + 1
-        pos = torch.arange(t, dtype=torch.long, device=device).unsqueeze(0)  # shape (1, t)
+        pos = torch.arange(t, dtype=torch.int, device=device).unsqueeze(0)  # shape (1, t)
         # forward the transformer itself
         pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
         x = pos_emb.expand(b, t, config.n_embd).clone()
@@ -136,7 +136,6 @@ def init_model():
     global model  # to simplify, model, etc, are global
     global model_path
     global bit_positions
-    global string_length
     global nn_pad
     model = Transformer(config)
     model.to(device)
@@ -144,9 +143,8 @@ def init_model():
     model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
-    bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int64)
-    string_length = config.block_size  # TODO REMOVE
-    segment_string_length = string_length // nm
+    bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
+    segment_string_length = config.block_size // nm
     nn_pad = segment_string_length * config.stacking
 
 def load_model():
@@ -207,14 +205,14 @@ def string_to_array(X):  # really, int tensor to int8 tensor
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
     return signs[:,:,:nn].to(dtype=torch.int8).view(B, na)
 
-def array_to_string(signs):  # int8 tensor to long tensor
+def array_to_string(signs):  # int8 tensor to int tensor
     B = signs.shape[0]
-    signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int64)
+    signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
     signs1[:,:,:nn] = signs.view(B, nm, nn)
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
-    return (signs1.view(B, string_length, config.stacking) << bit_positions).sum(dim=2)
+    return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
 
 # -----------------------------------------------------------------------------
@@ -247,6 +245,7 @@ def train(data, **kwargs):
     data_len = len(data)
     test_set_size = min(config.test_set_size, data_len//2)
     vocab_size = config.vocab_size  # should one check that this is correct?
+    string_length = config.block_size
     training_batch_size = config.training_batch_size
     print(f"number of examples in the dataset: {data_len}")
     print(f"max word length: {string_length}")
@@ -357,7 +356,7 @@ if True: # not device.startswith('cuda'):
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
         arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
@@ -380,7 +379,7 @@ else:
         arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.long, device=device)
+        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
         arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
