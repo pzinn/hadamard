@@ -756,9 +756,20 @@ def main():
         new_arrays, new_scores = batch_score(new_arrays)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
-        arrays = torch.cat((new_arrays, arrays), dim=0)
-        scores = torch.cat((new_scores, scores), dim=0)
-        gens = torch.cat((gens, new_gens), dim=0)
+        # combine, but mix
+        A = arrays.shape[0]  # should be training_size
+        B = new_arrays.shape[0]  # should be sample_size
+        perm = torch.randperm(A+B)  # overkill but whatever
+        combined_arrays = torch.empty((A+B, na), dtype=torch.int8)
+        combined_scores = torch.empty(A+B, dtype=real_dtype)
+        combined_gens = torch.empty(A+B, dtype=torch.uint8)
+        combined_arrays[perm[:A]] = arrays
+        combined_arrays[perm[A:]] = new_arrays
+        combined_scores[perm[:A]] = scores
+        combined_scores[perm[A:]] = new_scores
+        combined_gens[perm[:A]] = gens
+        combined_gens[perm[A:]] = new_gens
+        arrays, scores, gens = combined_arrays, combined_scores, combined_gens
         if debugging:
             print(f"sampling time: {timer() - start_timer}")
 
