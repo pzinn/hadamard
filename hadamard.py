@@ -112,8 +112,8 @@ def record_stats(arrays, scores, gens, prefix=""):
     hada_tally = { g : c for g, c in zip(hada_order.tolist(), hada_count.tolist()) if c > 0 }
     print(f"Hadamard gen tally: {hada_tally}")
 
+    record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays[hada_inds].cpu()), dim=0), dim=0)
     if prefix == "selected":  # don't spam with H-matrices...
-        record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays[hada_inds]), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
         if total_nh>0:
