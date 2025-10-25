@@ -26,12 +26,56 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
     scores[accept] = scores_prop[accept]
 
+
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
-    """
-    x: (nT, BperT, n)
-    scores: (nT, BperT)
-    """
+    # 1. Prepare E and invT for adjacent pairs
+    # E1, E2 are the scores for T_i and T_{i+1} across all (nT-1) pairs
+    x1 = x[:-1]
+    x2 = x[1:]
+    s1 = scores[:-1]
+    s2 = scores[1:]
+    g1 = gens[:-1]
+    g2 = gens[1:]
+    # invT1, invT2 are the inverse temperatures for the same pairs
+    invT1 = invT[:-1].unsqueeze(1)  # (nT-1, 1)
+    invT2 = invT[1:].unsqueeze(1)   # (nT-1, 1)
+    # 2. Calculate Acceptance Probability (Metropolis Criterion)
+    # The term is: dE = (E2 - E1) * (invT1 - invT2)
+    # invT are column vectors, E are matrices, ensuring correct broadcasting
+    prob = torch.exp(-(s2 - s1) * (invT1 - invT2))  # (nT-1, BperT)
+    # 3. Acceptance Mask
+    swap_mask = (torch.rand_like(prob) < prob)  # (nT-1, BperT)
+    # 4. Calculate Acceptance Rate
+    accepted = swap_mask.sum()
+    total = swap_mask.numel()
+    acc_rate = accepted.float() / total
+    # 5. Perform Swaps (In-place on x, scores, gens)
+    # Expand mask for the swap operation across n and BperT
+    swap_mask_x = swap_mask.unsqueeze(-1)  # (nT-1, BperT, 1)
+    # Get the segments to be updated: x[i] and x[i+1] (the first and second halves)
+    # Swap x
+    x1_swapped = torch.where(swap_mask_x, x2, x1) # New states for T_i
+    x2_swapped = torch.where(swap_mask_x, x1, x2) # New states for T_{i+1}
+    x1.copy_(x1_swapped)
+    x2.copy_(x2_swapped)
+    # Swap scores
+    s1_swapped = torch.where(swap_mask, s2, s1)
+    s2_swapped = torch.where(swap_mask, s1, s2)
+    s1.copy_(s1_swapped)
+    s2.copy_(s2_swapped)
+    # Swap gens
+    g1_swapped = torch.where(swap_mask, g2, g1)
+    g2_swapped = torch.where(swap_mask, g1, g2)
+    g1.copy_(g1_swapped)
+    g2.copy_(g2_swapped)
+    return acc_rate
+
+"""
+@torch.no_grad()
+def attempt_swaps(x, scores, gens):
+    #  x: (nT, BperT, n)
+    #  scores, gens: (nT, BperT)
     accepted = 0
     total = 0
     for i in range(nT - 1):
@@ -56,6 +100,7 @@ def attempt_swaps(x, scores, gens):
             gens[i+1] = torch.where(accept, g1, g2)
     acc_rate = accepted.float() / total
     return acc_rate
+"""
 
 def optimise_parallel_tempering(x, scores, gens, iterations=5000, swap_interval=50):
     B = x.shape[0]
