@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nn, nn2, nm, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, k
+from params import n, na, nn, nn2, nm, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, num_ones
 import logger
 import transformer
 # logging/debugging
@@ -41,7 +41,7 @@ def generate_random_blocks(B, n, k, device):
 
 @torch.inference_mode()
 def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-    return torch.cat([generate_random_blocks(batch_size, nn, k[j], device) for j in range(4)], dim=1)
+    return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(4)], dim=1)
 
 # MAIN-DEFINITIONS #
 
@@ -100,12 +100,10 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Correlation: {s}")
 
     # check k's
-    kk = torch.empty(B, 4, dtype=torch.int8, device=device)
     a = arrays.view(B, 4, nn)
-    for j in range(4):
-        kk[:, j] = (a[:, j]==1).sum(dim=1)
-    kcheck = (kk == k).all(dim=1)
-    print(f"Correct k: {kcheck.sum()/B}")
+    k = (a.sum(dim=2).to(device=device)+nn)//2
+    kcheck = (k == num_ones).all(dim=1)
+    print(f"Correct # ones: {kcheck.sum()/B}")
 
     min_score = torch.min(scores)
     print(f"Min score: {min_score}")
@@ -353,7 +351,7 @@ def improve3(arrays, scores):
         for t in range(100*n):  # ?
             torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
             x.fill_(-1)
-            x.scatter_(1, torch.topk(x2, k[j], dim=1).indices, 1)
+            x.scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
             s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
@@ -371,11 +369,9 @@ def fixk(arrays):  # fix k's. shouldn't happen too often
     a = arrays.view(-1, 4, nn)
     for j in range(4):
         while True:
-            kk = (a[:, j]==1).sum(dim=1)
-            mask1 = kk < k[j]
-            mask2 = kk > k[j]
-            #if debugging:
-            #    print(f'fixk: ({j}) {mask1.sum()+mask2.sum()}')
+            k = (a[:, j]==1).sum(dim=1)
+            mask1 = k < num_ones[j]
+            mask2 = k > num_ones[j]
             if not mask1.any() and not mask2.any():
                 break
             a[mask1, j, torch.randint(nn,())] = 1  # lazy

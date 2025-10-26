@@ -3,11 +3,9 @@ if __name__ == "__main__":
 
 # hadamard matrix parameters
 n = 140  # size of matrix
-nn = n // 4
 
-k0 = [1, 3, 7, 9]  # sum of squares must be n
-assert(sum(i*i for i in k0) == n)
-k = [(k0[j]+nn)//2 for j in range(4)]
+segment_sums = [1, 3, 7, 9]  # sum of squares must be n
+assert(sum(i*i for i in segment_sums) == n)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -23,7 +21,7 @@ learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 100_000  # will be adjusted dynamically (to be less than that)
+training_steps = 150_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
@@ -127,6 +125,8 @@ if n % 4 != 0:
 print(f'{n=}')
 
 # array encoding -- do not change
+nn = n // 4
+num_ones = [(segment_sums[j]+nn)//2 for j in range(4)]
 nm = 4  # number of blocks
 na = nm * nn  # length of array
 nn2 = (nn-1) // 2
@@ -158,7 +158,7 @@ aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(nm)) if [k[i] for i in p]==k))
+perms = torch.tensor(list(p for p in permutations(range(nm)) if [segment_sums[i] for i in p]==segment_sums))
 rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
@@ -179,4 +179,4 @@ def rotate(array0):
     #
     return arrayx
 
-k = torch.tensor(k, dtype=torch.int8, device=device)
+num_ones = torch.tensor(num_ones, dtype=torch.int8, device=device)

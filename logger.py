@@ -2,7 +2,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 import params
-from params import config, n, k0
+from params import config, n, segment_sums
 import math
 import glob
 import re
@@ -61,7 +61,7 @@ def init_logging():
                    resume='allow' if params.resume else 'never',  # if is_sweep, resume not supported
                    mode = params.logging_mode)
         config.update()  # for sweep
-        wandb.run.summary["segment sums"]=k0
+        wandb.run.summary["segment sums"]=segment_sums
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
