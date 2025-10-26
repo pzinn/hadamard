@@ -533,6 +533,7 @@ def parallel_improve(arrays, scores, gens):
     for _ in range(config.num_improve):
         start_timer = timer()
         improve_joker(arrays, scores)
+        scores = score(arrays)  # don't trust improve_joker
         if debugging:
             print(f"improve_joker time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
@@ -558,6 +559,7 @@ def parallel_improve(arrays, scores, gens):
             record_stats(arrays, scores, gens)
     start_timer = timer()
     improve_joker(arrays, scores)
+    scores = score(arrays)  # don't trust improve_joker
     if debugging:
         print(f"improve_joker time: {timer() - start_timer}")
         record_stats(arrays, scores, gens)
