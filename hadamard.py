@@ -542,20 +542,20 @@ def parallel_improve(arrays, scores, gens):
             improve_greedy_fixed(arrays,scores)
         else:
             improve1p(arrays, scores)
+        scores = score(arrays)  # don't trust improve1p
         if debugging:
             print(f"improve1 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
-        scores = score(arrays)  # don't trust improve1p
         #
         start_timer = timer()
         if fixed_sums:
             improve4x4_fixed(arrays, scores)
         else:
             improve_greedy(arrays, scores)
+        scores = score(arrays)  # don't trust improve2
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
-        scores = score(arrays)  # don't trust improve2
     start_timer = timer()
     improve_joker(arrays, scores)
     if debugging:
