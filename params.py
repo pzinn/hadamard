@@ -67,10 +67,15 @@ parser.add_argument("--bignum", action="store_true", help="Enable debug logging"
 
 import subprocess
 try:
-    version = subprocess.check_output(
+    git_branch = subprocess.check_output(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         stderr=subprocess.DEVNULL
     ).strip().decode()
+    git_commit = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=subprocess.DEVNULL
+    ).strip().decode()
+    version = git_branch + " " + git_commit
 except subprocess.CalledProcessError:
     version = "git not available"
 except FileNotFoundError:
@@ -148,6 +153,7 @@ if fixed_sums:
     print(f"{segment_sums=}")
     num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
 else:
+    segment_sums = None
     num_ones = None
 
 
