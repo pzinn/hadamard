@@ -1,5 +1,5 @@
 import torch
-from params import na, score, device
+from params import na, nm, nn, score, device, fixed_sums
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
@@ -28,6 +28,28 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
+    scores[accept] = scores_prop[accept]
+
+@torch.inference_mode()
+def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
+    #global cnt
+    #nT, BperT, na = x.shape
+    BperT=x.shape[1]
+    j=torch.randint(nm, (), device=device)
+    flip_inds = j*nn + torch.rand((nT, BperT, nn), device=device).topk(k, dim=2).indices
+    # propose flips
+    flip_vals = x.gather(2, flip_inds)
+    flip_vals_rot = torch.roll(flip_vals,shifts=1,dims=2)
+    x.scatter_(2, flip_inds, flip_vals_rot)
+    scores_prop = score(x).view(nT, BperT)
+    # Metropolis acceptance
+    dE = scores_prop - scores
+    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    #cnt += accept.sum(dim=1)
+    # broadcast the mask to k bits and gather flips to revert
+    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
+    # reflip only rejected ones
+    x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, flip_vals_rot))
     scores[accept] = scores_prop[accept]
 
 @torch.no_grad()
@@ -120,9 +142,13 @@ def parallel_tempering(x, scores, gens):
     gens = gens.view(nT, BperT)
     acc_mavg = 0.0
     for t in range(iterations):
-        k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp).long()
         # --- local search per temperature ---
-        improve_T(x, scores, k=k)
+        if fixed_sums:
+            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp).long()
+            improve_T_fixed_sums(x, scores, k=k)
+        else:
+            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp).long()
+            improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores, gens)

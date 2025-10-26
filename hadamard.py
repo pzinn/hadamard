@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft, fixed_sums, num_ones
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -24,9 +24,21 @@ if debugging:
     torch.cuda.memory._record_memory_history(max_entries=100000)
 """
 
-@torch.inference_mode()
-def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-    return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
+if fixed_sums:
+    def generate_random_blocks(B, n, k, device):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
+        a = -torch.ones((B, n), dtype=torch.int8, device=device)
+        rand = torch.rand((B, n), device=device)
+        topk = rand.argsort(dim=1)[:, :k]        # (B, k) random unique positions per row
+        rows = torch.arange(B, device=device).unsqueeze(1)
+        a[rows, topk] = 1
+        return a
+    @torch.inference_mode()
+    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
+        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(4)], dim=1)
+else:
+    @torch.inference_mode()
+    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
+        return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
 
 # MAIN-DEFINITIONS #
 
@@ -84,10 +96,14 @@ def record_stats(arrays, scores, gens, prefix=""):
     s=s.item()
     print(f"Correlation: {s}")
 
-    # now scores
-    # if debugging:
-    #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
+    if fixed_sums:
+        # check #1's
+        a = arrays.view(B, 4, nn)
+        k = (a.sum(dim=2).to(device=device)+nn)//2
+        kcheck = (k == num_ones).all(dim=1)
+        print(f"Correct # ones: {kcheck.sum()/B}")
 
+    # now scores
     min_score = torch.min(scores)
     print(f"Min score: {min_score}")
 
@@ -233,91 +249,10 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
             break
         active_rows=active_rows[mask]  # eliminate those that haven't been improved at all
 
-"""
-@torch.inference_mode()
-def improve1(arrays, scores):
-    print(f"improve1", end=''); sys.stdout.flush()
-    # first let's do it the stupidest way (will recode later)
-    B = arrays.shape[0]
-    active_mask = torch.ones(B, device=device, dtype=torch.bool)
-    active_rows = torch.arange(B, device=device)
-    while True:
-        # rows we’re actively trying to improve this round
-        M = active_rows.numel()
-        # indices of best bit (−1 means no improvement found)
-        inds = torch.full((M,), -1, dtype=torch.int64, device=device)
-        # Try flipping each bit, keep any improvement
-        for i in range(na):
-            arrays[active_rows, i] *= -1          # flip bit i
-            new_scores = score(arrays[active_rows])
-            improved = new_scores < scores[active_rows]                  # where this flip helps
-            if improved.any():
-                scores[active_rows[improved]] = new_scores[improved]            # write into base `scores`
-                inds[improved] = i
-            arrays[active_rows, i] *= -1          # flip back
-        # rows that actually improved this round
-        improved_any = inds >= 0
-        if not improved_any.any():
-            break
-        # Apply the winning flips once
-        active_rows = active_rows[improved_any]
-        active_cols = inds[improved_any]
-        arrays[active_rows, active_cols] *= -1
-        # Next round: only keep rows that improved (they might improve again)
-        active_mask.zero_()
-        active_mask[active_rows] = True
-        if debugging:
-            #print(f' {torch.bincount(active_cols, minlength=na)} improve success rate: {active_mask.sum()/B}')
-            print(f' improve success rate: {active_mask.sum()/B}')
-
-@torch.inference_mode()
-def improve1a(arrays,scores):  # the old improve1: flip a single bit greedily
-    if debugging:
-        cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    print(f"1", end=''); sys.stdout.flush()
-    p = torch.randperm(na)  # should it be on device?
-    for i in range(na):
-        arrays[:, p[i]] *= -1  # Flip only the i-th bit
-        # Compute new scores for all batch elements in parallel
-        new_scores = score(arrays)
-        # Identify which flips improved the score
-        mask = new_scores < scores  # True where improvement happens
-        if debugging:
-            cnt += torch.sum(mask)
-        # Apply successful bit flips
-        arrays[~mask, p[i]] *= -1  # Only revert for elements where no improvement
-        scores[mask] = new_scores[mask]  # Update scores accordingly
-    if debugging:
-        print(f' improve success rate: {cnt/arrays.shape[0]}')
-
-# greedy 2-bit flip -- probably too slow for large n
-@torch.inference_mode()
-def improve2(x,scores):
-    print("improve2 ", end=''); sys.stdout.flush()
-    if debugging:
-        cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for i in range(1,na):
-        x[:, i] *= -1
-        for j in range(i):
-            x[:, j] *= -1
-            new_scores = score(x)
-            mask = new_scores < scores
-            if debugging:
-                cnt += torch.sum(mask)
-            x[~mask, j] *= -1  # Only revert for elements where no improvement
-            x[mask, i] *= -1  # !!!
-            scores[mask] = new_scores[mask]  # Update scores accordingly
-        x[:, i] *= -1
-    if debugging:
-        print(f' success rate: {cnt/x.shape[0]}')
-    else:
-        print('')
-"""
-
 # greedy random k-bit flip
 @torch.inference_mode()
-def improve2(x,scores):
-    print(f"improve2 ", end=''); sys.stdout.flush()
+def improve_greedy(x,scores):
+    print(f"improve_greedy ", end=''); sys.stdout.flush()
     B=x.shape[0]
     # precompute fft
     f = fft(x)
@@ -342,35 +277,9 @@ def improve2(x,scores):
         # f = fft(x)
         # scores = score(x)
 
-"""
-# greedy random k-bit flip -- slower version
 @torch.inference_mode()
-def improve2w(x,scores):
-    B=x.shape[0]
-    if debugging:
-        cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(1,10):
-        if debugging:
-            cnt.zero_()
-        for _ in range(na):
-            inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
-            x[:, inds] *= -1
-            new_scores = score(x)
-            x[:, inds] *= -1
-            improved = new_scores < scores
-            improved_inds = torch.nonzero(improved, as_tuple=True)[0]
-            x[improved_inds.unsqueeze(1),inds] *= -1
-            if debugging:
-                cnt += improved.sum()
-            #print(inds,cnt)
-            scores[improved_inds] = new_scores[improved_inds]
-        if debugging:
-            print(f'{k=} {cnt/B}')
-"""
-
-@torch.inference_mode()
-def improve3(arrays, scores):
-    print(f"improve3 ", end=''); sys.stdout.flush()
+def improve_joker(arrays, scores):
+    print(f"improve_joker ", end=''); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
@@ -390,7 +299,10 @@ def improve3(arrays, scores):
         for t in range(100*n):  # ?
             torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
             x.fill_(-1)
-            x.masked_fill_(x2 > 0, 1)
+            if fixed_sums:
+                x.scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
+            else:
+                x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
             s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
@@ -404,119 +316,127 @@ def improve3(arrays, scores):
             h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
         print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
-"""
-# failed gradient descent
-def unfold2(m1,m2):
-    return torch.stack((mir(m1[:,:nn2]),
-                        mir(m1[:,nn2:2*nn2]),
-                        mir(m1[:,2*nn2:]),
-                        m2),dim=1)
-def alt_score0(m):
-    f = alt_cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
-    ff = torch.real(f*f.conj())
-    ffs = ff.sum(dim=1)
-    s = (ffs-1)**2
-    return s[:,0]+2*s[:,1:].sum(dim=1)
-def score2(m1,m2):
-    return alt_score0(unfold2(m1,m2))
+# greedy random k-bit rotate
+@torch.inference_mode()
+def improve_greedy_fixed(x,scores):
+    print("improve_greedy_fixed ", end=''); sys.stdout.flush()
+    B=x.shape[0]
+    # precompute fft
+    f = fft(x)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    k = 3  # 3,5,..,11
+    ns = 5 * n  # dunno
+    while ns > 0 and k <= nn2:
+        cnt.zero_()
+        # create all at once a bunch of subsets to sample
+        lst=[]
+        for j in range(4):
+            r1=j*nn
+            r=nn
+            r2=r+r1
+            lst.append(r1+torch.topk(torch.rand(ns, r, device=device), k).indices.sort(dim=1).values)
+        all_inds = torch.unique(torch.cat(lst,dim=0),dim=0)
+        n_inds = all_inds.shape[0]
+        #print("temp",k,n_inds)
+        perm = torch.randperm(n_inds)
+        for i in range(n_inds):
+            inds = all_inds[perm[i]]
+            xx = torch.roll(x[:, inds], shifts=1, dims=1)
+            torch.matmul((x[:, inds]-xx).to(complex_dtype), .5*wrng_all[inds], out=flmod)
+            flmod.add_(fl)
+            new_scores = score_fft(fmod)
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
+            fl[improved_inds] = flmod[improved_inds]
+            x[improved_inds.unsqueeze(1),inds] = xx[improved_inds]
+            scores[improved_inds] = new_scores[improved_inds]
+            cnt += improved_inds.shape[0]
+        print(f'{k=} {cnt} ({cnt/B})')
+        ns >>= 1
+        k += 2
 
-def improve3(arrays,max_iterations=5,inner_steps=100,lr=.05,mixed_precision=True):
-    x=arrays.clone()
-    print(f"3", end=''); sys.stdout.flush()
-    B = x.shape[0]
-    scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
+sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
+psw, ksw = sw0.shape  # psw = ksw choose ksw/2
+sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(4)], indexing='ij')
+sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, 4)    # (p^4, 4)
+sw = sw0[sw_idx].reshape(-1, 4 * ksw)
 
-    x1 = torch.nn.Parameter(x[:, :3*nn2].detach())
-    x2 = torch.nn.Parameter(x[:, 3*nn2:].detach())
-    opt1 = torch.optim.AdamW([x1], lr=lr)
-    opt2 = torch.optim.AdamW([x2], lr=lr)
-    #opt1 = torch.optim.SGD([x1], lr=lr)
-    #opt2 = torch.optim.SGD([x2], lr=lr)
+@torch.inference_mode()
+def improve4x4_fixed(x,scores):  # optimal 4x4 bit switch
+    print(f"improve4x4_fixed ", end=''); sys.stdout.flush()
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    B=x.shape[0]
+    f = fft(x)
+    fl = f.view(B,4*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B,4*(nn2+1))
+    # first find 4x(2+2) locations for optimal flips
+    best_scores = torch.full((B,4,2,2), float('inf'), dtype=real_dtype, device=device)
+    inds = torch.empty((B,4,2,2), dtype=torch.long, device=device)
+    for j in range(4):
+        r1=j*nn
+        r=nn
+        r2=r+r1
+        for i in range(r1,r2):
+            torch.mul(x[:, i].to(complex_dtype).unsqueeze(1), wrng_all[i], out=flmod)
+            flmod.add_(fl)
+            scores1 = score_fft(fmod)
+            mask = x[: ,i] > 0
+            minuses = torch.nonzero(~mask, as_tuple=True)[0]
+            pluses = torch.nonzero(mask, as_tuple=True)[0]
+            # update minuses
+            mask = scores[minuses].unsqueeze(1) < best_scores[minuses,j,0]  # (B,2)
+            # mask[:,0] means highest score
+            minuses1=minuses[mask[:,0]]
+            best_scores[minuses1,j,0,1]=best_scores[minuses1,j,0,0]
+            best_scores[minuses1,j,0,0]=scores1[minuses1]
+            inds[minuses1,j,0,1]=inds[minuses1,j,0,0]
+            inds[minuses1,j,0,0]=i
+            # mask[:,1] means next to highest score
+            minuses1=minuses[~mask[:,0] & mask[:,1]]
+            best_scores[minuses1,j,0,1]=scores1[minuses1]
+            inds[minuses1,j,0,1]=i
+            # update pluses
+            mask = scores[pluses].unsqueeze(1) < best_scores[pluses,j,1]  # (B,2)
+            # mask[:,0] means highest score
+            pluses1=pluses[mask[:,0]]
+            best_scores[pluses1,j,1,1]=best_scores[pluses1,j,1,0]
+            best_scores[pluses1,j,1,0]=scores1[pluses1]
+            inds[pluses1,j,1,1]=inds[pluses1,j,1,0]
+            inds[pluses1,j,1,0]=i
+            # mask[:,1] means next to highest score
+            pluses1=pluses[~mask[:,0] & mask[:,1]]
+            best_scores[pluses1,j,1,1]=scores1[pluses1]
+            inds[pluses1,j,1,1]=i
+    # now try every combo
+    inds = inds.view(B,16)
+    base = torch.arange(B, device=device)
+    #print(inds,x,scores)
+    cur=torch.gather(x, 1, inds)
+    for i in range(sw.shape[0]):
+        x[base.unsqueeze(1), inds] = sw[i]
+        new_scores = score(x)  # TODO use fft
+        #print(x,new_scores)
+        improved = new_scores < scores
+        scores[improved] = new_scores[improved]
+        cur[improved] = sw[i]
+        cnt += torch.sum(improved)
+    x.scatter_(1, inds, cur)
+    print(f'{cnt/B}')
 
-    global alt_cst
-
-    for t in range(max_iterations):
-        #first set
-        alt_cst = math.sqrt(3) / math.sqrt(3*nn2)  # controls average size of abc -- (cst0/cst)^2 where cst0 = 1/sqrt(3nn2)
-        start_timer=timer()
-        x2d=torch.zeros_like(x2)
-        #x2.detach()  # could be moved out of the loop
-        #x2d=torch.where(x2>0,1.,-1.).detach()
-        for _ in range(inner_steps):
-            opt1.zero_grad(set_to_none=True)
-            with torch.amp.autocast(device,enabled=mixed_precision):
-                fake_scores = score2(x1,x2d)
-                loss = fake_scores.sum()
-            scaler.scale(loss).backward()
-            scaler.unscale_(opt1)
-            scaler.step(opt1)
-            scaler.update()
-            with torch.no_grad():
-                x1.clamp_(min=-1, max=1)  # projection
-        print(f'1a {t=} : {torch.min(fake_scores)} {torch.mean(fake_scores)} {torch.max(fake_scores)} time={timer()-start_timer}')
-        print(x1.abs().mean(),x2.abs().mean())
-        #alt_cst = 1 / math.sqrt(n)
-        if debugging:
-            real_x = torch.where(x > 0, 1., -1.)  # not needed, for testing only
-            real_scores = score(real_x)
-            print(f'1b {t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
-        #second set
-        alt_cst = 2 / math.sqrt(n)  # controls average size of d --- how exactly?
-        start_timer=timer()
-        x1d=x1.detach()  # could be moved out of the loop
-        for _ in range(inner_steps):
-            opt2.zero_grad(set_to_none=True)
-            with torch.amp.autocast(device,enabled=mixed_precision):
-                fake_scores = score2(x1d,x2)
-                loss = fake_scores.sum()
-            scaler.scale(loss).backward()
-            scaler.unscale_(opt2)
-            scaler.step(opt2)
-            scaler.update()
-            with torch.no_grad():
-                x2.clamp_(min=-1, max=1)  # projection
-        if debugging:
-            print(f'2a {t=} : {torch.min(fake_scores)} {torch.mean(fake_scores)} {torch.max(fake_scores)} time={timer()-start_timer}')
-            print(x1.abs().mean(),x2.abs().mean())
-        #next
-        #alt_cst = 1 / math.sqrt(n)
-        real_x = torch.where(x > 0, 1., -1.)
-        real_scores = score(real_x)
-        if debugging:
-            print(f'2b {t=} : {torch.min(real_scores)} {torch.mean(real_scores)} {torch.max(real_scores)} time={timer()-start_timer}')
-        if t==0:
-            arrays.copy_(real_x)
-            scores.copy_(real_scores)
-        else:
-            improve = real_scores <= scores
-            arrays[improve]=real_x[improve]
-            scores[improve]=real_scores[improve]
-
-def improve3a(x,steps=1000,lr=.01,mixed_precision=True):
-    x.requires_grad_(True)
-    scaler = torch.amp.GradScaler(device,enabled=mixed_precision)
-
-    # opt = torch.optim.SGD([x], lr=lr)
-    opt = torch.optim.AdamW([x], lr=lr)
-
-    prev_scores = None
-    for t in range(steps):
-        opt.zero_grad(set_to_none=True)
-        with torch.amp.autocast(device,enabled=mixed_precision):
-            scores = mod_score(x)
-            loss = scores.sum()
-            if prev_scores is not None:
-                not_improved = (scores - prev_scores) > -eps
-                if not_improved.all():
-                    print(f"stop at {t}")
-                    break
-            prev_scores = scores.detach()
-        scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
-
-    return torch.where(x > 0, 1., -1.).detach()
-"""
+def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
+    a = arrays.view(-1, 4, nn)
+    for j in range(4):
+        while True:
+            k = (a[:, j]==1).sum(dim=1)
+            mask1 = k < num_ones[j]
+            mask2 = k > num_ones[j]
+            if not mask1.any() and not mask2.any():
+                break
+            a[mask1, j, torch.randint(nn,())] = 1  # lazy
+            a[mask2, j, torch.randint(nn,())] = -1
 
 vec = torch.rand((nn,),device=device,dtype=real_dtype)  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
@@ -535,26 +455,33 @@ def derotate(arrays, scores):
     sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
     sps = torch.cat([sp_rot, sp_rev], dim=2)   # (B, m, 2 * nn)
-    flat_idx = sps.abs().argmax(dim=2)         # (B, m) over 2*nn options
+    if fixed_sums:
+        flat_idx = sps.argmax(dim=2)         # (B, m) over 2*nn options
+    else:
+        flat_idx = sps.abs().argmax(dim=2)         # (B, m) over 2*nn options
     # Gather the chosen transform from the original 'a'
     signed_base = torch.where(flat_idx >= nn,-1,1).unsqueeze(-1) * base
     idx = ( signed_base + flat_idx.unsqueeze(-1)) % nn
     transformed = a.gather(2, idx)  # (B, m, nn)
-    # negate if the chosen scalar product is > 0
-    chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
-    a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    # 2nd phase: permute the nmxnn parts
-    # start with identity permutation for each batch
-    perm = torch.arange(nm, device=device).expand(B, nm).clone()
-    # stable sort by last key first, then previous..., up to first column
-    for k in range(nn):
-        key = a[:, :, k]                 # (B, m)
-        key_in_curr_order = key.gather(1, perm)
-        ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
-        perm = perm.gather(1, ordk)
-    # apply permutation to rows
-    sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
-    a.copy_(sorted_a)
+    if fixed_sums:
+        a.copy_(transformed)
+    else:
+        # negate if the chosen scalar product is > 0
+        chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
+        a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
+    if not fixed_sums:  # TODO even w/ fixed sums, there can be a partial permutation symmetry
+        # 2nd phase: permute the nmxnn parts
+        # start with identity permutation for each batch
+        perm = torch.arange(nm, device=device).expand(B, nm).clone()
+        # stable sort by last key first, then previous..., up to first column
+        for k in range(nn):
+            key = a[:, :, k]                 # (B, m)
+            key_in_curr_order = key.gather(1, perm)
+            ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
+            perm = perm.gather(1, ordk)
+        # apply permutation to rows
+        sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
+        a.copy_(sorted_a)
     if params.test_score:
         scores2 = score(arrays)
         if (scores1-scores2).abs().max() > eps:
@@ -587,6 +514,9 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
+    # step Z: fix segment sums
+    if fixed_sums:
+        fix_num_ones(arrays)
     # step A: parallel tempering
     start_timer = timer()
     scores, inds = torch.sort(scores)
@@ -602,28 +532,34 @@ def parallel_improve(arrays, scores, gens):
     # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
-        improve3(arrays, scores)
+        improve_joker(arrays, scores)
         if debugging:
-            print(f"improve3 time: {timer() - start_timer}")
+            print(f"improve_joker time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
         #
         start_timer = timer()
-        improve1p(arrays, scores)
+        if fixed_sums:
+            improve_greedy_fixed(arrays,scores)
+        else:
+            improve1p(arrays, scores)
         if debugging:
-            print(f"improve1p time: {timer() - start_timer}")
+            print(f"improve1 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
         scores = score(arrays)  # don't trust improve1p
         #
         start_timer = timer()
-        improve2(arrays, scores)
+        if fixed_sums:
+            improve4x4_fixed(arrays, scores)
+        else:
+            improve_greedy(arrays, scores)
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens)
         scores = score(arrays)  # don't trust improve2
     start_timer = timer()
-    improve3(arrays, scores)
+    improve_joker(arrays, scores)
     if debugging:
-        print(f"improve3 time: {timer() - start_timer}")
+        print(f"improve_joker time: {timer() - start_timer}")
         record_stats(arrays, scores, gens)
     # step C: rotate the arrays to a standard form
     start_timer = timer()

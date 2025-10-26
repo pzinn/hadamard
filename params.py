@@ -1,36 +1,34 @@
+import torch
+
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 140  # size of matrix
+n = 188  # size of matrix
+# segment_sums = [1, 3, 3, 13]  # sum of squares must be n
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
-# scoring
-score_function = 'fft log determinant'
-# score_function = 'quartic'
-# score_function = 'one'
-
 # training parameters
-sample_size = 400_000
-training_size = sample_size//10  # must be > test_set_size
-learning_rate = 2e-3
+sample_size = 1_000_000
+training_size = sample_size//20  # must be > test_set_size
+learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 100_000  # will be adjusted dynamically (to be less than that)
+training_steps = 150_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
 n_layer = 4
-n_embd = 64
+n_embd = 128
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
-gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
+gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
@@ -144,6 +142,15 @@ class ModelConfig:
 
 config = ModelConfig(**hparams)
 
+fixed_sums = 'segment_sums' in globals()
+if fixed_sums:
+    assert(sum(i*i for i in segment_sums) == n)
+    print(f"{segment_sums=}")
+    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
+else:
+    num_ones = None
+
+
 # symmetries
 from itertools import permutations
 import torch
@@ -154,8 +161,12 @@ aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
-rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+if fixed_sums:
+    perms = torch.tensor(list(p for p in permutations(range(nm)) if [segment_sums[i] for i in p]==segment_sums))
+    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
+else:
+    perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
+    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
@@ -167,14 +178,19 @@ def rotate(array0):
     # automorphisms
     array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
     # symmetry: random permute
-    array.copy_(array[:,perms[rnd[0]]])
+    if len(perms) > 0:
+        array.copy_(array[:,perms[rnd[0]]])
     # symmetry: random rotation/flip
     for j in range(nm):
         array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
-    # symmetry: random signs
-    array.mul_((rnd[6:10]*2-1).unsqueeze(1))
+    if not fixed_sums:
+        # symmetry: random signs
+        array.mul_((rnd[6:10]*2-1).unsqueeze(1))
     #
     return arrayx
+
+# obsolete: only one scoring function implemented
+score_function = 'fft log determinant'
 
 cst = 1 / math.sqrt(n)
 def fft(m):
