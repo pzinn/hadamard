@@ -5,7 +5,7 @@ import math
 import torch
 import params
 from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft
-from pt import optimise_parallel_tempering, nT
+from pt import parallel_tempering, nT
 import logger
 import transformer
 # logging/debugging
@@ -595,7 +595,7 @@ def parallel_improve(arrays, scores, gens):
     B0 = torch.searchsorted(scores, eps)  # don't touch H-matrices
     B1 = arrays.shape[0]//4  # roughly at most 3/4 used
     B = (max(B0,B1)//nT)*nT
-    optimise_parallel_tempering(arrays[B:], scores[B:], gens[B:])
+    parallel_tempering(arrays[B:], scores[B:], gens[B:])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens)
