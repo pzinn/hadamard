@@ -2,17 +2,16 @@ import torch
 from params import na, score, device
 
 # parallel tempering
-r = 2.5
-invT = torch.logspace(r, 0, 10, device=device)  # inverse temperatures for tempering
-nT = len(invT)
+nT = 16  # number of temperatures. between say 10 and 20
+r = .25 * nT  # log10 of ratio hiT/loT=1/loT. empirical formula
 
 #torch.set_printoptions(threshold=nT,sci_mode=False)
 
-cnt = torch.zeros((nT,), dtype=torch.long, device=device)
+#cnt = torch.zeros((nT,), dtype=torch.long, device=device)
 
 @torch.inference_mode()
 def improve_T(x, scores, k):  # random k-bit flip at finite T.
-    global cnt
+    #global cnt
     #nT, BperT, na = x.shape
     BperT=x.shape[1]
     #flip_inds = torch.randint(na, (nT, BperT, k), device=device)
@@ -24,7 +23,7 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     # Metropolis acceptance
     dE = scores_prop - scores
     accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    cnt += accept.sum(dim=1)
+    #cnt += accept.sum(dim=1)
     # broadcast the mask to k bits and gather flips to revert
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
@@ -109,8 +108,11 @@ def attempt_swaps(x, scores, gens):
 
 iterations = na * 50
 swap_interval = 50
+p = .25  # average k is 1/(1-p)
+invlogp = 1 / torch.log(torch.tensor(p))
 def parallel_tempering(x, scores, gens):
     global r, invT
+    invT = torch.logspace(r, 0, nT, device=device)
     B = x.shape[0]
     BperT = B // nT  # should divide please
     x = x.view(nT, BperT, na)
@@ -118,22 +120,18 @@ def parallel_tempering(x, scores, gens):
     gens = gens.view(nT, BperT)
     acc_mavg = 0.0
     for t in range(iterations):
-        k = 1 + t % 3  # TODO fix
+        k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp).long()
         # --- local search per temperature ---
         improve_T(x, scores, k=k)
-        #print((scores-score(x).view(nT,BperT)).abs().max())  # TESTING
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores, gens)
             #print(f"{t:5d}: swap_acc={acc:.3f} flip_acc={(cnt/(swap_interval*BperT)).tolist()} mean score={scores.mean()} {scores.mean(1).tolist()}")
-            print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean()} {scores.mean(1).tolist()}")
-            cnt.zero_()
+            #cnt.zero_()
+            print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
             acc_avg = acc if t==0 else 0.9 * acc_avg + 0.1 * acc
     # autotune Ts
     if acc_avg < 0.2:
         r -= .2
-        invT = torch.logspace(r, 0, 10, device=device)
     elif acc_avg > 0.3:
         r += .2
-        invT = torch.logspace(r, 0, 10, device=device)
-    print(r)
