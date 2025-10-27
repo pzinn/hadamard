@@ -144,10 +144,12 @@ def parallel_tempering(x, scores, gens):
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
-            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp).long()
+            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp)
+            k = int(k.clamp(3,nn//2))
             improve_T_fixed_sums(x, scores, k=k)
         else:
-            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp).long()
+            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)
+            k = int(k.clamp(1,na//2))
             improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
