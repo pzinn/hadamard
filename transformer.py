@@ -48,27 +48,23 @@ class CausalSelfAttention(torch.nn.Module):
 
     def forward(self, x):
         B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
-
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-
         # output projection
         y = self.c_proj(y)
         return y
 
 class Block(torch.nn.Module):
     """ an unassuming Transformer block """
-
     def __init__(self, config):
         super().__init__()
         self.ln_1 = torch.nn.LayerNorm(config.n_embd)
@@ -88,12 +84,9 @@ class Block(torch.nn.Module):
         return x
 
 class Transformer(torch.nn.Module):
-    """ Transformer Language Model, exactly as seen in GPT-2 """
-
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
@@ -101,7 +94,6 @@ class Transformer(torch.nn.Module):
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
         # report number of parameters (note we don't count the decoder parameters in lm_head)
         n_params = sum(p.numel() for p in self.transformer.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
@@ -113,20 +105,17 @@ class Transformer(torch.nn.Module):
         b = idx0.shape[0]
         idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1] + 1
-        pos = torch.arange(t, dtype=torch.int, device=device).unsqueeze(0)  # shape (1, t)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x = pos_emb.expand(b, t, config.n_embd).clone()
+        pos_emb = self.transformer.wpe.weight[:t] # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
+        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
         x[:,1:,:] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        # if we are given some desired targets also calculate the loss
-        loss = None
-        if compute_loss:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1))
+        # if requested, also calculate the loss
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1)) if compute_loss else None
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -162,7 +151,7 @@ def save_model():
 # helper functions for evaluating and sampling from the model
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def generate(idx, max_new_tokens, do_sample=False, top_k=None):
     """
     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
@@ -356,12 +345,11 @@ if True: # not device.startswith('cuda'):
         load_model()
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
         arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
-            X.zero_()
             generate(X, config.block_size, do_sample=True)
             arrays_cpu[i:j] = string_to_array(X)
         return arrays_cpu
@@ -379,7 +367,7 @@ else:
         arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
         arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
@@ -389,7 +377,6 @@ else:
             if i < num_batches:
                 print('*', end=''); sys.stdout.flush()
                 with torch.cuda.stream(stream):
-                    X.zero_()
                     generate(X, config.block_size, do_sample=True)
                     arrays_cpu[1-idx].copy_(string_to_array(X), non_blocking=True)
                     stream.record_event(event[1-idx])
