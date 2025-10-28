@@ -5,7 +5,7 @@ if __name__ == "__main__":
 
 # hadamard matrix parameters
 n = 188  # size of matrix
-# segment_sums = [1, 3, 3, 13]  # sum of squares must be n
+# segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -81,9 +81,29 @@ except subprocess.CalledProcessError:
 except FileNotFoundError:
     version = "git not available"
 
+if n % 4 != 0:
+    raise SystemExit("good luck!")
+
+print(f'{n=}')
+
+# array encoding -- do not change
+nn = n // 4
+nm = 4  # number of blocks
+na = nm * nn  # length of array
+nn2 = (nn-1) // 2
+
+fixed_sums = 'segment_sums' in globals() and segment_sums is not None
+if fixed_sums:
+    assert(sum(i*i for i in segment_sums) == n)
+    print(f"{segment_sums=}")
+    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
+else:
+    segment_sums = None
+    num_ones = None
+
 import ast
 
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay', 'temperature']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay', 'temperature']
 
 # hparams can be updated in command line
 for param in hparams_list:
@@ -106,7 +126,7 @@ if getattr(args,"sample_size") and not getattr(args,"sample_batch_size"):
 
 hparams = {name: globals().get(name) for name in hparams_list}
 
-is_sweep = any(isinstance(v, (list, tuple)) for v in hparams.values())
+is_sweep = any(isinstance(v, list) for v in hparams.values())
 
 if is_sweep:
     if resume:
@@ -114,21 +134,11 @@ if is_sweep:
     sweep_config = {
         "method": "grid",
         "parameters": {
-            k: {"values": list(v)} if isinstance(v, (list, tuple)) else {"value": v}
+            k: {"values": v}
             for k, v in hparams.items()
             }
         }
 
-if n % 4 != 0:
-    raise SystemExit("good luck!")
-
-print(f'{n=}')
-
-# array encoding -- do not change
-nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array
-nn2 = (nn-1) // 2
 
 class ModelConfig:
     def __init__(self, **kwargs):
@@ -147,15 +157,6 @@ class ModelConfig:
 
 config = ModelConfig(**hparams)
 
-fixed_sums = 'segment_sums' in globals()
-if fixed_sums:
-    assert(sum(i*i for i in segment_sums) == n)
-    print(f"{segment_sums=}")
-    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
-else:
-    segment_sums = None
-    num_ones = None
-
 
 # symmetries
 from itertools import permutations
@@ -168,7 +169,7 @@ aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
 if fixed_sums:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if [segment_sums[i] for i in p]==segment_sums))
+    perms = torch.tensor(list(p for p in permutations(range(nm)) if (segment_sums[i] for i in p)==segment_sums))
     rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
 else:
     perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
