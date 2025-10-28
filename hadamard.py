@@ -129,12 +129,11 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Hadamard gen tally: {hada_tally}")
 
     record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays[hada_inds].cpu()), dim=0), dim=0)
-    if prefix == "selected":  # don't spam with H-matrices...
-        total_nh = len(record_stats.hada_tensor)
-        print(f"Total number of Hadamard: {total_nh}")
-        if total_nh>0:
-            print_arrays(record_stats.hada_tensor[0:1])  # doesn't appear on log??
-            write_arrays(logger.hada_file, record_stats.hada_tensor)
+    total_nh = len(record_stats.hada_tensor)
+    print(f"Total number of Hadamard: {total_nh}")
+    if total_nh>0:
+        print_arrays(record_stats.hada_tensor[0:1])  # doesn't appear on log??
+        write_arrays(logger.hada_file, record_stats.hada_tensor)
 
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
@@ -142,7 +141,7 @@ def record_stats(arrays, scores, gens, prefix=""):
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
         file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
 
-    if prefix:
+    if prefix and not prefix.startswith("debug"):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
 # scoring. technically we don't need this since the scores could be computed when improving;
@@ -528,7 +527,7 @@ def parallel_improve(arrays, scores, gens):
     parallel_tempering(arrays[B:], scores[B:], gens[B:])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens)
+        record_stats(arrays, scores, gens, prefix="debug pt")
     # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
@@ -536,7 +535,7 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve_joker
         if debugging:
             print(f"improve_joker time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens)
+            record_stats(arrays, scores, gens, prefix="debug improve_joker")
         #
         start_timer = timer()
         if fixed_sums:
@@ -546,7 +545,7 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve1p
         if debugging:
             print(f"improve1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens)
+            record_stats(arrays, scores, gens, prefix="debug improve1")
         #
         start_timer = timer()
         if fixed_sums:
@@ -556,13 +555,13 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve2
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens)
+            record_stats(arrays, scores, gens, prefix="debug improve2")
     start_timer = timer()
     improve_joker(arrays, scores)
     scores = score(arrays)  # don't trust improve_joker
     if debugging:
         print(f"improve_joker time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens)
+        record_stats(arrays, scores, gens, prefix="debug improve_joker")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)

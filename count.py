@@ -11,7 +11,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 import sys
 
-nn = 35  # size of basic block
+nn = 236//4  # size of basic block
 nm = 4
 n = nm * nn  # size of matrix
 na = nm * nn  # length of array
@@ -96,3 +96,4 @@ h = torch.unique(arrays1.to(torch.int8), dim=0, sorted=False)
 #h = set(tuple(a) for a in arrays.tolist())
 len1 = len(h)
 print(f'{len1}/{len0}')
+
