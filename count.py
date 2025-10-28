@@ -53,7 +53,7 @@ def derotate(arrays):
     a.copy_(sorted_a)
 
 # Prepare automorphisms
-aut = [ i for i in range(2,nn) if math.gcd(i,nn) == 1 ]
+aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
 aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut], device=device)
 aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)
 
@@ -91,7 +91,6 @@ arrays = torch.tensor(arrays, dtype=torch.int8, device=device)  # Convert to ten
 len0 = arrays.shape[0]
 arrays1 = find_aut(arrays)
 derotate(arrays1)
-
 h = torch.unique(arrays1.to(torch.int8), dim=0, sorted=False)
 #h = set(tuple(a) for a in arrays.tolist())
 len1 = len(h)
