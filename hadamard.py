@@ -279,8 +279,8 @@ def improve_greedy(x,scores):
         # scores = score(x)
 
 @torch.inference_mode()
-def improve_joker(arrays, scores):
-    print(f"improve_joker ", end=''); sys.stdout.flush()
+def improve_phases(arrays, scores):
+    print(f"improve_phases ", end=''); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
@@ -314,7 +314,7 @@ def improve_joker(arrays, scores):
             scores[improved_inds] = new_scores[improved]
             f[improved_inds,j] = fmod[improved]
             cnt += improved_inds.shape[0]
-            h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
+            h[:,1:] *= torch.exp(1j * (torch.rand((M,nn2), device=device)-.5))
         print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 # greedy random k-bit rotate
@@ -533,11 +533,11 @@ def parallel_improve(arrays, scores, gens):
     # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
-        improve_joker(arrays, scores)
-        scores = score(arrays)  # don't trust improve_joker
+        improve_phases(arrays, scores)
+        scores = score(arrays)  # don't trust improve_phases
         if debugging:
-            print(f"improve_joker time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug improve_joker")
+            print(f"improve_phases time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug improve_phases")
         #
         start_timer = timer()
         if fixed_sums:
@@ -559,11 +559,11 @@ def parallel_improve(arrays, scores, gens):
             print(f"improve2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug improve2")
     start_timer = timer()
-    improve_joker(arrays, scores)
-    scores = score(arrays)  # don't trust improve_joker
+    improve_phases(arrays, scores)
+    scores = score(arrays)  # don't trust improve_phases
     if debugging:
-        print(f"improve_joker time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug improve_joker")
+        print(f"improve_phases time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="debug improve_phases")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)
