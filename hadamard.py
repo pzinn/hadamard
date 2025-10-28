@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft, fixed_sums, num_ones
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, score_cf, fft, fixed_sums, num_ones
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -287,13 +287,13 @@ def improve_phases(arrays, scores):
     a = arrays.view(B, nm, nn)
     for j in range(nm):
         cnt.zero_()
-        ff = f*f.conj()
+        ff = score_cf * f*f.conj()
         ffs1 = ff.sum(dim=1) - ff[:,j]
         inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
             continue
-        h = f[inds,j] * torch.sqrt((1-ffs1[inds])/ff[inds,j])
+        h = f[inds,j] * torch.sqrt((1-ffs1[inds])*score_cf[j]/ff[inds,j])
         fmod = torch.empty((M,nn2+1), device=device, dtype=complex_dtype)
         x = torch.empty((M,nn), device=device, dtype=torch.int8)
         x2 = torch.empty((M,nn), device=device, dtype=real_dtype)
@@ -305,7 +305,7 @@ def improve_phases(arrays, scores):
             else:
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
-            fmod *= cst
+            fmod *= cst * score_cf[j]
             s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
             new_scores = s[:,0]+2*s[:,1:].sum(dim=1)
             improved = new_scores < scores[inds]
@@ -470,7 +470,7 @@ def derotate(arrays, scores=None):
         # negate if the chosen scalar product is > 0
         chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
         a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    if not fixed_sums:  # TODO even w/ fixed sums, there can be a partial permutation symmetry
+    """ # TODO reinstate
         # 2nd phase: permute the nmxnn parts
         # start with identity permutation for each batch
         perm = torch.arange(nm, device=device).expand(B, nm).clone()
@@ -483,6 +483,7 @@ def derotate(arrays, scores=None):
         # apply permutation to rows
         sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
         a.copy_(sorted_a)
+    """
     if params.test_score:
         scores2 = score(arrays)
         if (scores1-scores2).abs().max() > eps:

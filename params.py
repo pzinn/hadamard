@@ -5,7 +5,7 @@ if __name__ == "__main__":
 
 # hadamard matrix parameters
 n = 188  # size of matrix
-# segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
+# segment_sums = (3, 3, 1, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -57,13 +57,12 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-parser.add_argument("--bignum", action="store_true", help="Enable debug logging")  # PZJ: what is this for?
 
 import subprocess
 try:
@@ -88,7 +87,7 @@ print(f'{n=}')
 
 # array encoding -- do not change
 nn = n // 4
-nm = 4  # number of blocks
+nm = 3  # number of blocks
 na = nm * nn  # length of array
 nn2 = (nn-1) // 2
 
@@ -96,7 +95,7 @@ fixed_sums = 'segment_sums' in globals() and segment_sums is not None
 if fixed_sums:
     assert(sum(i*i for i in segment_sums) == n)
     print(f"{segment_sums=}")
-    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
+    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
 else:
     segment_sums = None
     num_ones = None
@@ -169,11 +168,11 @@ aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
 if fixed_sums:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if tuple(segment_sums[i] for i in p)==segment_sums))
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
+    perms = torch.tensor(list(p for p in permutations(range(nm)) if tuple(segment_sums[i+1] for i in p)==segment_sums[1:]), dtype=torch.long)
+    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn], dtype=torch.long)
 else:
-    perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
+    perms = torch.tensor(list(p for p in permutations(range(nm)) if p[0]==0), dtype=torch.long)
+    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2, 2, 2], dtype=torch.long)
 nrnd = rndmod.shape
 print("order of symmetry: ", rndmod.prod().item())
 
@@ -181,7 +180,7 @@ def rotate(array0):
     arrayx = torch.empty_like(array0)
     array0 = array0.view(-1,nm,nn)
     array = arrayx.view(-1,nm,nn)  # can do batches too (not currently used)
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
+    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.long).random_(), rndmod)
     # automorphisms
     array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
     # symmetry: random permute
@@ -192,7 +191,7 @@ def rotate(array0):
         array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
     if not fixed_sums:
         # symmetry: random signs
-        array.mul_((rnd[6:10]*2-1).unsqueeze(1))
+        array.mul_((rnd[5:8]*2-1).unsqueeze(1))
     #
     return arrayx
 
@@ -200,11 +199,13 @@ def rotate(array0):
 score_function = 'fft log determinant'
 
 cst = 1 / math.sqrt(n)
+score_cf = torch.tensor([2,1,1], dtype=torch.float32, device=device).unsqueeze(1)
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def score_fft(f):  # score in terms of precomputed fft
-    s = -2*torch.log(torch.real(f*f.conj()).sum(dim=1))
+    ff = torch.real(f*f.conj())
+    s = -2*torch.log((score_cf*ff).sum(dim=1))
     return s[:,0]+2*s[:,1:].sum(dim=1)
 def score(m):
     return score_fft(fft(m))
