@@ -128,10 +128,12 @@ def record_stats(arrays, scores, gens, prefix=""):
     hada_tally = { g : c for g, c in zip(hada_order.tolist(), hada_count.tolist()) if c > 0 }
     print(f"Hadamard gen tally: {hada_tally}")
 
-    record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,arrays[hada_inds].cpu()), dim=0), dim=0)
-    total_nh = len(record_stats.hada_tensor)
-    print(f"Total number of Hadamard: {total_nh}")
-    if total_nh>0:
+    if len(hada_inds) > 0:
+        new_hada_tensor = find_aut(arrays[hada_inds].to(device=device))
+        derotate(new_hada_tensor)
+        record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor,new_hada_tensor.cpu()), dim=0), dim=0)
+        total_nh = len(record_stats.hada_tensor)
+        print(f"Total number of Hadamard: {total_nh}")
         print_arrays(record_stats.hada_tensor[0:1])  # doesn't appear on log??
         write_arrays(logger.hada_file, record_stats.hada_tensor)
 
@@ -442,8 +444,8 @@ fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
 @torch.inference_mode()
-def derotate(arrays, scores):
-    if params.test_score:
+def derotate(arrays, scores=None):
+    if params.test_score and scores is not None:
         scores1 = score(arrays)
         if (scores-scores1).abs().max() > eps:
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(),(scores-scores1).abs().mean().item())
