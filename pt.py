@@ -53,7 +53,7 @@ def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     scores[accept] = scores_prop[accept]
 
 @torch.no_grad()
-def attempt_swaps(x, scores, gens):
+def attempt_swaps_vectorised(x, scores, gens):  # not used
     accepted = 0.
     total = 0
     for offset in (1,0):
@@ -98,16 +98,15 @@ def attempt_swaps(x, scores, gens):
         g2.copy_(g2_swapped)
     return accepted / total
 
-"""
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
     #  x: (nT, BperT, n)
     #  scores, gens: (nT, BperT)
     accepted = 0
     total = 0
-    for i in range(nT - 2, -1, -1):
-        invT1, invT2 = invT[i], invT[i+1]
-        E1, E2 = scores[i], scores[i+1]              # (BperT,)
+    for i in range(nT - 1, 0, -1):
+        invT1, invT2 = invT[i], invT[i-1]
+        E1, E2 = scores[i], scores[i-1]              # (BperT,)
         dE = (E2 - E1) * (invT1 - invT2)
         prob = torch.exp(-dE)
         accept = (torch.rand_like(prob) < prob)
@@ -115,18 +114,27 @@ def attempt_swaps(x, scores, gens):
         total += accept.numel()  # lazy
         # swap where accepted
         swap_mask = accept[:, None]            # (BperT,1)
-        x1, x2 = x[i].clone(), x[i+1].clone()
+        """
+        x1, x2 = x[i].clone(), x[i-1].clone()
         s1, s2 = E1.clone(), E2.clone()
-        g1, g2 = gens[i].clone(), gens[i+1].clone()
+        g1, g2 = gens[i].clone(), gens[i-1].clone()
         x[i] = torch.where(swap_mask, x2, x1)
-        x[i+1] = torch.where(swap_mask, x1, x2)
+        x[i-1] = torch.where(swap_mask, x1, x2)
         scores[i] = torch.where(accept, s2, s1)
-        scores[i+1] = torch.where(accept, s1, s2)
+        scores[i-1] = torch.where(accept, s1, s2)
         gens[i] = torch.where(accept, g2, g1)
-        gens[i+1] = torch.where(accept, g1, g2)
-    acc_rate = accepted.float() / total
-    return acc_rate
-"""
+        gens[i-1] = torch.where(accept, g1, g2)
+        """
+        xc = x[i,accept].clone()
+        x[i,accept] = x[i-1,accept]
+        x[i-1,accept] = xc
+        scoresc = scores[i,accept].clone()
+        scores[i,accept] = scores[i-1,accept]
+        scores[i-1,accept] = scoresc
+        gensc = gens[i,accept].clone()
+        gens[i,accept] = gens[i-1,accept]
+        gens[i-1,accept] = gensc
+    return accepted / total
 
 iterations = na * 50
 swap_interval = 50

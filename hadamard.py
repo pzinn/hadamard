@@ -523,7 +523,7 @@ def parallel_improve(arrays, scores, gens):
     arrays = arrays[inds]
     gens = gens[inds]
     B0 = torch.searchsorted(scores, eps)  # don't touch H-matrices
-    B1 = arrays.shape[0]//4  # roughly at most 3/4 used
+    B1 = arrays.shape[0]//10  # roughly at most 9/10 used
     B = (max(B0,B1)//nT)*nT
     parallel_tempering(arrays[B:], scores[B:], gens[B:])
     if debugging:
