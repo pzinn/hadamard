@@ -169,7 +169,7 @@ aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
 
 # Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
 if fixed_sums:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if (segment_sums[i] for i in p)==segment_sums))
+    perms = torch.tensor(list(p for p in permutations(range(nm)) if tuple(segment_sums[i] for i in p)==segment_sums))
     rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
 else:
     perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
