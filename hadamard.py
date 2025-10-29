@@ -293,7 +293,7 @@ def improve_phases(arrays, scores):
         M = inds.shape[0]
         if M == 0:
             continue
-        h = f[inds,j] * torch.sqrt((1-ffs1[inds])*score_cf[j]/ff[inds,j])
+        h = f[inds,j] * torch.sqrt((1-ffs1[inds])/ff[inds,j])
         fmod = torch.empty((M,nn2+1), device=device, dtype=complex_dtype)
         x = torch.empty((M,nn), device=device, dtype=torch.int8)
         x2 = torch.empty((M,nn), device=device, dtype=real_dtype)
@@ -305,8 +305,8 @@ def improve_phases(arrays, scores):
             else:
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
-            fmod *= cst * score_cf[j]
-            s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
+            fmod *= cst
+            s = -2*torch.log(torch.real(ffs1[inds] + score_cf[j]*fmod*fmod.conj()))
             new_scores = s[:,0]+2*s[:,1:].sum(dim=1)
             improved = new_scores < scores[inds]
             improved_inds = inds[improved]
