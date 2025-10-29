@@ -537,7 +537,7 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve_phases
         if debugging:
             print(f"improve_phases time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug improve_phases")
+            record_stats(arrays, scores, gens, prefix="debug i0")
         #
         start_timer = timer()
         if fixed_sums:
@@ -547,7 +547,7 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve1p
         if debugging:
             print(f"improve1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug improve1")
+            record_stats(arrays, scores, gens, prefix="debug i1")
         #
         start_timer = timer()
         if fixed_sums:
@@ -557,13 +557,13 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve2
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug improve2")
+            record_stats(arrays, scores, gens, prefix="debug i2")
     start_timer = timer()
     improve_phases(arrays, scores)
     scores = score(arrays)  # don't trust improve_phases
     if debugging:
         print(f"improve_phases time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug improve_phases")
+        record_stats(arrays, scores, gens, prefix="debug i0")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)
