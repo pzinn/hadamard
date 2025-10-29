@@ -13,9 +13,10 @@ np.set_printoptions(threshold=sys.maxsize)
 
 
 def upblock(x):
-    n = x.shape[0]
-    nn = n // 4
-    _aa, _bb, _cc, _dd = x.reshape(4, -1)
+    na = x.shape[0]
+    nn = na // 3
+    _aa, _cc, _dd = x.reshape(3, nn)
+    _bb = _aa
     A = sl.circulant(_aa)
     B = sl.circulant(_bb)
     C = sl.circulant(_cc)
@@ -27,9 +28,10 @@ def upblock(x):
                      [-D@F, -F@C, F@B, A]])
 
 def upblock_mod(x):
-    n = x.shape[0]
-    nn = n // 4
-    _aa, _bb, _cc, _dd = x.reshape(4, -1)
+    na = x.shape[0]
+    nn = na // 3
+    _aa, _cc, _dd = x.reshape(3, nn)
+    _bb = _aa
     A = sl.circulant(_aa)
     B = 2*sl.circulant(_bb)
     C = 3*sl.circulant(_cc)
@@ -42,7 +44,8 @@ def upblock_mod(x):
 
 
 def score(a):
-    n = len(a)
+    na = len(a)
+    n = na // 3 * 4
     m = upblock(a)
     neye = n * np.eye(n, dtype=np.int64)
     mm = m.dot(m.T)-neye
@@ -59,7 +62,7 @@ img_saved = False
 def treat(s):
     global img_saved
     a = convert(s)
-    n = len(a)
+    n = len(a)//3*4
     # print(m)
     s = score(a)
     print(n, s)
