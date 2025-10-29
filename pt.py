@@ -1,5 +1,5 @@
 import torch
-from params import na, nm, nn, score, device, fixed_sums
+from params import na, nm, nn, score, device, fixed_sums, config
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
@@ -136,9 +136,9 @@ def attempt_swaps(x, scores, gens):
         gens[i-1,accept] = gensc
     return accepted / total
 
-iterations = na * 50
 swap_interval = 50
-p = .25  # average k is 1/(1-p)
+iterations = na * swap_interval * config.num_improve
+p = .25
 invlogp = 1 / torch.log(torch.tensor(p))
 def parallel_tempering(x, scores, gens):
     global r, invT
@@ -152,11 +152,11 @@ def parallel_tempering(x, scores, gens):
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
-            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp)
+            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is (3-p)/(1-p)
             k = int(k.clamp(3,nn//2))
             improve_T_fixed_sums(x, scores, k=k)
         else:
-            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)
+            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is 1/(1-p)
             k = int(k.clamp(1,na//2))
             improve_T(x, scores, k=k)
         # --- replica swaps ---
