@@ -34,7 +34,7 @@ if fixed_sums:
         return a
     @torch.inference_mode()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(4)], dim=1)
+        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(nm)], dim=1)
 else:
     @torch.inference_mode()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
@@ -98,7 +98,7 @@ def record_stats(arrays, scores, gens, prefix=""):
 
     if fixed_sums:
         # check #1's
-        a = arrays.view(B, 4, nn)
+        a = arrays.view(B, nm, nn)
         k = (a.sum(dim=2).to(device=device)+nn)//2
         kcheck = (k == num_ones).all(dim=1)
         print(f"Correct # ones: {kcheck.sum()/B}")
@@ -334,7 +334,7 @@ def improve_greedy_fixed(x,scores):
         cnt.zero_()
         # create all at once a bunch of subsets to sample
         lst=[]
-        for j in range(4):
+        for j in range(nm):
             r1=j*nn
             r=nn
             r2=r+r1
@@ -360,9 +360,9 @@ def improve_greedy_fixed(x,scores):
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
-sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(4)], indexing='ij')
-sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, 4)    # (p^4, 4)
-sw = sw0[sw_idx].reshape(-1, 4 * ksw)
+sw_grids = torch.meshgrid(*[torch.arange(psw, device=device) for _ in range(nm)], indexing='ij')
+sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, nm)    # (p^nm, k)
+sw = sw0[sw_idx].reshape(-1, nm * ksw)
 
 @torch.inference_mode()
 def improve4x4_fixed(x,scores):  # optimal 4x4 bit switch
@@ -370,13 +370,13 @@ def improve4x4_fixed(x,scores):  # optimal 4x4 bit switch
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B=x.shape[0]
     f = fft(x)
-    fl = f.view(B,4*(nn2+1))
+    fl = f.view(B,nm*(nn2+1))
     fmod = torch.empty_like(f)
-    flmod = fmod.view(B,4*(nn2+1))
-    # first find 4x(2+2) locations for optimal flips
-    best_scores = torch.full((B,4,2,2), float('inf'), dtype=real_dtype, device=device)
-    inds = torch.empty((B,4,2,2), dtype=torch.long, device=device)
-    for j in range(4):
+    flmod = fmod.view(B,nm*(nn2+1))
+    # first find nmx(2+2) locations for optimal flips
+    best_scores = torch.full((B,nm,2,2), float('inf'), dtype=real_dtype, device=device)
+    inds = torch.empty((B,nm,2,2), dtype=torch.long, device=device)
+    for j in range(nm):
         r1=j*nn
         r=nn
         r2=r+r1
@@ -428,8 +428,8 @@ def improve4x4_fixed(x,scores):  # optimal 4x4 bit switch
     print(f'{cnt/B}')
 
 def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
-    a = arrays.view(-1, 4, nn)
-    for j in range(4):
+    a = arrays.view(-1, nm, nn)
+    for j in range(nm):
         while True:
             k = (a[:, j]==1).sum(dim=1)
             mask1 = k < num_ones[j]
