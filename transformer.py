@@ -215,29 +215,6 @@ def array_to_string(signs):  # int8 tensor to int tensor
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
 
-# -----------------------------------------------------------------------------
-# helper functions for creating the training and test Datasets that emit words
-
-
-class CharDataset(Dataset):
-    def __init__(self, words):
-        self.words = words
-    def __len__(self):
-        return len(self.words)
-    def contains(self, word):
-        return word in self.words
-    def __getitem__(self, idx):
-        array0 = self.words[idx]
-        array = rotate(array0)
-        #array = array0.clone()
-        if score:  # for testing purposes: does the randomisation respect score?
-            if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
-                raise RuntimeError("array not +-1",array)
-            scores = score(torch.stack((array0,array.view(na))))
-            if torch.abs(scores[0]-scores[1]) > 2e-5:
-                raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
-        return array
-
 def train(data, **kwargs):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
@@ -269,30 +246,23 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    data.share_memory_()
+    # below is no no: data is read-only. otoh the data is supposed to be already randomised
+    """
     for i in range(test_set_size):
         j = torch.randint(i, data_len, ()).item()
         data[[i, j]] = data[[j, i]]
+    """
     test_data = data[:test_set_size]
     train_data = data[test_set_size:]
-    print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
+    test_len = len(test_data)
+    train_len = len(train_data)
+    print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
 
-    # wrap in dataset objects
-    train_dataset = CharDataset(train_data)
-    test_dataset = CharDataset(test_data)
 
     # init optimiser
-    if device.startswith('cuda'):
-        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
-    else:
-        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
+    optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
 
-    # init sampler, dataloader
-    train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
-    batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
-    # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = array_to_string(torch.stack([ts for ts in test_dataset], dim=0).to(device)).cpu()  # just get it all, and encode it too
+    test_sample = array_to_string(rotate(test_data)).cpu()  # just get it all, and encode it too
 
     # training loop
     step = 0
@@ -300,23 +270,13 @@ def train(data, **kwargs):
     best_loss = evaluate(test_sample)
     logger.record_loss(best_loss, step, "test")
     while True:
-        # get the next batch, ship to device, and unpack it to input and target
-        try:
-            batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
-        except StopIteration:
-            # Restart iterator if at end of epoch
-            batch_iter = iter(train_loader)
-            batch = next(batch_iter)
-        # Train on the current batch
         # feed into the model
-        logits, loss = model(array_to_string(batch.to(device, non_blocking=True)), compute_loss=True)
+        batch = array_to_string(rotate(train_data[torch.randint(train_len,(training_batch_size,))].to(device, non_blocking=True)))
+        logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError("loss is NaN")
-        
         for param_group in optimiser.param_groups:
             param_group['lr'] = lr_sched(step)
-
-
         # calculate the gradient, update the weights
         model.zero_grad(set_to_none=True)
         loss.backward()
@@ -357,7 +317,7 @@ if True: #not device.startswith('cuda'):
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
         X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
+        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8, pin_memory=True)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()

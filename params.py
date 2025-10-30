@@ -32,7 +32,7 @@ gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
 sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
-num_workers = 6  # for cpu parallelisation
+num_workers = None  # for cpu parallelisation -- not used in this version
 
 resume = False  # whether to resume a previous run
 # resume = True
@@ -57,7 +57,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -164,37 +164,37 @@ import torch
 import math
 
 # Prepare automorphisms
-aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
-aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
+aut = torch.tensor([i for i in range(1,nn) if math.gcd(i,nn) == 1], device=device)
 
-# Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-if fixed_sums:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if tuple(segment_sums[i] for i in p)==segment_sums))
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn], dtype=torch.int64)
-else:
-    perms = torch.tensor(list(p for p in permutations(range(nm))), dtype=torch.long)
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
-nrnd = rndmod.shape
-print("order of symmetry: ", rndmod.prod().item())
+# Prepare permutations
+perms = torch.tensor(list(p for p in permutations(range(nm)) if not fixed_sums or tuple(segment_sums[i] for i in p)==segment_sums), dtype=torch.long, device=device)
+#print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array0):
-    arrayx = torch.empty_like(array0)
-    array0 = array0.view(-1,nm,nn)
-    array = arrayx.view(-1,nm,nn)  # can do batches too (not currently used)
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    # automorphisms
-    array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
-    # symmetry: random permute
-    if len(perms) > 0:
-        array.copy_(array[:,perms[rnd[0]]])
-    # symmetry: random rotation/flip
-    for j in range(nm):
-        array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
+    B = array0.shape[0]
+    array0 = array0.to(device=device).view(B, nm, nn)
+    # --- random parameters per batch ---
+    perm_idx = torch.randint(len(perms), (B,), device=device)
+    a_idx    = torch.randint(len(aut), (B,), device=device)      # automorphism
+    flips    = torch.randint(2, (B, nm), device=device) * 2 - 1  # ±1
+    shifts   = torch.randint(nn, (B, nm), device=device)         # translation
+    # --- combined affine action on Z/nnZ ---
+    base = torch.arange(nn, device=device)                       # 0..nn-1
+    a = aut[a_idx].unsqueeze(1).expand(B, nm)                    # (B,nm)
+    coeff = (a * flips) % nn                                     # ±a mod nn
+    shift_idx = (coeff.unsqueeze(-1) * base + shifts.unsqueeze(-1)) % nn  # (B,nm,nn)
+    # Apply combined index transformation
+    array = torch.gather(array0, 2, shift_idx)
+    # --- block permutation per batch ---
+    perm = perms[perm_idx]
+    # array = array[torch.arange(B)[:, None], perm]
+    perm_expanded = perm.unsqueeze(-1).expand(B, nm, nn)
+    array = torch.gather(array, 1, perm_expanded)
     if not fixed_sums:
-        # symmetry: random signs
-        array.mul_((rnd[6:10]*2-1).unsqueeze(1))
-    #
-    return arrayx
+        signs    = torch.randint(2, (B, nm), device=device, dtype=torch.int8) * 2 - 1  # ±1
+        # --- independent overall signs ---
+        array *= signs.unsqueeze(-1)
+    return array
 
 # obsolete: only one scoring function implemented
 score_function = 'fft log determinant'

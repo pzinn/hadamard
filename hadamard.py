@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft, fixed_sums, num_ones
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, score_fft, fft, fixed_sums, num_ones, aut
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -32,11 +32,11 @@ if fixed_sums:
         rows = torch.arange(B, device=device).unsqueeze(1)
         a[rows, topk] = 1
         return a
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
         return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(nm)], dim=1)
 else:
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
         return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
 
@@ -488,22 +488,22 @@ def derotate(arrays, scores=None):
         if (scores1-scores2).abs().max() > eps:
             raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
 
-aut1 = torch.tensor([ i for i in range(1,nn2+1) if math.gcd(i,nn) == 1 ], device=device)  # variant of aut that stops at nn2
-aut_inds_gpu = aut_inds.to(device=device)
+aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
+aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
 
-@torch.inference_mode()
+@torch.no_grad()
 def apply_aut(idx,arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B, nm, nn)
     arrays = torch.empty_like(arrays0)
     arrays4 = arrays.view(B, nm, nn)
     # automorphism
-    inds = aut_inds_gpu[idx]
+    inds = aut_inds[idx]
     inds_expanded = inds.unsqueeze(1).expand(B, nm, nn)
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
-@torch.inference_mode()
+@torch.no_grad()
 def find_aut(arrays):
     f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
@@ -512,6 +512,7 @@ def find_aut(arrays):
     arrays1 = apply_aut(idx, arrays)
     return arrays1
 
+@torch.no_grad()
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
@@ -572,6 +573,7 @@ def parallel_improve(arrays, scores, gens):
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
+@torch.no_grad()
 def best_from(arrays, scores, gens):
     # deduplicate
     arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
@@ -590,6 +592,12 @@ def best_from(arrays, scores, gens):
     gens = min_gens[idx]
     return arrays, scores, gens
 
+def randomise(arrays, scores, gens):
+    B = arrays.shape[0]
+    p = torch.randperm(B, device=device)
+    return arrays[p], scores[p], gens[p]
+
+@torch.no_grad()
 def batch_improve(arrays0, scores0, gens0):
     torch.set_float32_matmul_precision('highest')
     if device.startswith('cuda'):
@@ -610,7 +618,8 @@ def batch_improve(arrays0, scores0, gens0):
             scores = torch.cat((scores, new_scores), dim=0)
             gens = torch.cat((gens, new_gens), dim=0)
             arrays, scores, gens = best_from(arrays, scores, gens)
-    return arrays.to(device='cpu', dtype=torch.int8), scores.cpu(), gens.cpu()
+    arrays, scores, gens = randomise(arrays, scores, gens)
+    return arrays.cpu(), scores.cpu(), gens.cpu()
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
