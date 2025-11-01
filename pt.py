@@ -126,7 +126,7 @@ def attempt_swaps(x, scores, gens):
     return accepted / total
 
 swap_interval = 50
-iterations = na * swap_interval * config.num_improve
+iterations = na * 40 * config.num_improve
 p = .25
 invlogp = 1 / torch.log(torch.tensor(p))
 def parallel_tempering(x, scores, gens):

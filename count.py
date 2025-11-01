@@ -6,7 +6,7 @@
 import torch
 import math
 
-score_type = torch.float32
+real_dtype = torch.float32
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 import sys
@@ -28,7 +28,7 @@ nn2 = (nn-1)//2
 print(f"{n=}")
 
 
-vec = torch.rand((nn,),device=device,dtype=torch.float32)  # doesn't really matter, used for ordering
+vec = torch.frac(torch.pi ** torch.arange(1,nn+1, device=device, dtype=real_dtype))  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)

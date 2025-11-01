@@ -59,7 +59,7 @@ def record_stats(arrays, scores, gens, prefix=""):
         return
     # compute autocorrelation by MC
     mc_size = 1000
-    s = (arrays[torch.randint(B,(mc_size,))] * arrays[torch.randint(B,(mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)
+    s = (arrays[torch.randint(B,(mc_size,))] * arrays[torch.randint(B,(mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)  # which device is this random on? TODO
     """
     # proper/slow way: REDO ONE DAY
     mc_size = 1000
@@ -191,10 +191,10 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             mask2 = k > num_ones[j]
             if not mask1.any() and not mask2.any():
                 break
-            a[mask1, j, torch.randint(nn, ())] = 1  # lazy
-            a[mask2, j, torch.randint(nn, ())] = -1
+            a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
+            a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-vec = torch.rand((nn,), device=device, dtype=real_dtype)  # doesn't really matter, used for ordering
+vec = torch.frac(torch.pi ** torch.arange(1,nn+1, device=device, dtype=real_dtype))  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
