@@ -41,7 +41,7 @@ class CausalSelfAttention(torch.nn.Module):
         # output projection
         self.c_proj = torch.nn.Linear(config.n_embd, config.n_embd)
         # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.causal_mask=torch.triu(torch.ones(config.block_size, config.block_size,
+        self.causal_mask = torch.triu(torch.ones(config.block_size, config.block_size,
                                                device=device, dtype=torch.bool),diagonal=1).view(1, 1, config.block_size, config.block_size)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -51,15 +51,15 @@ class CausalSelfAttention(torch.nn.Module):
         nh = self.n_head
         hs = C // nh
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, nh, hs).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, nh, hs).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, nh, hs).transpose(1, 2) # (B, nh, T, hs)
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        q = q.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        v = v.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(hs))
-        att = att.masked_fill(self.causal_mask[:,:,:T,:T], float('-inf'))
+        att = att.masked_fill(self.causal_mask[:, :, :T, :T], float('-inf'))
         att = F.softmax(att, dim=-1)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
         # output projection
         y = self.c_proj(y)
@@ -105,13 +105,13 @@ class Transformer(torch.nn.Module):
 
     def forward(self, idx0, compute_loss=False):
         b = idx0.shape[0]
-        idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
+        idx = idx0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1] + 1
         # forward the transformer itself
-        pos_emb = self.transformer.wpe.weight[:t] # position embeddings of shape (1, t, n_embd)
+        pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
-        x[:,1:,:] += tok_emb
+        x[:, 1:, :] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -196,19 +196,19 @@ def evaluate(sample):
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:,:,:nn].to(dtype=torch.int8).view(B, na)
+    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
 @torch.no_grad()
 def string_to_array_cpu(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions_cpu) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:,:,:nn].to(dtype=torch.int8).view(B, na)
+    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
 @torch.no_grad()
 def array_to_string(signs):  # int8 tensor to int tensor
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
-    signs1[:,:,:nn] = signs.view(B, nm, nn)
+    signs1[:, :, :nn] = signs.view(B, nm, nn)
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
@@ -298,7 +298,7 @@ def train(data, **kwargs):
                 best_loss = test_loss
                 save_step = step
             else:
-                print('') # to have nicely aligned test / train stats :)
+                print('')  # to have nicely aligned test / train stats :)
                 sys.stdout.flush()
                 if test_loss - loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
@@ -309,7 +309,7 @@ def train(data, **kwargs):
         file.write(f'training: {best_loss=} at {save_step=}\n')
 
 
-if True: #not device.startswith('cuda'):
+if True:  #not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
     @torch.no_grad()
     def sample():
@@ -317,7 +317,7 @@ if True: #not device.startswith('cuda'):
         model.need_reload = False
         torch.set_float32_matmul_precision('high')
         X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8, pin_memory=True)
+        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
@@ -335,7 +335,7 @@ else:
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
-        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
+        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
         X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
