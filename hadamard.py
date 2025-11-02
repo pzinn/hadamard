@@ -289,37 +289,31 @@ def parallel_improve(arrays, scores, gens):
     # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
-        improve_phases(arrays, scores)
-        scores = score(arrays)  # don't trust improve_phases
-        if debugging:
-            print(f"improve_phases time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i0")
-        #
-        start_timer = timer()
         if fixed_sums:
             improve_greedy_fixed(arrays, scores)
         else:
-            improve1p(arrays, scores)
-        scores = score(arrays)  # don't trust improve1p
+            improve_greedy(arrays, scores)
+        scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve1 time: {timer() - start_timer}")
+            print(f"improve_greedy time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i1")
         #
         start_timer = timer()
         if fixed_sums:
             improve4x4_fixed(arrays, scores)
         else:
-            improve_greedy(arrays, scores)
-        scores = score(arrays)  # don't trust improve2
+            improve1p(arrays, scores)
+        scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve2 time: {timer() - start_timer}")
+            print(f"improve1p time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i2")
-    start_timer = timer()
-    improve_phases(arrays, scores)
-    scores = score(arrays)  # don't trust improve_phases
-    if debugging:
-        print(f"improve_phases time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug i0")
+        #
+        start_timer = timer()
+        improve_phases(arrays, scores)
+        scores = score(arrays)  # don't trust improve
+        if debugging:
+            print(f"improve_phases time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug i3")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)

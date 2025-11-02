@@ -65,10 +65,11 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
 
+"""
 # greedy random k-bit flip
 @torch.inference_mode()
-def improve_greedy(x,scores):
-    print(f"improve_greedy ", end=''); sys.stdout.flush()
+def improve_greedy_alt(x, scores):
+    print("improve_greedy ", end=''); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -76,26 +77,30 @@ def improve_greedy(x,scores):
     fmod = torch.empty_like(f)
     flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(2, 10):
+    k = 2
+    ns = 5 * n  # dunno
+    while ns > 0 and k <= nn2:
         cnt.zero_()
-        for _ in range(na):
-            inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
+        # create all at once a bunch of subsets to sample
+        all_inds = torch.unique(torch.topk(torch.rand(ns, na, device=device), k).indices.sort(dim=1).values, dim=0)
+        n_inds = all_inds.shape[0]
+        for i in range(n_inds):
+            inds = all_inds[i]
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
             flmod.add_(fl)
             new_scores = score_fft(fmod)
-            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
             fl[improved_inds] = flmod[improved_inds]
             x[improved_inds.unsqueeze(1), inds] *= -1
             scores[improved_inds] = new_scores[improved_inds]
             cnt += improved_inds.shape[0]
-        print(f'{k=} {cnt/B}')
-        # recompute scores for accuracy?
-        # f = fft(x)
-        # scores = score(x)
+        print(f'{k=} {cnt} ({cnt/B})')
+        ns >>= 1
+        k += 1
 
 # greedy random k-bit rotate
 @torch.inference_mode()
-def improve_greedy_fixed(x, scores):
+def improve_greedy_fixed_alt(x, scores):
     print("improve_greedy_fixed ", end=''); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
@@ -129,6 +134,68 @@ def improve_greedy_fixed(x, scores):
         print(f'{k=} {cnt} ({cnt/B})')
         ns >>= 1
         k += 2
+"""
+
+# greedy random k-bit flip
+p = .5
+invlogp = 1 / math.log(p)
+@torch.inference_mode()
+def improve_greedy(x, scores):
+    print("improve_greedy ", end=''); sys.stdout.flush()
+    B = x.shape[0]
+    # precompute fft
+    f = fft(x)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(50):  #?
+        k = 2 + torch.log(torch.rand(()))*invlogp
+        k = int(k.clamp(2, na//2))
+        n_inds = na // k
+        # create all at once a bunch of subsets to sample
+        all_inds = torch.randperm(na, device=device)[:n_inds*k].view(n_inds,k)
+        for i in range(n_inds):
+            inds = all_inds[i]
+            torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
+            flmod.add_(fl)
+            new_scores = score_fft(fmod)
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
+            fl[improved_inds] = flmod[improved_inds]
+            x[improved_inds.unsqueeze(1), inds] *= -1
+            scores[improved_inds] = new_scores[improved_inds]
+            cnt += improved_inds.shape[0]
+    print(f'{cnt} ({cnt/B})')
+
+@torch.inference_mode()
+def improve_greedy_fixed(x, scores):
+    print("improve_greedy_fixed ", end=''); sys.stdout.flush()
+    B = x.shape[0]
+    # precompute fft
+    f = fft(x)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(600):  #?
+        j = torch.randint(nm, (1,1), device=device)
+        k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*.5*invlogp)
+        k = int(k.clamp(3, nn//2))
+        n_inds = nn // k
+        # create all at once a bunch of subsets to sample
+        all_inds = j*nn + torch.randperm(nn, device=device)[:n_inds*k].view(n_inds,k)
+        for i in range(n_inds):
+            inds = all_inds[i]
+            xx = torch.roll(x[:, inds], shifts=1, dims=1)
+            torch.matmul(((x[:, inds]-xx) >> 1).to(complex_dtype), wrng_all[inds], out=flmod)
+            flmod.add_(fl)
+            new_scores = score_fft(fmod)
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
+            fl[improved_inds] = flmod[improved_inds]
+            x[improved_inds.unsqueeze(1), inds] = xx[improved_inds]
+            scores[improved_inds] = new_scores[improved_inds]
+            cnt += improved_inds.shape[0]
+    print(f'{cnt} ({cnt/B})')
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
