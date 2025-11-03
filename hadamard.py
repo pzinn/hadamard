@@ -138,7 +138,7 @@ def record_stats(arrays, scores, gens, prefix=""):
         file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
 
     if prefix and not prefix.startswith("debug"):
-        logger.record_scores(prefix, scores, gens, mean_score, nh)
+        logger.record_scores(prefix, scores, mean_score, gens_tally, nh)
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
