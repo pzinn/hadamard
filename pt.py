@@ -16,7 +16,9 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     scores_prop = score(x).view(nT, BperT)
     # Metropolis acceptance
     dE = scores_prop - scores
-    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    #accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    #accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # remove first test?
+    accept = dE < -torch.log(torch.rand_like(dE)) * T[:,None]  # remove first test?
     # broadcast the mask to k bits and gather flips to revert
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
@@ -35,19 +37,21 @@ def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     scores_prop = score(x).view(nT, BperT)
     # Metropolis acceptance
     dE = scores_prop - scores
-    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    # accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
+    accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # remove first test?
     # broadcast the mask to k bits and gather flips to revert
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, flip_vals_rot))
     scores[accept] = scores_prop[accept]
 
+"""
 @torch.no_grad()
 def attempt_swaps_vectorised(x, scores, gens):  # not used
     accepted = 0.
     total = 0
     for offset in (1, 0):
-        # 1. Prepare E and invT for adjacent pairs
+        # 1. Prepare E and T for adjacent pairs
         # E1, E2 are the scores for T_i and T_{i+1} across all (nT-1) pairs
         x1 = x[offset:-1:2]
         x2 = x[offset+1::2]
@@ -56,14 +60,14 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used
         g1 = gens[offset:-1:2]
         g2 = gens[offset+1::2]
         # invT1, invT2 are the inverse temperatures for the same pairs
-        invT1 = invT[offset:-1:2].unsqueeze(1)  # (nT-1, 1)
-        invT2 = invT[offset+1::2].unsqueeze(1)   # (nT-1, 1)
+        T1 = T[offset:-1:2].unsqueeze(1)  # (nT-1, 1)
+        T2 = T[offset+1::2].unsqueeze(1)   # (nT-1, 1)
         # 2. Calculate Acceptance Probability (Metropolis Criterion)
-        # The term is: dE = (E2 - E1) * (invT1 - invT2)
+        # The term is: dE = (E2 - E1) * (1/T1 - 1/T2)
         # invT are column vectors, E are matrices, ensuring correct broadcasting
-        prob = torch.exp(-(s2 - s1) * (invT1 - invT2))  # (nT-1, BperT)
+        prob =   # (nT-1, BperT)
         # 3. Acceptance Mask
-        swap_mask = (torch.rand_like(prob) < prob)  # (nT-1, BperT)
+        swap_mask = torch.rand_like(prob) < torch.exp(-(s2 - s1) * (invT1 - invT2))  # (nT-1, BperT)
         # 4. Calculate Acceptance Rate
         accepted += swap_mask.sum().float()
         total += swap_mask.numel()
@@ -87,6 +91,7 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used
         g1.copy_(g1_swapped)
         g2.copy_(g2_swapped)
     return accepted / total
+"""
 
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
@@ -94,36 +99,34 @@ def attempt_swaps(x, scores, gens):
     #  scores, gens: (nT, BperT)
     accepted = 0
     total = 0
-    for i in range(nT - 1, 0, -1):
-        invT1, invT2 = invT[i], invT[i-1]
-        E1, E2 = scores[i], scores[i-1]              # (BperT,)
-        dE = (E2 - E1) * (invT1 - invT2)
-        prob = torch.exp(-dE)
-        accept = (torch.rand_like(prob) < prob)
+    for i in range(nT-1):
+        T1, T2 = T[i], T[i+1]
+        E1, E2 = scores[i], scores[i+1]              # (BperT,)
+        accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
         accepted += accept.sum()
         total += accept.numel()  # lazy
         # swap where accepted
         """
         swap_mask = accept[:, None]            # (BperT,1)
-        x1, x2 = x[i].clone(), x[i-1].clone()
+        x1, x2 = x[i].clone(), x[i+1].clone()
         s1, s2 = E1.clone(), E2.clone()
-        g1, g2 = gens[i].clone(), gens[i-1].clone()
+        g1, g2 = gens[i].clone(), gens[i+1].clone()
         x[i] = torch.where(swap_mask, x2, x1)
-        x[i-1] = torch.where(swap_mask, x1, x2)
+        x[i+1] = torch.where(swap_mask, x1, x2)
         scores[i] = torch.where(accept, s2, s1)
-        scores[i-1] = torch.where(accept, s1, s2)
+        scores[i+1] = torch.where(accept, s1, s2)
         gens[i] = torch.where(accept, g2, g1)
-        gens[i-1] = torch.where(accept, g1, g2)
+        gens[i+1] = torch.where(accept, g1, g2)
         """
         xc = x[i, accept].clone()
-        x[i, accept] = x[i-1, accept]
-        x[i-1, accept] = xc
+        x[i, accept] = x[i+1, accept]
+        x[i+1, accept] = xc
         scoresc = scores[i, accept].clone()
-        scores[i, accept] = scores[i-1, accept]
-        scores[i-1, accept] = scoresc
+        scores[i, accept] = scores[i+1, accept]
+        scores[i+1, accept] = scoresc
         gensc = gens[i, accept].clone()
-        gens[i, accept] = gens[i-1, accept]
-        gens[i-1, accept] = gensc
+        gens[i, accept] = gens[i+1, accept]
+        gens[i+1, accept] = gensc
     return accepted / total
 
 swap_interval = 50
@@ -131,10 +134,13 @@ iterations = na * 40 * config.num_improve
 p = .25
 invlogp = 1 / math.log(p)
 def parallel_tempering(x, scores, gens):
-    global r, invT
-    invT = torch.logspace(r, 0, nT, device=device)
+    global r, T
+    T = torch.logspace(0, -r, nT, device=device)
+    T[nT-1] = 0.
     B = x.shape[0]
     BperT = B // nT  # should divide please
+    if BperT == 0:
+        return
     x = x.view(nT, BperT, na)
     scores = scores.view(nT, BperT)
     gens = gens.view(nT, BperT)

@@ -140,6 +140,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     if prefix and not prefix.startswith("debug"):
         logger.record_scores(prefix, scores, gens, mean_score, nh)
 
+
 # scoring. technically we don't need this since the scores could be computed when improving;
 # but useful for logging/stats. also generates random data at gen 0
 def parallel_score(arrays):
@@ -276,13 +277,12 @@ def parallel_improve(arrays, scores, gens):
         fix_num_ones(arrays)
     # step A: parallel tempering
     start_timer = timer()
-    scores, inds = torch.sort(scores)
+    scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
-    B0 = torch.searchsorted(scores, eps)  # don't touch H-matrices
-    B1 = arrays.shape[0]//10  # roughly at most 9/10 used
-    B = (max(B0, B1)//nT)*nT
-    parallel_tempering(arrays[B:], scores[B:], gens[B:])
+    B0 = torch.searchsorted(-scores, -eps)  # don't touch H-matrices
+    B1 = B0//nT*nT
+    parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug pt")
