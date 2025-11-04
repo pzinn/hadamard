@@ -315,6 +315,8 @@ if True:  #not device.startswith('cuda'):
     def sample():
         load_model()
         model.need_reload = False
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
         arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
@@ -323,6 +325,7 @@ if True:  #not device.startswith('cuda'):
             print('*', end=''); sys.stdout.flush()
             generate(X, config.block_size, do_sample=True)
             arrays_cpu[i:j] = string_to_array(X)
+        print('')
         return arrays_cpu
 else:
     # sample with CPU double buffering TODO reinstate at some point
@@ -354,4 +357,5 @@ else:
             if i > 0:
                 arrays_cpu[(i-1)*config.sample_batch_size:i*config.sample_batch_size] = string_to_array_cpu(X_cpu[idx])
             idx = 1 - idx
+        print('')
         return arrays_cpu
