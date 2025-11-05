@@ -26,11 +26,11 @@ if fixed_sums:
         rows = torch.arange(B, device=device).unsqueeze(1)
         a[rows, topk] = 1
         return a
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
         return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(nm)], dim=1)
 else:
-    @torch.no_grad()
+    @torch.inference_mode()
     def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
         return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
 
@@ -247,7 +247,7 @@ def derotate(arrays, scores=None):
 aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
 aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
 
-@torch.no_grad()
+@torch.inference_mode()
 def apply_aut(idx, arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B, nm, nn)
@@ -259,7 +259,7 @@ def apply_aut(idx, arrays0):
     arrays4.scatter_(2, inds_expanded, arrays04)
     return arrays
 
-@torch.no_grad()
+@torch.inference_mode()
 def find_aut(arrays):
     f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
@@ -268,7 +268,7 @@ def find_aut(arrays):
     arrays1 = apply_aut(idx, arrays)
     return arrays1
 
-@torch.no_grad()
+@torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
@@ -295,7 +295,7 @@ def parallel_improve(arrays, scores, gens):
             improve_greedy(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve_greedy time: {timer() - start_timer}")
+            print(f"improve1 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i1")
         #
         start_timer = timer()
@@ -305,14 +305,14 @@ def parallel_improve(arrays, scores, gens):
             improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve1p time: {timer() - start_timer}")
+            print(f"improve2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i2")
         #
         start_timer = timer()
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve_phases time: {timer() - start_timer}")
+            print(f"improve3 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i3")
     # step C: rotate the arrays to a standard form
     start_timer = timer()
@@ -322,7 +322,7 @@ def parallel_improve(arrays, scores, gens):
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
-@torch.no_grad()
+@torch.inference_mode()
 def best_from(arrays, scores, gens):
     # deduplicate
     arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
@@ -346,7 +346,7 @@ def randomise(arrays, scores, gens):
     p = torch.randperm(B, device=device)
     return arrays[p], scores[p], gens[p]
 
-@torch.no_grad()
+@torch.inference_mode()
 def batch_improve(arrays0, scores0, gens0):
     torch.set_float32_matmul_precision('highest')
     if device.startswith('cuda'):
