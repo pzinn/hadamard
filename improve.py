@@ -177,7 +177,7 @@ def improve_greedy_fixed(x, scores):
     fmod = torch.empty_like(f)
     flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for _ in range(600):  #?
+    for _ in range(300):  #?
         j = torch.randint(nm, (1,1), device=device)
         k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*.5*invlogp)
         k = int(k.clamp(3, nn//2))
@@ -186,15 +186,20 @@ def improve_greedy_fixed(x, scores):
         all_inds = j*nn + torch.randperm(nn, device=device)[:n_inds*k].view(n_inds,k)
         for i in range(n_inds):
             inds = all_inds[i]
-            xx = torch.roll(x[:, inds], shifts=1, dims=1)
-            torch.matmul(((x[:, inds]-xx) >> 1).to(complex_dtype), wrng_all[inds], out=flmod)
-            flmod.add_(fl)
-            new_scores = score_fft(fmod)
-            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
-            fl[improved_inds] = flmod[improved_inds]
-            x[improved_inds.unsqueeze(1), inds] = xx[improved_inds]
-            scores[improved_inds] = new_scores[improved_inds]
-            cnt += improved_inds.shape[0]
+            xx = .5*x[:, inds].to(complex_dtype)
+            w = wrng_all[inds]
+            xx2 = xx.clone()
+            for _ in range(k-1):
+                xx2 = torch.roll(xx2, shifts=1, dims=1)
+                torch.matmul(xx-xx2, w, out=flmod)
+                flmod.add_(fl)
+                new_scores = score_fft(fmod)
+                improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
+                fl[improved_inds] = flmod[improved_inds]
+                xx[improved_inds] = xx2[improved_inds]
+                scores[improved_inds] = new_scores[improved_inds]
+                cnt += improved_inds.shape[0]
+            x[:, inds] = (2*xx).real.to(torch.int8)
     print(f'{cnt} ({cnt/B})')
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
