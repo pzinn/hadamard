@@ -1,10 +1,13 @@
 import torch
 import math
-from params import na, nm, nn, score, device, fixed_sums, config
+from params import na, nm, nn, score, device, fixed_sums, config, eps
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
-r = .25 * nT  # log10 of ratio hiT/loT=1/loT. empirical formula
+r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188
+# T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
+logT = r * torch.arange(nT, device=device, dtype=torch.float32)
+T = .1 ** logT
 
 @torch.inference_mode()
 def improve_T(x, scores, k):  # random k-bit flip at finite T.
@@ -17,8 +20,8 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     # Metropolis acceptance
     dE = scores_prop - scores
     #accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    #accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # remove first test?
-    accept = dE < -torch.log(torch.rand_like(dE)) * T[:,None]  # remove first test?
+    #accept = (scores > eps) & ((dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None]))  # remove first test?
+    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # slower but simpler
     # broadcast the mask to k bits and gather flips to revert
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
@@ -97,14 +100,12 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used
 def attempt_swaps(x, scores, gens):
     #  x: (nT, BperT, n)
     #  scores, gens: (nT, BperT)
-    accepted = 0
-    total = 0
+    accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
     for i in range(nT-1):
         T1, T2 = T[i], T[i+1]
         E1, E2 = scores[i], scores[i+1]              # (BperT,)
         accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
-        accepted += accept.sum()
-        total += accept.numel()  # lazy
+        accepted[i] += accept.sum(dim=0)
         # swap where accepted
         """
         swap_mask = accept[:, None]            # (BperT,1)
@@ -127,16 +128,14 @@ def attempt_swaps(x, scores, gens):
         gensc = gens[i, accept].clone()
         gens[i, accept] = gens[i+1, accept]
         gens[i+1, accept] = gensc
-    return accepted / total
+    return accepted
 
 swap_interval = 50
 iterations = na * 40 * config.num_improve
 p = .25
 invlogp = 1 / math.log(p)
 def parallel_tempering(x, scores, gens):
-    global r, T
-    T = torch.logspace(0, -r, nT, device=device)
-    T[nT-1] = 0.
+    global logT, T
     B = x.shape[0]
     BperT = B // nT  # should divide please
     if BperT == 0:
@@ -156,12 +155,17 @@ def parallel_tempering(x, scores, gens):
             improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
-            acc = attempt_swaps(x, scores, gens)
-            #print(f"{t:5d}: swap_acc={acc:.3f} flip_acc={(cnt/(swap_interval*BperT)).tolist()} mean score={scores.mean()} {scores.mean(1).tolist()}")
-            print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
-            acc_avg = acc if t == 0 else 0.9 * acc_avg + 0.1 * acc
-    # autotune Ts
-    if acc_avg < 0.2:
-        r -= .2
-    elif acc_avg > 0.3:
-        r += .2
+            acc = attempt_swaps(x, scores, gens) / BperT
+            #print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
+            print(f"{t:5d}: max/mean/min score = {scores[0].mean():.3f} {scores.mean():.3f} {scores[nT-1].mean():.3f} swap_acc = "+' '.join(f'{v:.3f}' for v in acc))
+            # acc_avg = acc if t == 0 else 0.9 * acc_avg + 0.1 * acc
+            if t > swap_interval * 10:
+                # autotune Ts
+                for i in range(nT-1):
+                    if acc[i] < .2:
+                        logT[i+1:] -= .05 * (logT[i+1] - logT[i])
+                    elif acc[i] > .3:
+                        logT[i+1:] += .05 * (logT[i+1] - logT[i])
+                T = .1 ** logT
+    # acc_avg = acc_avg.mean().item()
+    # print(f"{acc_avg=}")

@@ -280,7 +280,10 @@ def parallel_improve(arrays, scores, gens):
     scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
-    B0 = torch.searchsorted(-scores, -eps)  # don't touch H-matrices
+    B = arrays.shape[0]
+    B0 = 9*B//10
+    while scores[B0] < eps:
+        B0 = 9*B0//10  # don't touch H-matrices
     B1 = B0//nT*nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
     if debugging:
