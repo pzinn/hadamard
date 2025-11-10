@@ -220,10 +220,9 @@ def train(data, **kwargs):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     data_len = len(data)
-    test_set_size = min(config.test_set_size, data_len//2)
+    test_len = min(config.test_set_size, data_len//2)
     vocab_size = config.vocab_size  # should one check that this is correct?
     string_length = config.block_size
-    training_batch_size = config.training_batch_size
     print(f"number of examples in the dataset: {data_len}")
     print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
@@ -248,16 +247,18 @@ def train(data, **kwargs):
 
     # below is no no: data is read-only. otoh the data is supposed to be already randomised
     """
-    for i in range(test_set_size):
+    for i in range(test_len):
         j = torch.randint(i, data_len, ()).item()
         data[[i, j]] = data[[j, i]]
     """
-    test_data = data[:test_set_size]
-    train_data = data[test_set_size:]
+    training_batch_size = config.training_batch_size
+    train_len = (data_len - test_len) // training_batch_size * training_batch_size
+    test_len = data_len - train_len
+    test_data = data[:test_len]
+    train_data = data[test_len:]
     test_len = len(test_data)
     train_len = len(train_data)
     print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
-
 
     # init optimiser
     optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
@@ -269,12 +270,17 @@ def train(data, **kwargs):
     save_step = 0
     best_loss = evaluate(test_sample)
     logger.record_loss(best_loss, step, "test")
+    idx = train_len
     while True:
+        if idx == train_len:
+            idx = 0
+            perm = torch.randperm(train_len)
         # feed into the model
-        batch = array_to_string(rotate(train_data[torch.randint(train_len,(training_batch_size,))].to(device, non_blocking=True)))
+        batch = array_to_string(rotate(train_data[perm[idx:idx+training_batch_size]].to(device, non_blocking=True)))
+        idx += training_batch_size
         logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
-            raise RuntimeError("loss is NaN")
+            raise RuntimeError(f"{step=}: loss is NaN")
         for param_group in optimiser.param_groups:
             param_group['lr'] = lr_sched(step)
         # calculate the gradient, update the weights
