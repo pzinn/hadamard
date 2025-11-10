@@ -344,11 +344,6 @@ def best_from(arrays, scores, gens):
     gens = min_gens[idx]
     return arrays, scores, gens
 
-def randomise(arrays, scores, gens):
-    B = arrays.shape[0]
-    p = torch.randperm(B, device=device)
-    return arrays[p], scores[p], gens[p]
-
 @torch.inference_mode()
 def batch_improve(arrays0, scores0, gens0):
     torch.set_float32_matmul_precision('highest')
@@ -370,7 +365,6 @@ def batch_improve(arrays0, scores0, gens0):
             scores = torch.cat((scores, new_scores), dim=0)
             gens = torch.cat((gens, new_gens), dim=0)
             arrays, scores, gens = best_from(arrays, scores, gens)
-    arrays, scores, gens = randomise(arrays, scores, gens)
     return arrays.cpu(), scores.cpu(), gens.cpu()
 
 def main():

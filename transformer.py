@@ -220,7 +220,6 @@ def train(data, **kwargs):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     data_len = len(data)
-    test_len = min(config.test_set_size, data_len//2)
     vocab_size = config.vocab_size  # should one check that this is correct?
     string_length = config.block_size
     print(f"number of examples in the dataset: {data_len}")
@@ -245,39 +244,31 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    # below is no no: data is read-only. otoh the data is supposed to be already randomised
-    """
-    for i in range(test_len):
-        j = torch.randint(i, data_len, ()).item()
-        data[[i, j]] = data[[j, i]]
-    """
     training_batch_size = config.training_batch_size
+    test_len = min(config.test_set_size, data_len//2, data_len - training_batch_size)
+    if test_len <= 0:
+        raise RuntimeError(f"not enough data to train")
     train_len = (data_len - test_len) // training_batch_size * training_batch_size
     test_len = data_len - train_len
-    test_data = data[:test_len]
-    train_data = data[test_len:]
-    test_len = len(test_data)
-    train_len = len(train_data)
     print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
+    perm = torch.randperm(data_len)
+    test_inds = perm[:test_len]
+    train_inds = perm[test_len:]
 
     # init optimiser
     optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
 
-    test_sample = array_to_string(rotate(test_data)).cpu()  # just get it all, and encode it too
+    test_sample = array_to_string(rotate(data[test_inds])).cpu()  # just get it all, and encode it too
 
     # training loop
     step = 0
     save_step = 0
     best_loss = evaluate(test_sample)
     logger.record_loss(best_loss, step, "test")
-    idx = train_len
+    idx = 0
     while True:
-        if idx == train_len:
-            idx = 0
-            perm = torch.randperm(train_len)
         # feed into the model
-        batch = array_to_string(rotate(train_data[perm[idx:idx+training_batch_size]].to(device, non_blocking=True)))
-        idx += training_batch_size
+        batch = array_to_string(rotate(data[train_inds[idx:idx+training_batch_size]].to(device, non_blocking=True)))
         logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -310,6 +301,11 @@ def train(data, **kwargs):
                     break
             if step == max_steps:  # termination condition 2: hard cutoff
                 break
+        #
+        idx += training_batch_size
+        if idx == train_len:
+            idx = 0
+            train_inds = train_inds[torch.randperm(train_len)]
     print('')
     with open(logger.stats_file, 'a') as file:
         file.write(f'training: {best_loss=} at {save_step=}\n')
