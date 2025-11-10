@@ -1,3 +1,5 @@
+import torch
+import math
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
@@ -6,14 +8,9 @@ n = 140  # size of matrix
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
-# scoring
-score_function = 'fft log determinant'
-# score_function = 'quartic'
-# score_function = 'one'
-
 # training parameters
-sample_size = 400_000
-training_size = sample_size//10  # must be > test_set_size
+sample_size = 40_000
+training_size = sample_size//5  # must be > test_set_size
 learning_rate = 2e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
@@ -59,7 +56,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -69,10 +66,15 @@ parser.add_argument("--bignum", action="store_true", help="Enable debug logging"
 
 import subprocess
 try:
-    version = subprocess.check_output(
+    git_branch = subprocess.check_output(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         stderr=subprocess.DEVNULL
     ).strip().decode()
+    git_commit = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=subprocess.DEVNULL
+    ).strip().decode()
+    version = git_branch + " " + git_commit
 except subprocess.CalledProcessError:
     version = "git not available"
 except FileNotFoundError:
@@ -175,6 +177,16 @@ def rotate(array0):
     array.mul_((rnd[6:10]*2-1).unsqueeze(1))
     #
     return arrayx
+
+eps = 2e-5  # scores are heavily discretised so can be made large
+
+real_dtype = torch.float32
+complex_dtype = torch.complex64
+
+# scoring
+score_function = 'fft log determinant'
+# score_function = 'quartic'
+# score_function = 'one'
 
 cst = 1 / math.sqrt(n)
 def fft(m):
