@@ -355,15 +355,17 @@ if True: # not device.startswith('cuda'):
     def sample():
         load_model()
         model.need_reload = False
+        if device.startswith('cuda'):
+            torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size,na), dtype=torch.int8)
+        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
-            X.zero_()
             generate(X, config.block_size, do_sample=True)
             arrays_cpu[i:j] = string_to_array(X)
+        print('')
         return arrays_cpu
 else:
     # sample with CPU double buffering TODO reinstate at some point

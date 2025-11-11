@@ -174,10 +174,10 @@ fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
 @torch.inference_mode()
-def derotate(arrays, scores):
+def derotate(arrays, scores=None):
     if params.test_score:
         scores1 = score(arrays)
-        if (scores-scores1).abs().max() > eps:
+        if scores is not None and (scores-scores1).abs().max() > eps:
             raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(), (scores-scores1).abs().mean().item())
     # 1st phase: cyclically permute/reflect/negate the nm*nn
     B = arrays.shape[0]
@@ -235,6 +235,7 @@ def find_aut(arrays):
     arrays1 = apply_aut(idx, arrays)
     return arrays1
 
+@torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
