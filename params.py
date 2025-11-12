@@ -30,7 +30,7 @@ temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
 gen_decay = .01  # [0., .025, .05, .075, .1, .15, .2]
-sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
+sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
 num_workers = None  # for cpu parallelisation -- not used in this version
@@ -180,8 +180,8 @@ def rotate(array0):
     shifts   = torch.randint(nn, (B, nm), device=device)         # translation
     # --- combined affine action on Z/nnZ ---
     base = torch.arange(nn, device=device)                       # 0..nn-1
-    a = aut[a_idx].unsqueeze(1).expand(B, nm)                    # (B,nm)
-    coeff = (a * flips) % nn                                     # ±a mod nn
+    a = aut[a_idx].unsqueeze(1)                                  # (1,1)
+    coeff = a * flips                                            # ±a  (B,nm)
     shift_idx = (coeff.unsqueeze(-1) * base + shifts.unsqueeze(-1)) % nn  # (B,nm,nn)
     # Apply combined index transformation
     array = torch.gather(array0, 2, shift_idx)

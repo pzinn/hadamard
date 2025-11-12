@@ -27,46 +27,25 @@ class myActiv(torch.nn.Module):
 
 
 class CausalSelfAttention(torch.nn.Module):
-    """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
-    """
-
     def __init__(self, config):
         super().__init__()
-        assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = torch.nn.Linear(config.n_embd, 3 * config.n_embd)
-        # output projection
-        self.c_proj = torch.nn.Linear(config.n_embd, config.n_embd)
-        # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.causal_mask = torch.triu(torch.ones(config.block_size, config.block_size,
-                                               device=device, dtype=torch.bool),diagonal=1).view(1, 1, config.block_size, config.block_size)
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
+        C, nh = config.n_embd, config.n_head
+        self.c_attn = torch.nn.Linear(C, 3 * C)
+        self.c_proj = torch.nn.Linear(C, C)
+        self.n_head, self.n_embd = nh, C
 
     def forward(self, x):
         B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
-        nh = self.n_head
-        hs = C // nh
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        nh, hs = self.n_head, C // self.n_head
+        q, k, v = self.c_attn(x).split(C, dim=2)
         q = q.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        k = k.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
         v = v.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(hs))
-        att = att.masked_fill(self.causal_mask[:, :, :T, :T], float('-inf'))
-        att = F.softmax(att, dim=-1)
-        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-        # output projection
-        y = self.c_proj(y)
-        return y
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        y = y.transpose(1, 2).reshape(B, T, C)
+        return self.c_proj(y)
 
 class Block(torch.nn.Module):
-    """ an unassuming Transformer block """
     def __init__(self, config):
         super().__init__()
         self.ln_1 = torch.nn.LayerNorm(config.n_embd)
@@ -103,13 +82,13 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, idx0, compute_loss=False):
-        b = idx0.shape[0]
-        idx = idx0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
-        t = idx.shape[1] + 1
+    def forward(self, batch0, compute_loss=False):
+        b = batch0.shape[0]
+        batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
+        t = batch.shape[1] + 1
         # forward the transformer itself
         pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
+        tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
         x[:, 1:, :] += tok_emb
         for block in self.transformer.h:
@@ -117,7 +96,7 @@ class Transformer(torch.nn.Module):
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
         # if requested, also calculate the loss
-        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1)) if compute_loss else None
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -156,31 +135,36 @@ def save_model():
 
 
 @torch.inference_mode()
-def generate(idx, max_new_tokens, do_sample=False, top_k=None):
+def generate(batch):
     """
-    Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
+    Take a conditioning sequence of indices batch (LongTensor of shape (b,t)) and complete
     the sequence max_new_tokens times, feeding the predictions back into the model each time.
     Most likely you'll want to make sure to be in model.eval() mode of operation for this.
     """
     block_size = model.get_block_size()
-    for i in range(max_new_tokens):
-        idx_cond = idx[:, :i]
+    for i in range(block_size):
+        batch_cond = batch[:, :i]
         # forward the model to get the logits for the index in the sequence
-        logits, _ = model(idx_cond)
+        logits, _ = model(batch_cond)
         # pluck the logits at the final step and scale by desired temperature
         logits = logits[:, -1, :] / config.temperature
+        """
         # optionally crop the logits to only the top k options
         if top_k is not None:
             v, _ = torch.topk(logits, top_k)
             logits[logits < v[:, [-1]]] = -float('Inf')
+        """
         # apply softmax to convert logits to (normalized) probabilities
         probs = F.softmax(logits, dim=-1)
+        # sample from the distribution
+        batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
+        """
         # either sample from the distribution or take the most likely element
         if do_sample:
-            idx[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
+            batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
         else:
-            _, idx[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
-
+            _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
+        """
 
 @torch.inference_mode()
 def evaluate(sample):
@@ -325,7 +309,7 @@ if True:  #not device.startswith('cuda'):
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
-            generate(X, config.block_size, do_sample=True)
+            generate(X)
             arrays_cpu[i:j] = string_to_array(X)
         print('')
         return arrays_cpu
