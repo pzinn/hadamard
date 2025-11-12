@@ -41,34 +41,32 @@ class CausalSelfAttention(torch.nn.Module):
         # output projection
         self.c_proj = torch.nn.Linear(config.n_embd, config.n_embd)
         # causal mask to ensure that attention is only applied to the left in the input sequence
-        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                     .view(1, 1, config.block_size, config.block_size))
+        self.causal_mask = torch.triu(torch.ones(config.block_size, config.block_size,
+                                               device=device, dtype=torch.bool),diagonal=1).view(1, 1, config.block_size, config.block_size)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
     def forward(self, x):
         B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
-
+        nh = self.n_head
+        hs = C // nh
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
-
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        q = q.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
+        v = v.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(hs))
+        att = att.masked_fill(self.causal_mask[:, :, :T, :T], float('-inf'))
         att = F.softmax(att, dim=-1)
-        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = att @ v  # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C)  # re-assemble all head outputs side by side
-
         # output projection
         y = self.c_proj(y)
         return y
 
 class Block(torch.nn.Module):
     """ an unassuming Transformer block """
-
     def __init__(self, config):
         super().__init__()
         self.ln_1 = torch.nn.LayerNorm(config.n_embd)
@@ -88,12 +86,9 @@ class Block(torch.nn.Module):
         return x
 
 class Transformer(torch.nn.Module):
-    """ Transformer Language Model, exactly as seen in GPT-2 """
-
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
@@ -101,7 +96,6 @@ class Transformer(torch.nn.Module):
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
-
         # report number of parameters (note we don't count the decoder parameters in lm_head)
         n_params = sum(p.numel() for p in self.transformer.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
@@ -111,22 +105,19 @@ class Transformer(torch.nn.Module):
 
     def forward(self, idx0, compute_loss=False):
         b = idx0.shape[0]
-        idx = idx0[:,:self.block_size-1]  # in training, remove last token since don't need to predict next one
+        idx = idx0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = idx.shape[1] + 1
-        pos = torch.arange(t, dtype=torch.int, device=device).unsqueeze(0)  # shape (1, t)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (1, t, n_embd)
-        x = pos_emb.expand(b, t, config.n_embd).clone()
+        pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t-1, n_embd)
-        x[:,1:,:] += tok_emb
+        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
+        x[:, 1:, :] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        # if we are given some desired targets also calculate the loss
-        loss = None
-        if compute_loss:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1))
+        # if requested, also calculate the loss
+        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), idx0.view(-1)) if compute_loss else None
         return logits, loss
 
 # -----------------------------------------------------------------------------
@@ -136,6 +127,7 @@ def init_model():
     global model  # to simplify, model, etc, are global
     global model_path
     global bit_positions
+    global bit_positions_cpu  # eww
     global nn_pad
     model = Transformer(config)
     model.to(device)
@@ -144,12 +136,13 @@ def init_model():
     model_path = os.path.join(params.work_dir, "model.pt")
     # stuff for coding/decoding arrays
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
+    bit_positions_cpu = torch.arange(config.stacking, dtype=torch.int)
     segment_string_length = config.block_size // nm
     nn_pad = segment_string_length * config.stacking
 
 def load_model():
     if model.need_reload:
-        model.load_state_dict(torch.load(model_path, weights_only=True))
+        model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
         print('resuming from existing model in the workdir')
 
 
@@ -162,7 +155,7 @@ def save_model():
 # helper functions for evaluating and sampling from the model
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def generate(idx, max_new_tokens, do_sample=False, top_k=None):
     """
     Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
@@ -203,50 +196,32 @@ def evaluate(sample):
 def string_to_array(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:,:,:nn].to(dtype=torch.int8).view(B, na)
+    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
+@torch.no_grad()
+def string_to_array_cpu(X):  # really, int tensor to int8 tensor
+    B = X.shape[0]
+    signs = ((((X.unsqueeze(-1) >> bit_positions_cpu) & 1) << 1) - 1).view(B, nm, nn_pad)
+    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
+
+@torch.no_grad()
 def array_to_string(signs):  # int8 tensor to int tensor
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
-    signs1[:,:,:nn] = signs.view(B, nm, nn)
+    signs1[:, :, :nn] = signs.view(B, nm, nn)
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
 
-# -----------------------------------------------------------------------------
-# helper functions for creating the training and test Datasets that emit words
-
-
-class CharDataset(Dataset):
-    def __init__(self, words):
-        self.words = words
-    def __len__(self):
-        return len(self.words)
-    def contains(self, word):
-        return word in self.words
-    def __getitem__(self, idx):
-        array0 = self.words[idx]
-        array = rotate(array0)
-        #array = array0.clone()
-        if score:  # for testing purposes: does the randomisation respect score?
-            if not torch.all(array0.abs()==1) or not torch.all(array.abs()==1):
-                raise RuntimeError("array not +-1",array)
-            scores = score(torch.stack((array0,array.view(na))))
-            if torch.abs(scores[0]-scores[1]) > 2e-5:
-                raise RuntimeError("score not preserved by randomisation", scores, torch.abs(scores[0]-scores[1]).item())
-        return array
-
 def train(data, **kwargs):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     data_len = len(data)
-    test_set_size = min(config.test_set_size, data_len//2)
     vocab_size = config.vocab_size  # should one check that this is correct?
     string_length = config.block_size
-    training_batch_size = config.training_batch_size
     print(f"number of examples in the dataset: {data_len}")
     print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
@@ -269,54 +244,36 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    data.share_memory_()
-    for i in range(test_set_size):
-        j = torch.randint(i, data_len, ()).item()
-        data[[i, j]] = data[[j, i]]
-    test_data = data[:test_set_size]
-    train_data = data[test_set_size:]
-    print(f"split up the dataset into {len(train_data)} training examples and {len(test_data)} test examples")
-
-    # wrap in dataset objects
-    train_dataset = CharDataset(train_data)
-    test_dataset = CharDataset(test_data)
+    training_batch_size = config.training_batch_size
+    test_len = min(config.test_set_size, data_len//2, data_len - training_batch_size)
+    if test_len <= 0:
+        raise RuntimeError(f"not enough data to train")
+    train_len = (data_len - test_len) // training_batch_size * training_batch_size
+    test_len = data_len - train_len
+    print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
+    perm = torch.randperm(data_len)
+    test_inds = perm[:test_len]
+    train_inds = perm[test_len:]
 
     # init optimiser
-    if device.startswith('cuda'):
-        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
-    else:
-        optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
+    optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
 
-    # init sampler, dataloader
-    train_sampler = torch.utils.data.RandomSampler(train_dataset, replacement=True, num_samples=int(1e10))
-    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=training_batch_size, pin_memory=True, num_workers=config.num_workers)
-    batch_iter = iter(train_loader)  # wrap loader in an iterator explicitly
-    # test_loader = DataLoader(test_dataset, shuffle=True, batch_size=100, num_workers=0)  # default sampler with shuffle = True is RandomSampler(replacement=False)
-    test_sample = array_to_string(torch.stack([ts for ts in test_dataset], dim=0).to(device)).cpu()  # just get it all, and encode it too
+    test_sample = array_to_string(rotate(data[test_inds])).cpu()  # just get it all, and encode it too
 
     # training loop
     step = 0
     save_step = 0
     best_loss = evaluate(test_sample)
     logger.record_loss(best_loss, step, "test")
+    idx = 0
     while True:
-        # get the next batch, ship to device, and unpack it to input and target
-        try:
-            batch = next(batch_iter)  # note that batch_loader produces tuples of length 2
-        except StopIteration:
-            # Restart iterator if at end of epoch
-            batch_iter = iter(train_loader)
-            batch = next(batch_iter)
-        # Train on the current batch
         # feed into the model
-        logits, loss = model(array_to_string(batch.to(device, non_blocking=True)), compute_loss=True)
+        batch = array_to_string(rotate(data[train_inds[idx:idx+training_batch_size]].to(device, non_blocking=True)))
+        logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
-            raise RuntimeError("loss is NaN")
-        
+            raise RuntimeError(f"{step=}: loss is NaN")
         for param_group in optimiser.param_groups:
             param_group['lr'] = lr_sched(step)
-
-
         # calculate the gradient, update the weights
         model.zero_grad(set_to_none=True)
         loss.backward()
@@ -324,7 +281,7 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            print(f"{step=} ", end='\t')
+            print(f"{step=} ({step*training_batch_size/data_len:.1f} epochs)", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
@@ -338,18 +295,23 @@ def train(data, **kwargs):
                 best_loss = test_loss
                 save_step = step
             else:
-                print('') # to have nicely aligned test / train stats :)
+                print('')  # to have nicely aligned test / train stats :)
                 sys.stdout.flush()
                 if test_loss - loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
                     break
             if step == max_steps:  # termination condition 2: hard cutoff
                 break
+        #
+        idx += training_batch_size
+        if idx == train_len:
+            idx = 0
+            train_inds = train_inds[torch.randperm(train_len)]
     print('')
     with open(logger.stats_file, 'a') as file:
         file.write(f'training: {best_loss=} at {save_step=}\n')
 
 
-if True: # not device.startswith('cuda'):
+if True:  #not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
     @torch.no_grad()
     def sample():
@@ -359,7 +321,7 @@ if True: # not device.startswith('cuda'):
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8)
+        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
         for i in range(0, config.sample_size, config.sample_batch_size):
             j = i + config.sample_batch_size
             print('*', end=''); sys.stdout.flush()
@@ -378,11 +340,11 @@ else:
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
         num_batches = config.sample_size // config.sample_batch_size
-        arrays_cpu_full = torch.empty((0,na), dtype=torch.int8)
+        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8)
         if num_batches == 0:
             return arrays_cpu
-        X = torch.zeros(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = [torch.empty((config.sample_batch_size,na), dtype=torch.int8, device='cpu', pin_memory=True) for _ in range(2)]
+        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+        X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
         event = [torch.cuda.Event() for _ in range(2)]
         idx = 0
         for i in range(num_batches+1):
@@ -391,11 +353,11 @@ else:
             if i < num_batches:
                 print('*', end=''); sys.stdout.flush()
                 with torch.cuda.stream(stream):
-                    X.zero_()
                     generate(X, config.block_size, do_sample=True)
-                    arrays_cpu[1-idx].copy_(string_to_array(X), non_blocking=True)
+                    X_cpu[1-idx].copy_(X, non_blocking=True)
                     stream.record_event(event[1-idx])
             if i > 0:
-                arrays_cpu_full = torch.cat((arrays_cpu, arrays_cpu[idx]), dim=0)  # TODO clearly not optimized!
+                arrays_cpu[(i-1)*config.sample_batch_size:i*config.sample_batch_size] = string_to_array_cpu(X_cpu[idx])
             idx = 1 - idx
-        return new_arrays_set
+        print('')
+        return arrays_cpu
