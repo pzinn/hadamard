@@ -245,7 +245,7 @@ def derotate(arrays, scores=None):
             raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
 
 aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
-aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
+# aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
 
 @torch.inference_mode()
 def apply_aut(idx, arrays0):
@@ -254,9 +254,10 @@ def apply_aut(idx, arrays0):
     arrays = torch.empty_like(arrays0)
     arrays4 = arrays.view(B, nm, nn)
     # automorphism
-    inds = aut_inds[idx]
-    inds_expanded = inds.unsqueeze(1).expand(B, nm, nn)
-    arrays4.scatter_(2, inds_expanded, arrays04)
+    # inds = aut_inds[idx]
+    a = aut[idx]
+    inds = torch.outer(a, torch.arange(nn, device=device)) % nn
+    arrays4.scatter_(2, inds.unsqueeze(1).expand(B, nm, nn), arrays04)
     return arrays
 
 @torch.inference_mode()
