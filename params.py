@@ -33,7 +33,7 @@ gen_decay = .01  # [0., .025, .05, .075, .1, .15, .2]
 sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
-num_workers = None  # for cpu parallelisation -- not used in this version
+# num_workers = None  # for cpu parallelisation -- not used in this version
 
 resume = False  # whether to resume a previous run
 # resume = True
@@ -104,7 +104,7 @@ if fixed_sums:
 else:
     num_ones = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay', 'temperature']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature']
 
 import ast
 # hparams can be updated in command line
@@ -122,8 +122,8 @@ if getattr(args, "sample_size") and not getattr(args, "training_size"):
     training_size = sample_size//20
 if getattr(args, "n_embd") and not getattr(args, "n_embd2"):
     n_embd2 = 4*n_embd
-if getattr(args, "sample_size") and not getattr(args, "sample_batch_size"):
-    sample_batch_size = sample_size//10
+#if getattr(args, "sample_size") and not getattr(args, "sample_batch_size"):
+#    sample_batch_size = sample_size//10
 
 
 hparams = {name: globals().get(name) for name in hparams_list}
@@ -197,7 +197,7 @@ def rotate(array0):
     return array
 
 # obsolete: only one scoring function implemented
-score_function = 'fft log determinant'
+# score_function = 'fft log determinant'
 
 real_dtype = torch.float32
 complex_dtype = torch.complex64
