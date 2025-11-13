@@ -4,7 +4,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut_inds, score, score_fft, fft, eps, real_dtype, complex_dtype
+from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut, score, score_fft, fft, eps, real_dtype, complex_dtype
 from improve import improve1p, improve2, improve3
 from pt import optimise_parallel_tempering, nT
 import logger
