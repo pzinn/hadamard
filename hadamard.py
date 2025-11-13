@@ -59,7 +59,8 @@ def record_stats(arrays, scores, gens, prefix=""):
         return
     # compute autocorrelation by MC
     mc_size = 1000
-    s = (arrays[torch.randint(B,(mc_size,))] * arrays[torch.randint(B,(mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)  # which device is this random on? TODO
+    with torch.random.fork_rng():
+        s = (arrays[torch.randint(B, (mc_size,), device=arrays.device)] * arrays[torch.randint(B, (mc_size,), device=arrays.device)]).sum(dim=1).abs().sum()/(mc_size*na)
     """
     # proper/slow way: REDO ONE DAY
     mc_size = 1000
