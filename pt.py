@@ -157,7 +157,6 @@ def parallel_tempering(x, scores, gens):
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores, gens) / BperT
             #print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
-            print(f"{t:5d}: max/mean/min score = {scores[0].mean():.3f} {scores.mean():.3f} {scores[nT-1].mean():.3f} swap_acc = "+' '.join(f'{v:.3f}' for v in acc))
             # acc_avg = acc if t == 0 else 0.9 * acc_avg + 0.1 * acc
             if t > swap_interval * 10:
                 # autotune Ts
@@ -167,5 +166,6 @@ def parallel_tempering(x, scores, gens):
                     elif acc[i] > .3:
                         logT[i+1:] += .05 * (logT[i+1] - logT[i])
                 T = .1 ** logT
+            print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
     # acc_avg = acc_avg.mean().item()
     # print(f"{acc_avg=}")

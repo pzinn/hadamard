@@ -102,8 +102,11 @@ def record_stats(arrays, scores, gens, prefix=""):
     min_score = torch.min(scores)
     print(f"Min score: {min_score}")
 
-    mean_score = torch.mean(scores)
-    print(f"Mean score: {mean_score}")
+    med_score = torch.median(scores)
+    print(f"Med score: {med_score}")
+
+    avg_score = torch.mean(scores)
+    print(f"Avg score: {avg_score}")
 
     max_score = torch.max(scores)
     print(f"Max score: {max_score}")
@@ -135,11 +138,11 @@ def record_stats(arrays, scores, gens, prefix=""):
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
-            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
+            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
 
     if prefix and not prefix.startswith("debug"):
-        logger.record_scores(prefix, scores, mean_score, gens_tally, nh)
+        logger.record_scores(prefix, scores, avg_score, gens_tally, nh)
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
