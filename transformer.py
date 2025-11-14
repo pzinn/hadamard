@@ -228,16 +228,19 @@ def train(data, **kwargs):
             pass
     model.need_reload = True  # we will change the model no matter what
 
-    training_batch_size = config.training_batch_size
-    test_len = min(config.test_set_size, data_len//2, data_len - training_batch_size)
-    if test_len <= 0:
-        raise RuntimeError(f"not enough data to train")
-    train_len = (data_len - test_len) // training_batch_size * training_batch_size
-    test_len = data_len - train_len
-    print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
+    batch_size = config.training_batch_size
+    test_len = config.test_set_size
     perm = torch.randperm(data_len)
-    test_inds = perm[:test_len]
-    train_inds = perm[test_len:]
+    if data_len >= test_len + batch_size:
+        train_len = (data_len - test_len) // batch_size * batch_size  # make sure train_len is a multiple of batch_size
+        test_len = data_len - train_len
+        test_inds = perm[:test_len]
+        train_inds = perm[test_len:]
+    else:
+        test_inds = perm[:test_len] if data_len >= test_len else perm.repeat(test_len // data_len + 1)[:test_len]
+        train_inds = perm[data_len-batch_size:] if data_len >= batch_size else perm.repeat(batch_size // data_len +1)[:batch_size]
+        train_len = batch_size
+    print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
 
     # init optimiser
     optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
@@ -252,7 +255,7 @@ def train(data, **kwargs):
     idx = 0
     while True:
         # feed into the model
-        batch = array_to_string(rotate(data[train_inds[idx:idx+training_batch_size]].to(device, non_blocking=True)))
+        batch = array_to_string(rotate(data[train_inds[idx:idx+batch_size]].to(device, non_blocking=True)))
         logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -265,7 +268,7 @@ def train(data, **kwargs):
         # periodically test/save the model
         step += 1
         if step % eval_freq == 0 or step == max_steps:
-            print(f"{step=} ({step*training_batch_size/data_len:.1f} epochs)", end='\t')
+            print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
@@ -286,7 +289,7 @@ def train(data, **kwargs):
             if step == max_steps:  # termination condition 2: hard cutoff
                 break
         #
-        idx += training_batch_size
+        idx += batch_size
         if idx == train_len:
             idx = 0
             train_inds = train_inds[torch.randperm(train_len)]
