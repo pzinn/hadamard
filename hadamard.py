@@ -4,7 +4,7 @@
 import torch
 import params
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
-from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
+from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -280,6 +280,14 @@ def parallel_improve(arrays, scores, gens):
     # step Z: fix segment sums
     if fixed_sums:
         fix_num_ones(arrays)
+    # step 0: tabu search
+    if not fixed_sums:  # TODO
+        start_timer = timer()
+        improve_tabu(arrays, scores, gens)
+        scores = score(arrays)  # don't trust improve
+        if debugging:
+            print(f"improve0 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug i0")
     # step A: parallel tempering
     start_timer = timer()
     scores, inds = torch.sort(scores, descending=True)
@@ -322,6 +330,7 @@ def parallel_improve(arrays, scores, gens):
         if debugging:
             print(f"improve3 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i3")
+        #
     # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)

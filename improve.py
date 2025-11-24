@@ -1,5 +1,6 @@
 import math
 import torch
+import params
 from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps
 import sys
 
@@ -64,6 +65,45 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
         if not mask.any():
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+
+@torch.inference_mode()
+def improve_tabu(arrays, scores, gens):
+    print(f"improve_tabu ", end=''); sys.stdout.flush()
+    B = arrays.shape[0]
+    active_rows = torch.nonzero((scores >= eps) & (gens <= params.gen), as_tuple=True)[0]  # don't bother with H-matrices, recent ones
+    M = active_rows.numel()
+    if M == 0:
+        return
+    x = arrays[active_rows]
+    s = torch.empty((M,), dtype=real_dtype, device=device)
+    tabu = torch.ones((M, na), dtype=torch.bool, device=device)
+    free = torch.ones((M,), dtype=torch.bool, device=device)
+    inds = torch.empty((M,), dtype=torch.long, device=device)
+    a = torch.arange(M, dtype=torch.long, device=device)
+    prob = 1 - 2/na  # so na/2 average time
+    for _ in range(na):  # rethink: might want early stop
+        s[free] = float('inf')  # ignore current scores of free ones
+        s1 = s.clone()  # recompute score?
+        f = fft(x)
+        fl = f.view(-1, nm*(nn2+1))
+        inds.fill_(-1)
+        for j in range(na):
+            tabu_mask = tabu[:, j]
+            flmod = fl[tabu_mask] + torch.mul(x[tabu_mask, j].to(complex_dtype).unsqueeze(1), wrng_all[j])
+            fmod = flmod.view(-1, nm, nn2+1)
+            s1[tabu_mask] = score_fft(fmod)
+            mask = s1 < s
+            s[mask] = s1[mask]
+            inds[mask] = j
+        a = torch.nonzero(inds >= 0, as_tuple=True)[0]
+        # print(t,a.numel(),free.sum().item())
+        inds1 = inds[a]
+        x[a, inds1] *= -1
+        tabu[a, inds1] = False
+        free &= torch.rand((M,), device=device) < prob  # freeze some
+    arrays[active_rows] = x
+    scores[active_rows] = s
+
 
 """
 # greedy random k-bit flip
