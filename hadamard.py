@@ -2,6 +2,7 @@
 # coding: utf-8
 
 import torch
+import math
 import params
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
@@ -352,7 +353,7 @@ def best_from(arrays, scores, gens):
     # select
     if B <= config.training_size:
         return arrays, min_scores, min_gens
-    _, idx = torch.topk(min_scores * (1 + config.gen_decay * (params.gen - min_gens)), k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
     scores = min_scores[idx]
     gens = min_gens[idx]
@@ -448,9 +449,9 @@ def main():
             coeff = 1 if params.gen == 0 or not resume_training else .1
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
-                return config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
-            max_steps = int(config.training_steps*coeff)
-            eval_freq = int(500*coeff)
+                return coeff * config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
+            max_steps = int(config.training_steps*math.sqrt(coeff))
+            eval_freq = int(500*math.sqrt(coeff))
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:

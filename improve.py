@@ -1,7 +1,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps
+from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
 import sys
 
 # precompute roots of unity for fft delta
@@ -70,7 +70,7 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
 def improve_tabu(arrays, scores, gens):
     print(f"improve_tabu ", end=''); sys.stdout.flush()
     B = arrays.shape[0]
-    active_rows = torch.nonzero((scores >= eps) & (gens <= params.gen), as_tuple=True)[0]  # don't bother with H-matrices, recent ones
+    active_rows = torch.nonzero((scores >= eps) & (gens < params.gen) & (torch.rand((B,), device=device) < gen_decay), as_tuple=True)[0]  # don't bother with H-matrices, recent ones
     M = active_rows.numel()
     if M == 0:
         return
