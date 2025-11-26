@@ -65,9 +65,12 @@ def init_logging():
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
+            table = wandb.Table(columns=["gen", "count"])
+            for g, c in gens_tally.items():
+                table.add_data(g, c)
             wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
-                       "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
+                       "histogram/scores/"+prefix: wandb.Histogram(scores), "table/gens/"+prefix: table})
 
     # header of stats file
     stats_file = params.work_dir + 'stats.txt'  # where to save logs

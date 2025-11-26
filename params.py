@@ -1,4 +1,5 @@
 import torch
+import math
 
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
@@ -11,13 +12,13 @@ n = 188  # size of matrix
 
 # training parameters
 sample_size = 1_000_000
-training_size = sample_size//20  # must be > test_set_size
+training_size = sample_size // 20
 learning_rate = 1e-3
-training_batch_size = 1024  # for training. much smaller, obviously
+training_batch_size = 1024
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 1  # number of times data get improved per generation. only used by improve2
+training_steps = 150_000
+num_improve = 1  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4
@@ -25,14 +26,14 @@ n_embd = 128
 n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
-temperature = 1. # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
-gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
-sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
+gen_decay = .01  # [0., .025, .05, .075, .1, .15, .2]
+sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
-num_workers = 6  # for cpu parallelisation
+# num_workers = None  # for cpu parallelisation -- not used in this version
 
 resume = False  # whether to resume a previous run
 # resume = True
@@ -82,6 +83,8 @@ except FileNotFoundError:
 
 if n % 4 != 0:
     raise SystemExit("good luck!")
+if n % 8 != 4:
+    raise SystemExit("not implemented")
 
 print(f'{n=}')
 
@@ -91,19 +94,20 @@ nm = 3  # number of blocks
 na = nm * nn  # length of array
 nn2 = (nn-1) // 2
 
-fixed_sums = 'segment_sums' in globals() and segment_sums is not None
+if 'segment_sums' not in globals():
+    segment_sums = None
+
+fixed_sums = segment_sums is not None
 if fixed_sums:
-    assert(sum(i*i for i in segment_sums) == n)
+    assert sum(i*i for i in segment_sums) == n
     print(f"{segment_sums=}")
     num_ones = torch.tensor([(segment_sums[j+1]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
 else:
-    segment_sums = None
     num_ones = None
 
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature']
+
 import ast
-
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay', 'temperature']
-
 # hparams can be updated in command line
 for param in hparams_list:
     parser.add_argument(f"--{param}")
@@ -115,12 +119,12 @@ for param in hparams_list:
         globals()[param] = ast.literal_eval(val)
 
 # special cases: coupled default values
-if getattr(args,"sample_size") and not getattr(args,"training_size"):
+if getattr(args, "sample_size") and not getattr(args, "training_size"):
     training_size = sample_size//20
-if getattr(args,"n_embd") and not getattr(args,"n_embd2"):
+if getattr(args, "n_embd") and not getattr(args, "n_embd2"):
     n_embd2 = 4*n_embd
-if getattr(args,"sample_size") and not getattr(args,"sample_batch_size"):
-    sample_batch_size = sample_size//10
+#if getattr(args, "sample_size") and not getattr(args, "sample_batch_size"):
+#    sample_batch_size = sample_size//10
 
 
 hparams = {name: globals().get(name) for name in hparams_list}
@@ -159,44 +163,45 @@ config = ModelConfig(**hparams)
 
 # symmetries
 from itertools import permutations
-import torch
-import math
 
 # Prepare automorphisms
-aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
-aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
+aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
 
-# Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-if fixed_sums:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if tuple(segment_sums[i+1] for i in p)==segment_sums[1:]), dtype=torch.long)
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn], dtype=torch.long)
-else:
-    perms = torch.tensor(list(p for p in permutations(range(nm)) if p[0]==0), dtype=torch.long)
-    rndmod = torch.tensor([len(perms), len(aut), 2*nn, 2*nn, 2*nn, 2, 2, 2], dtype=torch.long)
-nrnd = rndmod.shape
-print("order of symmetry: ", rndmod.prod().item())
+# Prepare permutations
+perms = torch.tensor(list(p for p in permutations(range(nm)) if p[0]==0 and (not fixed_sums or tuple(segment_sums[i+1] for i in p) == segment_sums[1:])), dtype=torch.long, device=device)
+#print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array0):
-    arrayx = torch.empty_like(array0)
-    array0 = array0.view(-1,nm,nn)
-    array = arrayx.view(-1,nm,nn)  # can do batches too (not currently used)
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.long).random_(), rndmod)
-    # automorphisms
-    array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
-    # symmetry: random permute
-    if len(perms) > 0:
-        array.copy_(array[:,perms[rnd[0]]])
-    # symmetry: random rotation/flip
-    for j in range(nm):
-        array[:,j] = torch.roll(array[:,j] if rnd[j+2] < nn else torch.flip(array[:,j], (1,)), shifts=rnd[j+2].item(), dims=1)
+    B = array0.shape[0]
+    array0 = array0.to(device=device).view(B, nm, nn)
+    # --- random parameters per batch ---
+    perm_idx = torch.randint(len(perms), (B,), device=device)
+    a_idx    = torch.randint(len(aut), (B,), device=device)      # automorphism
+    flips    = torch.randint(2, (B, nm), device=device) * 2 - 1  # ±1
+    shifts   = torch.randint(nn, (B, nm), device=device)         # translation
+    # --- combined affine action on Z/nnZ ---
+    base = torch.arange(nn, device=device)                       # 0..nn-1
+    a = aut[a_idx].unsqueeze(1)                                  # (1,1)
+    coeff = a * flips                                            # ±a  (B,nm)
+    shift_idx = (coeff.unsqueeze(-1) * base + shifts.unsqueeze(-1)) % nn  # (B,nm,nn)
+    # Apply combined index transformation
+    array = torch.gather(array0, 2, shift_idx)
+    # --- block permutation per batch ---
+    perm = perms[perm_idx]
+    # array = array[torch.arange(B)[:, None], perm]
+    perm_expanded = perm.unsqueeze(-1).expand(B, nm, nn)
+    array = torch.gather(array, 1, perm_expanded)
     if not fixed_sums:
-        # symmetry: random signs
-        array.mul_((rnd[5:8]*2-1).unsqueeze(1))
-    #
-    return arrayx
+        signs = torch.randint(2, (B, nm), device=device, dtype=torch.int8) * 2 - 1  # ±1
+        # --- independent overall signs ---
+        array *= signs.unsqueeze(-1)
+    return array
 
 # obsolete: only one scoring function implemented
-score_function = 'fft log determinant'
+# score_function = 'fft log determinant'
+
+real_dtype = torch.float32
+complex_dtype = torch.complex64
 
 cst = 1 / math.sqrt(n)
 score_cf = torch.tensor([2,1,1], dtype=torch.float32, device=device).unsqueeze(1)
@@ -210,3 +215,4 @@ def score_fft(f):  # score in terms of precomputed fft
 def score(m):
     return score_fft(fft(m))
 
+eps = 2e-5  # scores are heavily discretised so can be made large

@@ -96,6 +96,19 @@ def treat(s):
         img.save(f"hadamard-{n}-colour.png")
         # Optional enlargement (for display)
         img.resize((2*n, 2*n), Image.NEAREST).save(f"hadamard-{n}-colour-large.png")
+        # final version: randomised
+        rng = np.random.default_rng()
+        rng.shuffle(m, axis=0)
+        rng.shuffle(m, axis=1)
+        x = -1+2*rng.integers(2, size=n)
+        y = -1+2*rng.integers(2, size=n)
+        m = x[:,None] * y[None,:] * m
+        # Convert ±1 to 0/255
+        img_array = ((m + 1) // 2 * 255).astype(np.uint8)
+        # Create image
+        img = Image.fromarray(img_array, mode='L')  # 'L' = grayscale
+        # Save as PNG
+        img.save(f"hadamard-{n}-randomised.png")
         #
         img_saved = True  # only do it once
 
