@@ -29,7 +29,7 @@ stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
-gen_decay = .1
+gen_decay = .01
 sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally

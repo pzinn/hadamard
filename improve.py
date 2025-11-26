@@ -76,6 +76,7 @@ def improve_tabu(arrays, scores, gens):
         return
     x = arrays[active_rows]
     s = torch.empty((M,), dtype=real_dtype, device=device)
+    s1 = torch.empty((M,), dtype=real_dtype, device=device)
     tabu = torch.ones((M, na), dtype=torch.bool, device=device)
     free = torch.ones((M,), dtype=torch.bool, device=device)
     inds = torch.empty((M,), dtype=torch.long, device=device)
@@ -83,7 +84,7 @@ def improve_tabu(arrays, scores, gens):
     prob = 1 - 2/na  # so na/2 average time
     for _ in range(na):  # rethink: might want early stop
         s[free] = float('inf')  # ignore current scores of free ones
-        s1 = s.clone()  # recompute score?
+        s1.copy_(s)
         f = fft(x)
         fl = f.view(-1, nm*(nn2+1))
         inds.fill_(-1)
@@ -103,7 +104,7 @@ def improve_tabu(arrays, scores, gens):
         free &= torch.rand((M,), device=device) < prob  # freeze some
     arrays[active_rows] = x
     scores[active_rows] = s
-
+    print('')
 
 """
 # greedy random k-bit flip
