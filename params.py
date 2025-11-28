@@ -5,34 +5,34 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 188  # size of matrix
+n = 92  # size of matrix
 # segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
 # training parameters
 sample_size = 1_000_000
-training_size = sample_size // 20
+training_size = sample_size // 10
 learning_rate = 1e-3
 training_batch_size = 1024
 weight_decay = 0.01
-max_iterations = 30
+max_iterations = 1
 training_steps = 250_000
 num_improve = 1  # number of times data get improved per generation
 
 # transformer parameters
 n_layer = 4
-n_embd = 128
-n_embd2 = 4*n_embd  # default choice
+n_embd = [16, 32, 48, 64, 80, 96, 112, 128]
+# n_embd2 = 4*n_embd  # default choice; only include if *not* default choice (because of potential sweep issue)
 n_head = 4
-stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+stacking = 6  # [5,6,7,8,9,10]  # preferably a divisor of nn
 temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
 gen_decay = .01
 sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = 4096  # must be less than training_size, no more than 10% ideally
+test_set_size = training_size//2  # must be less than training_size, no more than 10% ideally
 # num_workers = None  # for cpu parallelisation -- not used in this version
 
 resume = False  # whether to resume a previous run
@@ -105,7 +105,7 @@ if fixed_sums:
 else:
     num_ones = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature']
 
 import ast
 # hparams can be updated in command line
@@ -121,10 +121,8 @@ for param in hparams_list:
 # special cases: coupled default values
 if getattr(args, "sample_size") and not getattr(args, "training_size"):
     training_size = sample_size//20
-if getattr(args, "n_embd") and not getattr(args, "n_embd2"):
-    n_embd2 = 4*n_embd
-#if getattr(args, "sample_size") and not getattr(args, "sample_batch_size"):
-#    sample_batch_size = sample_size//10
+#if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
+#    n_embd2 = 4*n_embd
 
 
 hparams = {name: globals().get(name) for name in hparams_list}
@@ -137,7 +135,7 @@ if is_sweep:
     sweep_config = {
         "method": "grid",
         "parameters": {
-            k: {"values": v}
+            k: { ("values" if isinstance(v, list) else "value"): v }
             for k, v in hparams.items()
             }
         }
@@ -150,13 +148,15 @@ class ModelConfig:
         if isinstance(self.stacking, int):
             self.block_size = nm * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
             self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
+        if isinstance(self.n_embd, int) and not hasattr(self,'n_embd2'):
+            self.n_embd2 = 4 * self.n_embd
     def update(self):
         if is_sweep:
             import wandb
             self.__init__(**wandb.config)
             wandb.config.block_size = self.block_size
             wandb.config.vocab_size = self.vocab_size
-
+            wandb.config.n_embd2 = self.n_embd2
 
 config = ModelConfig(**hparams)
 
