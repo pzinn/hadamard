@@ -28,7 +28,7 @@ nn2 = (nn-1)//2
 print(f"{n=}")
 
 
-vec = torch.frac(torch.pi ** torch.arange(1,nn+1, device=device, dtype=real_dtype))  # doesn't really matter, used for ordering
+vec = torch.frac(torch.exp(.1*torch.arange(1,nn+1, device=device, dtype=real_dtype)))  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)

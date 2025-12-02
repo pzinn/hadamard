@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import math
 import torch
+import math
 import params
 from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut, score, score_fft, fft, eps, real_dtype, complex_dtype
 from improve import improve1p, improve2, improve3
-from pt import optimise_parallel_tempering, nT
+from pt import parallel_tempering, nT
 import logger
 import transformer
 # logging/debugging
@@ -50,7 +50,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     # compute autocorrelation by MC
     mc_size = 1000
     with torch.random.fork_rng():
-        s = (arrays[torch.randint(B, (mc_size,))] * arrays[torch.randint(B, (mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)
+        s = (arrays[torch.randint(B, (mc_size,), device=arrays.device)] * arrays[torch.randint(B, (mc_size,), device=arrays.device)]).sum(dim=1).abs().sum()/(mc_size*na)
     """
     # proper/slow way: REDO ONE DAY
     mc_size = 1000
@@ -82,14 +82,14 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Correlation: {s}")
 
     # now scores
-    # if debugging:
-    #     print(f'Score tally: {dict(zip(*np.unique(np.round(scores, decimals=5), return_counts=True)))}')
-
     min_score = torch.min(scores)
     print(f"Min score: {min_score}")
 
-    mean_score = torch.mean(scores)
-    print(f"Mean score: {mean_score}")
+    med_score = torch.median(scores)
+    print(f"Med score: {med_score}")
+
+    avg_score = torch.mean(scores)
+    print(f"Avg score: {avg_score}")
 
     max_score = torch.max(scores)
     print(f"Max score: {max_score}")
@@ -121,11 +121,11 @@ def record_stats(arrays, scores, gens, prefix=""):
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
-            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'mean score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {mean_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
+            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
 
     if prefix and not prefix.startswith("debug"):
-        logger.record_scores(prefix, scores, mean_score, gens_tally, nh)
+        logger.record_scores(prefix, scores, avg_score, gens_tally, nh)
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
@@ -213,18 +213,19 @@ def derotate(arrays, scores=None):
             raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(), (scores1-scores2).abs().mean().item())
 
 aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
-aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
+# aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
 
 @torch.inference_mode()
-def apply_aut(idx,arrays0):
+def apply_aut(idx, arrays0):
     B = arrays0.shape[0]
     arrays04 = arrays0.view(B, nm, nn)
     arrays = torch.empty_like(arrays0)
     arrays4 = arrays.view(B, nm, nn)
     # automorphism
-    inds = aut_inds[idx]
-    inds_expanded = inds.unsqueeze(1).expand(B, nm, nn)
-    arrays4.scatter_(2, inds_expanded, arrays04)
+    # inds = aut_inds[idx]
+    a = aut[idx]
+    inds = torch.outer(a, torch.arange(nn, device=device)) % nn
+    arrays4.scatter_(2, inds.unsqueeze(1).expand(B, nm, nn), arrays04)
     return arrays
 
 @torch.inference_mode()
@@ -248,7 +249,7 @@ def parallel_improve(arrays, scores, gens):
     B0 = torch.searchsorted(scores, eps)  # don't touch H-matrices
     B1 = arrays.shape[0]//10  # roughly at most 9/10 used
     B = (max(B0,B1)//nT)*nT
-    optimise_parallel_tempering(arrays[B:], scores[B:], gens[B:])
+    parallel_tempering(arrays[B:], scores[B:], gens[B:])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug pt")
@@ -326,7 +327,7 @@ def batch_improve(arrays0, scores0, gens0):
             scores = torch.cat((scores, new_scores), dim=0)
             gens = torch.cat((gens, new_gens), dim=0)
             arrays, scores, gens = best_from(arrays, scores, gens)
-    return arrays.to(device='cpu', dtype=torch.int8), scores.cpu(), gens.cpu()
+    return arrays.cpu(), scores.cpu(), gens.cpu()
 
 def main():
     # logging: text stats file + fancy (tensorboard or wandb)
