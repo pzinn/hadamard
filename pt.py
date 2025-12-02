@@ -1,9 +1,9 @@
 import torch
-from params import na, score, device
+from params import na, score, device, config
 
 # parallel tempering
-invT = torch.logspace(2.5, 0, 10, device=device)  # inverse temperatures for tempering TODO choose wisely/autotune
-nT = len(invT)
+nT = 16  # number of temperatures. between say 10 and 20
+r = .25 * nT  # log10 of ratio hiT/loT=1/loT. empirical formula
 
 #torch.set_printoptions(threshold=nT,sci_mode=False)
 
@@ -27,46 +27,59 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     scores[accept] = scores_prop[accept]
 
 @torch.no_grad()
-def attempt_swaps(x, scores):
-    """
-    x: (nT, BperT, n)
-    scores: (nT, BperT)
-    """
+def attempt_swaps(x, scores, gens):
+    #  x: (nT, BperT, n)
+    #  scores, gens: (nT, BperT)
     accepted = 0
     total = 0
-    for i in range(nT - 1):
-        invT1, invT2 = invT[i], invT[i+1]
-        E1, E2 = scores[i], scores[i+1]              # (BperT,)
+    for i in range(nT - 1, 0, -1):
+        invT1, invT2 = invT[i], invT[i-1]
+        E1, E2 = scores[i], scores[i-1]              # (BperT,)
         dE = (E2 - E1) * (invT1 - invT2)
         prob = torch.exp(-dE)
         accept = (torch.rand_like(prob) < prob)
         accepted += accept.sum()
         total += accept.numel()  # lazy
         # swap where accepted
-        if accept.any():
-            swap_mask = accept[:, None]            # (BperT,1)
-            x1, x2 = x[i].clone(), x[i+1].clone()
-            s1, s2 = E1.clone(), E2.clone()
-            x[i] = torch.where(swap_mask, x2, x1)
-            x[i+1] = torch.where(swap_mask, x1, x2)
-            scores[i] = torch.where(accept, s2, s1)
-            scores[i+1] = torch.where(accept, s1, s2)
-    acc_rate = accepted.float() / total
-    return acc_rate
+        swap_mask = accept[:, None]            # (BperT,1)
+        xc = x[i,accept].clone()
+        x[i,accept] = x[i-1,accept]
+        x[i-1,accept] = xc
+        scoresc = scores[i,accept].clone()
+        scores[i,accept] = scores[i-1,accept]
+        scores[i-1,accept] = scoresc
+        gensc = gens[i,accept].clone()
+        gens[i,accept] = gens[i-1,accept]
+        gens[i-1,accept] = gensc
+    return accepted / total
 
-def optimise_parallel_tempering(x, scores, iterations=5000, swap_interval=50):
+swap_interval = 50
+iterations = na * swap_interval * config.num_improve
+p = .25
+invlogp = 1 / torch.log(torch.tensor(p))
+def parallel_tempering(x, scores, gens):
+    global r, invT
+    invT = torch.logspace(r, 0, nT, device=device)
     B = x.shape[0]
     BperT = B // nT  # should divide please
-    scores = scores.view(nT, BperT)
     x = x.view(nT, BperT, na)
+    scores = scores.view(nT, BperT)
+    gens = gens.view(nT, BperT)
     acc_mavg = 0.0
     for t in range(iterations):
-        k = 1 + t % 3  # TODO fix
         # --- local search per temperature ---
+        k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is 1/(1-p)
+        k = int(k.clamp(1,na//2))
         improve_T(x, scores, k=k)
-        #print((scores-score(x).view(nT,BperT)).abs().max())  # TESTING
         # --- replica swaps ---
         if t % swap_interval == 0:
-            acc = attempt_swaps(x, scores)
-            print(f"{t:5d}: swap_acc≈{acc:.3f} mean score={scores.mean()} {scores.mean(1).tolist()}")
-
+            acc = attempt_swaps(x, scores, gens)
+            #print(f"{t:5d}: swap_acc={acc:.3f} flip_acc={(cnt/(swap_interval*BperT)).tolist()} mean score={scores.mean()} {scores.mean(1).tolist()}")
+            #cnt.zero_()
+            print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
+            acc_avg = acc if t==0 else 0.9 * acc_avg + 0.1 * acc
+    # autotune Ts
+    if acc_avg < 0.2:
+        r -= .2
+    elif acc_avg > 0.3:
+        r += .2

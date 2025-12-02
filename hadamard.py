@@ -49,7 +49,8 @@ def record_stats(arrays, scores, gens, prefix=""):
         return
     # compute autocorrelation by MC
     mc_size = 1000
-    s = (arrays[torch.randint(B, (mc_size,))] * arrays[torch.randint(B, (mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)
+    with torch.random.fork_rng():
+        s = (arrays[torch.randint(B, (mc_size,))] * arrays[torch.randint(B, (mc_size,))]).sum(dim=1).abs().sum()/(mc_size*na)
     """
     # proper/slow way: REDO ONE DAY
     mc_size = 1000
@@ -169,7 +170,7 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         scores = torch.cat((scores, new_scores), dim=0)
     return arrays, scores
 
-vec = torch.frac(torch.pi ** torch.arange(1, nn+1, device=device, dtype=real_dtype))  # doesn't really matter, used for ordering
+vec = torch.frac(torch.exp(.1*torch.arange(1,nn+1, device=device, dtype=real_dtype)))
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
@@ -245,8 +246,9 @@ def parallel_improve(arrays, scores, gens):
     arrays = arrays[inds]
     gens = gens[inds]
     B0 = torch.searchsorted(scores, eps)  # don't touch H-matrices
-    B = max(B0, (arrays.shape[0]//(4*nT))*nT)  # roughly at most 3/4 used
-    optimise_parallel_tempering(arrays[B:], scores[B:])
+    B1 = arrays.shape[0]//10  # roughly at most 9/10 used
+    B = (max(B0,B1)//nT)*nT
+    optimise_parallel_tempering(arrays[B:], scores[B:], gens[B:])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug pt")
@@ -410,9 +412,20 @@ def main():
         new_arrays, new_scores = batch_score(new_arrays)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
-        arrays = torch.cat((new_arrays, arrays), dim=0)
-        scores = torch.cat((new_scores, scores), dim=0)
-        gens = torch.cat((gens, new_gens), dim=0)
+        # combine, but mix
+        A = arrays.shape[0]  # should be training_size
+        B = new_arrays.shape[0]  # should be sample_size
+        perm = torch.randperm(A+B)  # overkill but whatever
+        combined_arrays = torch.empty((A+B, na), dtype=torch.int8)
+        combined_scores = torch.empty(A+B, dtype=real_dtype)
+        combined_gens = torch.empty(A+B, dtype=torch.uint8)
+        combined_arrays[perm[:A]] = arrays
+        combined_arrays[perm[A:]] = new_arrays
+        combined_scores[perm[:A]] = scores
+        combined_scores[perm[A:]] = new_scores
+        combined_gens[perm[:A]] = gens
+        combined_gens[perm[A:]] = new_gens
+        arrays, scores, gens = combined_arrays, combined_scores, combined_gens
         if debugging:
             print(f"sampling time: {timer() - start_timer}")
 
