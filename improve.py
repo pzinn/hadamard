@@ -14,7 +14,7 @@ wrng_all = torch.zeros((na, nm*(nn2+1)), device=device, dtype=complex_dtype)
 for i in range(nm):
     wrng_all[i*nn:(i+1)*nn, i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
-k = 9
+k = 11
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
@@ -67,9 +67,11 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
 
 
 # greedy random k-bit flip
+p = .5
+invlogp = 1 / math.log(p)
 @torch.inference_mode()
-def improve_greedy(x,scores):
-    print(f"improve_greedy ", end=''); sys.stdout.flush()
+def improve_greedy(x, scores):
+    print("improve_greedy ", end=''); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -77,22 +79,23 @@ def improve_greedy(x,scores):
     fmod = torch.empty_like(f)
     flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    for k in range(2, 10):
-        cnt.zero_()
-        for _ in range(na):
-            inds = torch.multinomial(torch.ones(na, device=device), num_samples=k, replacement=False)
+    for _ in range(50):  #?
+        k = 2 + torch.log(torch.rand(()))*invlogp
+        k = int(k.clamp(2, na//2))
+        n_inds = na // k
+        # create all at once a bunch of subsets to sample
+        all_inds = torch.randperm(na, device=device)[:n_inds*k].view(n_inds,k)
+        for i in range(n_inds):
+            inds = all_inds[i]
             torch.matmul(x[:, inds].to(complex_dtype), wrng_all[inds], out=flmod)
             flmod.add_(fl)
             new_scores = score_fft(fmod)
-            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]
+            improved_inds = torch.nonzero(new_scores < scores, as_tuple=True)[0]  # better than mask when few True expected
             fl[improved_inds] = flmod[improved_inds]
             x[improved_inds.unsqueeze(1), inds] *= -1
             scores[improved_inds] = new_scores[improved_inds]
             cnt += improved_inds.shape[0]
-        print(f'{k=} {cnt/B}')
-        # recompute scores for accuracy?
-        # f = fft(x)
-        # scores = score(x)
+    print(f'{cnt} ({cnt/B})')
 
 @torch.inference_mode()
 def improve_phases(arrays, scores):
