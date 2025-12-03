@@ -1,17 +1,17 @@
 import torch
-import math
-from params import na, nm, nn, score, device, config, eps
+from params import na, score, device, config
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
-r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188
-# T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
-logT = r * torch.arange(nT, device=device, dtype=torch.float32)
-T = .1 ** logT
+r = .25 * nT  # log10 of ratio hiT/loT=1/loT. empirical formula
+
+#torch.set_printoptions(threshold=nT,sci_mode=False)
 
 @torch.inference_mode()
 def improve_T(x, scores, k):  # random k-bit flip at finite T.
-    BperT = x.shape[1]
+    #nT, BperT, na = x.shape
+    BperT=x.shape[1]
+    #flip_inds = torch.randint(na, (nT, BperT, k), device=device)
     flip_inds = torch.rand((nT, BperT, na), device=device).topk(k, dim=2).indices
     # propose flips
     flip_vals = x.gather(2, flip_inds)
@@ -19,81 +19,67 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     scores_prop = score(x).view(nT, BperT)
     # Metropolis acceptance
     dE = scores_prop - scores
-    #accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    #accept = (scores > eps) & ((dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None]))  # remove first test?
-    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # slower but simpler
+    accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
     # broadcast the mask to k bits and gather flips to revert
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
     # reflip only rejected ones
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
     scores[accept] = scores_prop[accept]
 
-
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
     #  x: (nT, BperT, n)
     #  scores, gens: (nT, BperT)
-    accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
-    for i in range(nT-1):
-        T1, T2 = T[i], T[i+1]
-        E1, E2 = scores[i], scores[i+1]              # (BperT,)
-        accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
-        accepted[i] += accept.sum(dim=0)
+    accepted = 0
+    total = 0
+    for i in range(nT - 1, 0, -1):
+        invT1, invT2 = invT[i], invT[i-1]
+        E1, E2 = scores[i], scores[i-1]              # (BperT,)
+        dE = (E2 - E1) * (invT1 - invT2)
+        prob = torch.exp(-dE)
+        accept = (torch.rand_like(prob) < prob)
+        accepted += accept.sum()
+        total += accept.numel()  # lazy
         # swap where accepted
-        """
         swap_mask = accept[:, None]            # (BperT,1)
-        x1, x2 = x[i].clone(), x[i+1].clone()
-        s1, s2 = E1.clone(), E2.clone()
-        g1, g2 = gens[i].clone(), gens[i+1].clone()
-        x[i] = torch.where(swap_mask, x2, x1)
-        x[i+1] = torch.where(swap_mask, x1, x2)
-        scores[i] = torch.where(accept, s2, s1)
-        scores[i+1] = torch.where(accept, s1, s2)
-        gens[i] = torch.where(accept, g2, g1)
-        gens[i+1] = torch.where(accept, g1, g2)
-        """
-        xc = x[i, accept].clone()
-        x[i, accept] = x[i+1, accept]
-        x[i+1, accept] = xc
-        scoresc = scores[i, accept].clone()
-        scores[i, accept] = scores[i+1, accept]
-        scores[i+1, accept] = scoresc
-        gensc = gens[i, accept].clone()
-        gens[i, accept] = gens[i+1, accept]
-        gens[i+1, accept] = gensc
-    return accepted
+        xc = x[i,accept].clone()
+        x[i,accept] = x[i-1,accept]
+        x[i-1,accept] = xc
+        scoresc = scores[i,accept].clone()
+        scores[i,accept] = scores[i-1,accept]
+        scores[i-1,accept] = scoresc
+        gensc = gens[i,accept].clone()
+        gens[i,accept] = gens[i-1,accept]
+        gens[i-1,accept] = gensc
+    return accepted / total
 
 swap_interval = 50
-iterations = na * 40 * config.num_improve
+iterations = na * swap_interval * config.num_improve
 p = .25
-invlogp = 1 / math.log(p)
+invlogp = 1 / torch.log(torch.tensor(p))
 def parallel_tempering(x, scores, gens):
-    global logT, T
+    global r, invT
+    invT = torch.logspace(r, 0, nT, device=device)
     B = x.shape[0]
     BperT = B // nT  # should divide please
-    if BperT == 0:
-        return
     x = x.view(nT, BperT, na)
     scores = scores.view(nT, BperT)
     gens = gens.view(nT, BperT)
+    acc_mavg = 0.0
     for t in range(iterations):
         # --- local search per temperature ---
         k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is 1/(1-p)
-        k = int(k.clamp(1, na//2))
+        k = int(k.clamp(1,na//2))
         improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
-            acc = attempt_swaps(x, scores, gens) / BperT
-            #print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
-            # acc_avg = acc if t == 0 else 0.9 * acc_avg + 0.1 * acc
-            if t > swap_interval * 10:
-                # autotune Ts
-                for i in range(nT-1):
-                    if acc[i] < .2:
-                        logT[i+1:] -= .05 * (logT[i+1] - logT[i])
-                    elif acc[i] > .3:
-                        logT[i+1:] += .05 * (logT[i+1] - logT[i])
-                T = .1 ** logT
-            print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
-    # acc_avg = acc_avg.mean().item()
-    # print(f"{acc_avg=}")
+            acc = attempt_swaps(x, scores, gens)
+            #print(f"{t:5d}: swap_acc={acc:.3f} flip_acc={(cnt/(swap_interval*BperT)).tolist()} mean score={scores.mean()} {scores.mean(1).tolist()}")
+            #cnt.zero_()
+            print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
+            acc_avg = acc if t==0 else 0.9 * acc_avg + 0.1 * acc
+    # autotune Ts
+    if acc_avg < 0.2:
+        r -= .2
+    elif acc_avg > 0.3:
+        r += .2
