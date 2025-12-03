@@ -5,7 +5,7 @@ import torch
 import math
 import params
 from params import n, na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, aut, score, score_fft, fft, eps, real_dtype, complex_dtype
-from improve import improve1p, improve2, improve3
+from improve import improve1p, improve_greedy, improve_phases
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -258,7 +258,7 @@ def parallel_improve(arrays, scores, gens):
     # step B: improvement
     for _ in range(config.num_improve):
         start_timer = timer()
-        improve3(arrays, scores)
+        improve_phases(arrays, scores)
         if debugging:
             print(f"improve3 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i3")
@@ -271,13 +271,13 @@ def parallel_improve(arrays, scores, gens):
         scores = score(arrays)  # don't trust improve1p
         #
         start_timer = timer()
-        improve2(arrays, scores)
+        improve_greedy(arrays, scores)
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i2")
         scores = score(arrays)  # don't trust improve2
     start_timer = timer()
-    improve3(arrays, scores)
+    improve_phases(arrays, scores)
     if debugging:
         print(f"improve3 time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug i3")

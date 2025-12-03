@@ -68,8 +68,8 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
 
 # greedy random k-bit flip
 @torch.inference_mode()
-def improve2(x,scores):
-    print(f"improve2 ", end=''); sys.stdout.flush()
+def improve_greedy(x,scores):
+    print(f"improve_greedy ", end=''); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -95,8 +95,8 @@ def improve2(x,scores):
         # scores = score(x)
 
 @torch.inference_mode()
-def improve3(arrays, scores):
-    print(f"improve3 ", end=''); sys.stdout.flush()
+def improve_phases(arrays, scores):
+    print(f"improve_phases ", end=''); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
