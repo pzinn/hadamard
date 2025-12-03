@@ -113,7 +113,7 @@ def improve3(arrays, scores):
         fmod = torch.empty((M, nn2+1), device=device, dtype=complex_dtype)
         x = torch.empty((M, nn), device=device, dtype=torch.int8)
         x2 = torch.empty((M, nn), device=device, dtype=real_dtype)
-        for t in range(50*n):  # ?
+        for t in range(100*n):  # ?
             torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
             x.fill_(-1)
             x.masked_fill_(x2 > 0, 1)
@@ -127,6 +127,6 @@ def improve3(arrays, scores):
             scores[improved_inds] = new_scores[improved]
             f[improved_inds, j] = fmod[improved]
             cnt += improved_inds.shape[0]
-            h[:, 1:] *= torch.exp(1j * (torch.rand((M, nn2), device=device)-.5))
+            h[:, 1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M, nn2), device=device))
         print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
