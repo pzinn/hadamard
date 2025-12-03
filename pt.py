@@ -131,7 +131,7 @@ def attempt_swaps(x, scores, gens):
     return accepted
 
 swap_interval = 50
-iterations = na * 40 * config.num_improve
+iterations = na * swap_interval * config.num_improve
 p = .25
 invlogp = 1 / math.log(p)
 def parallel_tempering(x, scores, gens):

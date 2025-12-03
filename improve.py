@@ -268,7 +268,7 @@ def improve_phases(arrays, scores):
         fmod = torch.empty((M, nn2+1), device=device, dtype=complex_dtype)
         x = torch.empty((M, nn), device=device, dtype=torch.int8)
         x2 = torch.empty((M, nn), device=device, dtype=real_dtype)
-        for t in range(50*n):  # ?
+        for t in range(100*n):  # ?
             torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
             x.fill_(-1)
             if fixed_sums:
