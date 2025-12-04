@@ -13,11 +13,11 @@ n = 172  # size of matrix
 # training parameters
 sample_size = 1_000_000
 training_size = sample_size//20  # must be > test_set_size
-learning_rate = 5e-4
+learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 250_000  # will be adjusted dynamically (to be less than that)
+training_steps = 150_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
@@ -29,7 +29,7 @@ stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
-gen_decay = .01
+gen_decay = 0.0
 sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
