@@ -123,6 +123,7 @@ def load_model():
     if model.need_reload:
         model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
         print('resuming from existing model in the workdir')
+        model.need_reload = False
 
 
 def save_model():
@@ -226,36 +227,17 @@ def train(data, **kwargs):
             load_model()
         except FileNotFoundError:
             pass
-    model.need_reload = True  # we will change the model no matter what
 
     batch_size = config.training_batch_size
-    test_len = config.test_set_size
-    perm = torch.randperm(data_len)
-    if data_len >= test_len + batch_size:
-        train_len = (data_len - test_len) // batch_size * batch_size  # make sure train_len is a multiple of batch_size
-        test_len = data_len - train_len
-        test_inds = perm[:test_len]
-        train_inds = perm[test_len:]
-    else:
-        test_inds = perm[:test_len] if data_len >= test_len else perm.repeat(test_len // data_len + 1)[:test_len]
-        train_inds = perm[data_len-batch_size:] if data_len >= batch_size else perm.repeat(batch_size // data_len +1)[:batch_size]
-        train_len = batch_size
-    print(f"split up the dataset into {train_len} training examples and {test_len} test examples")
 
     # init optimiser
     optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
 
-    test_sample = array_to_string(rotate(data[test_inds])).cpu()  # just get it all, and encode it too
-
     # training loop
     step = 0
-    save_step = 0
-    best_loss = evaluate(test_sample)
-    logger.record_loss(best_loss, step, "test")
-    idx = 0
     while True:
         # feed into the model
-        batch = array_to_string(rotate(data[train_inds[idx:idx+batch_size]].to(device, non_blocking=True)))
+        batch = array_to_string(rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)))
         logits, loss = model(batch, compute_loss=True)
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -272,38 +254,17 @@ def train(data, **kwargs):
             if device.startswith('cuda'):
                 torch.cuda.synchronize()
             logger.record_loss(loss, step, "train")
-            # evaluate the model
-            test_loss = evaluate(test_sample)
-            logger.record_loss(test_loss, step, "test")
-            # save the model to disk if it has improved
-            if test_loss < best_loss:
-                save_model()
-                sys.stdout.flush()
-                best_loss = test_loss
-                save_step = step
-            else:
-                print('')  # to have nicely aligned test / train stats :)
-                sys.stdout.flush()
-                if test_loss - loss + (step-save_step)/max_steps > .3:  # termination condition 1: we've probably massively overfitted
-                    break
+            save_model()
             if step == max_steps:  # termination condition 2: hard cutoff
                 break
         #
-        idx += batch_size
-        if idx == train_len:
-            idx = 0
-            train_inds = train_inds[torch.randperm(train_len)]
     print('')
-    with open(logger.stats_file, 'a') as file:
-        file.write(f'training: {best_loss=} at {save_step=}\n')
-
 
 if True:  #not device.startswith('cuda'):
     # unoptimised version of sample if cuda not installed
     @torch.no_grad()
     def sample():
         load_model()
-        model.need_reload = False
         if device.startswith('cuda'):
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
@@ -322,7 +283,6 @@ else:
     @torch.no_grad()
     def sample():
         load_model()
-        model.need_reload = False
         if device.startswith('cuda'):
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
