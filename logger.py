@@ -63,7 +63,7 @@ def init_logging():
         config.update()  # for sweep
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
-            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
+            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
             print(f"{name} {loss=:.6f}", end='\t')
         def record_scores(prefix, scores, mean_score, gens_tally, nh):
             table = wandb.Table(columns=["gen", "count"])

@@ -451,7 +451,7 @@ def main():
             def get_lr(step, warmup_steps=10000):
                 return coeff * config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
             max_steps = config.training_steps
-            eval_freq = 100
+            eval_freq = 1000
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
