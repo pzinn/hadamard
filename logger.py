@@ -61,9 +61,8 @@ def init_logging():
                    resume='allow' if params.resume else 'never',  # if is_sweep, resume not supported
                    mode = params.logging_mode)
         config.update()  # for sweep
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
-            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
+            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): loss})
             print(f"{name} {loss=:.6f}", end='\t')
         def record_scores(prefix, scores, mean_score, gens_tally, nh):
             table = wandb.Table(columns=["gen", "count"])

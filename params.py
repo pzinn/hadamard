@@ -5,19 +5,19 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 172  # size of matrix
+n = 140  # size of matrix
 # segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
 # training parameters
-sample_size = 1_000_000
+sample_size = 10_000
 training_size = sample_size//20  # must be > test_set_size
-learning_rate = 1e-3
+learning_rate = 1e-4
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 150_000  # will be adjusted dynamically (to be less than that)
+training_steps = 10_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
@@ -30,7 +30,7 @@ temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
 gen_decay = 0.0
-sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
+sample_batch_size = 5_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = 4096  # must be less than training_size, no more than 10% ideally
 num_workers = None  # for cpu parallelisation
@@ -58,7 +58,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
