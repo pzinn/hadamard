@@ -411,8 +411,8 @@ def main():
         print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
         params.gen += 1
         start_timer = timer()
-        new_arrays = transformer.sample()
-        new_arrays, new_scores = batch_score(new_arrays)
+        # new_arrays = transformer.sample()
+        new_arrays, new_scores = batch_score(None)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
         # combine, but mix
