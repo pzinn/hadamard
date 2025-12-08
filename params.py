@@ -11,8 +11,8 @@ n = 140  # size of matrix
 # the parameters below are sweepable: use values, or lists for a sweep
 
 # training parameters
-sample_size = 10_000
-training_size = sample_size//20  # must be > test_set_size
+sample_size = 100_000
+training_size = sample_size//10  # must be > test_set_size
 learning_rate = 1e-4
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01

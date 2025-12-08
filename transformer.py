@@ -53,6 +53,9 @@ class DeepAE(nn.Module):
     def __init__(self, config, latent_dim=64, width=512, depth=4):
         super().__init__()
 
+        self.register_buffer("latent_mu", None)
+        self.register_buffer("latent_cov", None)
+
         d=na #TEMP
         # Encoder input projection
         self.enc_in = nn.Linear(d, width)
@@ -82,6 +85,33 @@ class DeepAE(nn.Module):
         logits = self.to_output(h)
         return torch.sign(logits)
 
+    def estimate_latent_statistics(self, batch):
+        """
+        Computes latent mean and covariance from the encoder outputs.
+        Returns:
+            mu:       (latent_dim,) mean vector
+            cov:      (latent_dim, latent_dim) covariance matrix
+        """
+        _, Z = model(batch)
+
+        self.latent_mu = Z.mean(dim=0)         # (latent_dim,)
+
+        # print(self.latent_mu)
+
+        # Compute covariance:
+        # cov = E[zz^T] - mu mu^T
+        Z_centered = Z - self.latent_mu
+        self.latent_cov = (Z_centered.t() @ Z_centered) / (Z_centered.size(0) - 1)
+
+    def latent_gaussian_sampler(self, batch_size):
+        """
+        Samples z ~ N(mu, cov) using Cholesky factorization.
+        """
+        latent_dim = self.to_latent.out_features
+        L = torch.linalg.cholesky(self.latent_cov + 1e-5 * torch.eye(latent_dim, device=device))  # TODO precompute?
+        eps = torch.randn(batch_size, latent_dim, device=device)
+        return self.latent_mu + eps @ L.t()
+
     def forward(self, x):
         h = self.enc_in(x)
         h = self.encoder_blocks(h)
@@ -91,7 +121,7 @@ class DeepAE(nn.Module):
         h = self.decoder_blocks(h)
         logits = self.to_output(h)
 
-        return logits
+        return logits, z
 
 
 # -----------------------------------------------------------------------------
@@ -123,10 +153,10 @@ def save_model():
 
 
 
+
 @torch.inference_mode()
 def generate(batch_size):
-    latent_dim = model.to_latent.out_features
-    z = torch.randn(batch_size, latent_dim, device='cuda')
+    z = model.latent_gaussian_sampler(batch_size)
     x_hat = model.decode_from_latent(z)
     return x_hat
 
@@ -165,7 +195,7 @@ def train(data, **kwargs):
     while True:
         # feed into the model
         batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)).view(batch_size,na).to(dtype=torch.float32)
-        logits = model(batch)
+        logits, _ = model(batch)
         loss = ((logits - batch)**2).mean()  # or sum()?
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -182,7 +212,8 @@ def train(data, **kwargs):
             logger.record_loss(loss, step, "train")
             logger.record_loss(loss2, step, "train2")
             save_model()
-            if step == max_steps:  # termination condition 2: hard cutoff
+            if step == max_steps:
+                model.estimate_latent_statistics(batch)
                 break
         step += 1
         #
