@@ -235,10 +235,12 @@ def train(data, **kwargs):
 
     # training loop
     step = 0
+    total_loss = 0
     while True:
         # feed into the model
         batch = array_to_string(rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)))
         logits, loss = model(batch, compute_loss=True)
+        total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
         for param_group in optimiser.param_groups:
@@ -249,14 +251,14 @@ def train(data, **kwargs):
         optimiser.step()
         # periodically test/save the model
         step += 1
-        if step % eval_freq == 0 or step == max_steps:
+        if step % eval_freq == 0:
             print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
-            if device.startswith('cuda'):
-                torch.cuda.synchronize()
-            logger.record_loss(loss, step, "train")
+            logger.record_loss(total_loss/eval_freq, step, "train")
+            total_loss = 0
             save_model()
-            if step == max_steps:  # termination condition 2: hard cutoff
-                break
+        if step == max_steps:
+            save_model()
+            break
         #
     print('')
 
