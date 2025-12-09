@@ -32,7 +32,7 @@ temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 gen_decay = 0.0
 sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = 4096  # must be less than training_size, no more than 10% ideally
+test_set_size = None  # None | < training_size, no more than 10% ideally
 num_workers = None  # for cpu parallelisation
 
 resume = False  # whether to resume a previous run
