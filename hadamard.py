@@ -289,6 +289,23 @@ def parallel_improve(arrays, scores, gens):
         if debugging:
             print(f"improve0 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="debug i0")
+    # step Y: first pass of local search
+        start_timer = timer()
+        improve_phases(arrays, scores)
+        scores = score(arrays)  # don't trust improve
+        if debugging:
+            print(f"improvea time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug ia")
+        #
+        start_timer = timer()
+        if fixed_sums:
+            improve4x4_fixed(arrays, scores)
+        else:
+            improve1p(arrays, scores)
+        scores = score(arrays)  # don't trust improve
+        if debugging:
+            print(f"improveb time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug ib")
     # step A: parallel tempering
     start_timer = timer()
     scores, inds = torch.sort(scores, descending=True)
@@ -304,13 +321,13 @@ def parallel_improve(arrays, scores, gens):
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug pt")
-    # step B: improvement
+    # step B: second pass of local search
     for _ in range(config.num_improve):
         start_timer = timer()
         if fixed_sums:
-            improve_greedy_fixed(arrays, scores)
+            improve4x4_fixed(arrays, scores)
         else:
-            improve_greedy(arrays, scores)
+            improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
             print(f"improve1 time: {timer() - start_timer}")
@@ -318,9 +335,9 @@ def parallel_improve(arrays, scores, gens):
         #
         start_timer = timer()
         if fixed_sums:
-            improve4x4_fixed(arrays, scores)
+            improve_greedy_fixed(arrays, scores)
         else:
-            improve1p(arrays, scores)
+            improve_greedy(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
             print(f"improve2 time: {timer() - start_timer}")
