@@ -464,11 +464,11 @@ def main():
                 torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
-            coeff = 1 if params.gen == 0 or not resume_training else .01
+            coeff = 1 if gen==0 or not resume_training else (1+params.gen)**-1.5
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
                 return coeff * config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
-            max_steps = int(config.training_steps*math.sqrt(coeff))
+            max_steps = config.training_steps if coeff==1 else config.training_steps//10
             eval_freq = 1000
             start_timer = timer()
             transformer.train(arrays, scores, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
