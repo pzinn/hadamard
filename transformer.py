@@ -71,6 +71,7 @@ class Transformer(torch.nn.Module):
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
+            wpe_score = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -82,7 +83,7 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, compute_loss=False):
+    def forward(self, batch0, scores=None, compute_loss=False):
         b = batch0.shape[0]
         batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = batch.shape[1] + 1
@@ -90,6 +91,8 @@ class Transformer(torch.nn.Module):
         pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
+        if scores is not None:
+            x += scores[:,None,None] * self.transformer.wpe_score.weight[:t]
         x[:, 1:, :] += tok_emb
         for block in self.transformer.h:
             x = block(x)
@@ -168,10 +171,9 @@ def generate(batch):
         """
 
 @torch.inference_mode()
-def evaluate(sample):
+def evaluate(sample, scores):
     model.eval()
-    batch = sample.to(device)
-    logits, loss = model(batch, compute_loss=True)
+    logits, loss = model(sample.to(device), scores.to(device), compute_loss=True)
     mean_loss = loss.mean().item()
     model.train()  # reset model back to training mode
     return mean_loss
@@ -200,7 +202,7 @@ def array_to_string(signs):  # int8 tensor to int tensor
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
 
-def train(data, **kwargs):
+def train(data, scores, **kwargs):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
@@ -238,8 +240,9 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # feed into the model
-        batch = array_to_string(rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)))
-        logits, loss = model(batch, compute_loss=True)
+        idx = torch.randint(data_len,(batch_size,))
+        batch = array_to_string(rotate(data[idx].to(device, non_blocking=True)))
+        logits, loss = model(batch, scores[idx].to(device, non_blocking=True), compute_loss=True)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")

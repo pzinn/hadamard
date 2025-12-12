@@ -471,7 +471,7 @@ def main():
             max_steps = int(config.training_steps*math.sqrt(coeff))
             eval_freq = 1000
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
+            transformer.train(arrays, scores, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if debugging:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
