@@ -243,8 +243,8 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # feed into the model
-        batch = data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)
-        string_batch = array_to_string(rotate(batch))
+        batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
+        string_batch = array_to_string(batch)
         f = fft(batch)
         score_batch = torch.log(torch.real(f*f.conj()).sum(dim=1))
         logits, loss = model(string_batch, score_batch, compute_loss=True)
