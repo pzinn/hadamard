@@ -86,14 +86,15 @@ class Transformer(torch.nn.Module):
     def forward(self, batch0, score_batch=None, compute_loss=False):
         b = batch0.shape[0]
         batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
-        t = batch.shape[1] + 1
+        t = batch.shape[1] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
         pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
-        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
+        x = torch.empty((b, t+1, n_embd), device=device, dtype=torch.float32)
+        x[:, 1:, :] = pos_emb  #.repeat(b, 1, 1)  # (b, t, n_embd)
         if score_batch is not None:
-            x += (score_batch @ self.transformer.wse.weight).unsqueeze(1) # (b, nn2+1) * (nn2+1, n_embd)
-        x[:, 1:, :] += tok_emb
+            x[:, 0, :] = score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
+        x[:, 2:, :] += tok_emb  # careful, shift by 1 !!
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
