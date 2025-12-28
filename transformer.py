@@ -90,11 +90,10 @@ class Transformer(torch.nn.Module):
         # forward the transformer itself
         pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
-        x = torch.empty((b, t+1, n_embd), device=device, dtype=torch.float32)
-        x[:, 1:, :] = pos_emb  #.repeat(b, 1, 1)  # (b, t, n_embd)
+        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
         if score_batch is not None:
-            x[:, 0, :] = score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x[:, 2:, :] += tok_emb  # careful, shift by 1 !!
+            x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
+        x[:, 1:, :] += tok_emb  # careful, shift by 1 !!
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
