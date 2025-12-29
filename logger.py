@@ -55,11 +55,21 @@ def init_logging():
     if params.logging == 'wandb':
         if params.logging_mode == 'offline':
             os.environ["WANDB_MODE"] = "offline"
-        myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
-        wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
-                   config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
-                   resume='allow' if params.resume else 'never',  # if is_sweep, resume not supported
-                   mode = params.logging_mode)
+        if params.resume:
+            with open(params.work_dir + "wandb_run_id.txt") as f:
+                run_id = f.read().strip()
+            run = wandb.init(entity=wandb_entity, project=wandb_project, id=run_id, dir=params.work_dir,
+                             config=config, # is_sweep and resume are incompatible
+                             resume='allow',
+                             mode = params.logging_mode)
+        else:
+            myname = f'{params.n}_{date}'
+            run = wandb.init(entity=wandb_entity, project=wandb_project, name=myname, dir=params.work_dir,
+                             config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
+                             resume='never',
+                             mode = params.logging_mode)
+            with open(params.work_dir + "wandb_run_id.txt", "w") as f:
+                f.write(run.id)
         config.update()  # for sweep
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
