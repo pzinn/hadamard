@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft
+from params import n, na, nn, nn2, nm, device, config, resume_training, rotate, fft
 import logger
 
 # -----------------------------------------------------------------------------
@@ -83,21 +83,24 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, score_batch=None, compute_loss=False):
-        b = batch0.shape[0]
-        batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
-        t = batch.shape[1] + 1  # add one since we're going to predict the next token (as well as all previous ones)
+    def forward(self, batch0, score_batch, offset=0, compute_loss=False):  # self.training => offset=0
+        b = batch0.shape[0]  # batch0 (b, m=nm|1, t-1<=segment_string_length), score_batch (b, m, nn2+1)
+        m = batch0.shape[1]  # if not self.training, m should be 1, otherwise nm
+        # in training, remove last token since don't need to predict next one:
+        batch = batch0[:, :,  :segment_string_length-1] if self.training else batch0
+        t = batch.shape[2] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
-        tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
-        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
-        if score_batch is not None:
-            x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x[:, 1:, :] += tok_emb  # careful, shift by 1 !!
+        pos_emb = self.transformer.wpe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
+        tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
+        x = pos_emb.repeat(b, 1, 1, 1)  # (b, m, t, n_embd)
+        # x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
+        x += (score_batch @ self.transformer.wse.weight).unsqueeze(2) # (b, m, nn2+1) * (nn2+1, n_embd)
+        x[:, :, 1:, :] += tok_emb  # careful, shift by 1 !!
+        xx = x.view(b*m, t, config.n_embd)
         for block in self.transformer.h:
-            x = block(x)
-        x = self.transformer.ln_f(x)
-        logits = self.lm_head(x)
+            xx = block(xx)
+        xx = self.transformer.ln_f(xx)
+        logits = self.lm_head(xx)
         # if requested, also calculate the loss
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
@@ -111,6 +114,7 @@ def init_model():
     global bit_positions
     global bit_positions_cpu  # eww
     global nn_pad
+    global segment_string_length
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -138,37 +142,32 @@ def save_model():
 # helper functions for evaluating and sampling from the model
 
 
+cst = 1 / math.sqrt(n)
+def fft(m):
+    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def generate(batch):
-    """
-    Take a conditioning sequence of indices batch (LongTensor of shape (b,t)) and complete
-    the sequence max_new_tokens times, feeding the predictions back into the model each time.
-    Most likely you'll want to make sure to be in model.eval() mode of operation for this.
-    """
-    block_size = model.get_block_size()
-    for i in range(block_size):
-        batch_cond = batch[:, :i]
-        # forward the model to get the logits for the index in the sequence
-        logits, _ = model(batch_cond)
-        # pluck the logits at the final step and scale by desired temperature
-        logits = logits[:, -1, :] / config.temperature
-        """
-        # optionally crop the logits to only the top k options
-        if top_k is not None:
-            v, _ = torch.topk(logits, top_k)
-            logits[logits < v[:, [-1]]] = -float('Inf')
-        """
-        # apply softmax to convert logits to (normalized) probabilities
-        probs = F.softmax(logits, dim=-1)
-        # sample from the distribution
-        batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-        """
-        # either sample from the distribution or take the most likely element
-        if do_sample:
-            batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-        else:
-            _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
-        """
+    #block_size = model.get_block_size()
+    B = batch.shape[0]
+    ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+    for j in range(nm):
+        offset = j * segment_string_length
+        for i in range(segment_string_length):
+            print(i,j)
+            batch_cond = batch[:, offset:offset+i].view(B, 1, i)
+            # forward the model to get the logits for the index in the sequence
+            logits, _ = model(batch_cond, ff, offset)
+            # pluck the logits at the final step and scale by desired temperature
+            logits = logits[:, -1, :] / config.temperature
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
+            batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
+        # that part sucks: copied from string_to_array and fft -- TODO absorb string_to_array here
+        signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B,nn_pad)[:, :nn]
+        f = cst * torch.fft.rfft(signs, dim=1)
+        ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # TODO should we relu? cause negative doesn't make much sense
+
 
 """
 @torch.inference_mode()
@@ -202,7 +201,7 @@ def array_to_string(signs):  # int8 tensor to int tensor
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
-    return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
+    return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
 
 
 def train(data, **kwargs):
@@ -233,6 +232,8 @@ def train(data, **kwargs):
         except FileNotFoundError:
             pass
 
+    model.train()
+
     batch_size = config.training_batch_size
 
     # init optimiser
@@ -246,8 +247,11 @@ def train(data, **kwargs):
         batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
         string_batch = array_to_string(batch)
         f = fft(batch)
-        score_batch = torch.log(torch.real(f*f.conj()).sum(dim=1))
-        logits, loss = model(string_batch, score_batch, compute_loss=True)
+        #score_batch = torch.log(torch.real(f*f.conj()).sum(dim=1))
+        ff = torch.view_as_real(f).square().sum(dim=-1)  # (batch_size, nm, nn2+1)
+        for i in range(1,nm):
+            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+        _, loss = model(string_batch, ff, compute_loss=True)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -275,6 +279,7 @@ if True:  #not device.startswith('cuda'):
     @torch.no_grad()
     def sample():
         load_model()
+        model.eval()
         if device.startswith('cuda'):
             torch.cuda.empty_cache()  # Free memory
         torch.set_float32_matmul_precision('high')
