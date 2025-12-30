@@ -41,8 +41,13 @@ def init_logging():
     else:
         # make directory
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        params.work_dir = f'training/{n}/{date}/'
-        os.makedirs(params.work_dir, exist_ok=True)
+        while True:
+            params.work_dir = f'training/{n}/{date}/'
+            try:
+                os.makedirs(params.work_dir, exist_ok=False)
+                break
+            except FileExistsError:
+                date += "_"
         #
         params.gen = 0
 
