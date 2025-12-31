@@ -71,6 +71,7 @@ class Transformer(torch.nn.Module):
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
+            wxe = torch.nn.Embedding(config.block_size, config.n_embd),
             wse = torch.nn.Embedding(nn2+1, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
@@ -91,10 +92,11 @@ class Transformer(torch.nn.Module):
         t = batch.shape[2] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
         pos_emb = self.transformer.wpe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
+        sps_emb = self.transformer.wxe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # score position embeddings of shape (m, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1, 1)  # (b, m, t, n_embd)
         # x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x += (score_batch @ self.transformer.wse.weight).unsqueeze(2) # (b, m, nn2+1) * (nn2+1, n_embd)
+        x += sps_emb.unsqueeze(0) * (score_batch @ self.transformer.wse.weight).unsqueeze(2)  # (b, m, nn2+1) * (nn2+1, n_embd)
         x[:, :, 1:, :] += tok_emb  # careful, shift by 1 !!
         xx = x.view(b*m, t, config.n_embd)
         for block in self.transformer.h:
