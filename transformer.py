@@ -52,16 +52,19 @@ class Block(torch.nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = torch.nn.LayerNorm(config.n_embd)
         self.mlp = torch.nn.ModuleDict(dict(
-            c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
+            c_fc    = torch.nn.Linear(config.n_embd + nn2+1, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
             act     = myActiv(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
 
-    def forward(self, x):
+    def forward(self, x, s):  # x: (B, T, n_embd)  s: (B, nn2+1)
         x = x + self.attn(self.ln_1(x))
-        x = x + self.mlpf(self.ln_2(x))
+        x = self.ln_2(x)
+        s_expanded = s.unsqueeze(1).expand(-1,x.shape[1],-1)
+        xx = torch.cat([x, s_expanded], dim=-1)
+        x = x + self.mlpf(xx)
         return x
 
 class Transformer(torch.nn.Module):
@@ -71,8 +74,6 @@ class Transformer(torch.nn.Module):
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
-            wxe = torch.nn.Embedding(config.block_size, config.n_embd),
-            wse = torch.nn.Embedding(nn2+1, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -92,15 +93,13 @@ class Transformer(torch.nn.Module):
         t = batch.shape[2] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
         pos_emb = self.transformer.wpe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
-        sps_emb = self.transformer.wxe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # score position embeddings of shape (m, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1, 1)  # (b, m, t, n_embd)
-        # x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x += sps_emb.unsqueeze(0) * (score_batch @ self.transformer.wse.weight).unsqueeze(2)  # (b, m, nn2+1) * (nn2+1, n_embd)
         x[:, :, 1:, :] += tok_emb  # careful, shift by 1 !!
         xx = x.view(b*m, t, config.n_embd)
+        s = score_batch.view(b*m, nn2+1)
         for block in self.transformer.h:
-            xx = block(xx)
+            xx = block(xx, s)
         xx = self.transformer.ln_f(xx)
         logits = self.lm_head(xx)
         # if requested, also calculate the loss
