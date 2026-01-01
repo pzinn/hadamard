@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import n, na, nn, nn2, nm, device, config, resume_training, rotate, fft
+from params import n, na, nn, nn2, nm, device, config, resume_training, rotate, fft, cst
 import logger
 
 # -----------------------------------------------------------------------------
@@ -142,9 +142,6 @@ def save_model():
 # helper functions for evaluating and sampling from the model
 
 
-cst = 1 / math.sqrt(n)
-def fft(m):
-    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def generate(batch):
     #block_size = model.get_block_size()
@@ -187,11 +184,13 @@ def string_to_array(X):  # really, int tensor to int8 tensor
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
     return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
+"""
 @torch.no_grad()
 def string_to_array_cpu(X):  # really, int tensor to int8 tensor
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions_cpu) & 1) << 1) - 1).view(B, nm, nn_pad)
     return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
+"""
 
 @torch.no_grad()
 def array_to_string(signs):  # int8 tensor to int tensor
@@ -274,24 +273,25 @@ def train(data, **kwargs):
         #
     print('')
 
-if True:  #not device.startswith('cuda'):
-    # unoptimised version of sample if cuda not installed
-    @torch.no_grad()
-    def sample():
-        load_model()
-        model.eval()
-        if device.startswith('cuda'):
-            torch.cuda.empty_cache()  # Free memory
-        torch.set_float32_matmul_precision('high')
-        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
-        for i in range(0, config.sample_size, config.sample_batch_size):
-            j = i + config.sample_batch_size
-            print('*', end=''); sys.stdout.flush()
-            generate(X)
-            arrays_cpu[i:j] = string_to_array(X)
-        print('')
-        return arrays_cpu
+# if not device.startswith('cuda'):
+# unoptimised version of sample if cuda not installed
+@torch.no_grad()
+def sample():
+    load_model()
+    model.eval()
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
+    torch.set_float32_matmul_precision('high')
+    X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+    arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
+    for i in range(0, config.sample_size, config.sample_batch_size):
+        j = i + config.sample_batch_size
+        print('*', end=''); sys.stdout.flush()
+        generate(X)
+        arrays_cpu[i:j] = string_to_array(X)
+    print('')
+    return arrays_cpu
+"""
 else:
     # sample with CPU double buffering TODO reinstate at some point
     stream = torch.cuda.Stream()
@@ -323,3 +323,4 @@ else:
             idx = 1 - idx
         print('')
         return arrays_cpu
+"""
