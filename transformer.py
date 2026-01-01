@@ -52,19 +52,18 @@ class Block(torch.nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = torch.nn.LayerNorm(config.n_embd)
         self.mlp = torch.nn.ModuleDict(dict(
-            c_fc    = torch.nn.Linear(config.n_embd + nn2+1, config.n_embd2),
+            c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
+            c_score = torch.nn.Linear(nn2+1, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
             act     = myActiv(),
         ))
         m = self.mlp
-        self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
+        self.mlpf = lambda x, s: m.c_proj(m.act(m.c_fc(x)+m.c_score(s).unsqueeze(1)))  # MLP forward
 
     def forward(self, x, s):  # x: (B, T, n_embd)  s: (B, nn2+1)
         x = x + self.attn(self.ln_1(x))
         x = self.ln_2(x)
-        s_expanded = s.unsqueeze(1).expand(-1,x.shape[1],-1)
-        xx = torch.cat([x, s_expanded], dim=-1)
-        x = x + self.mlpf(xx)
+        x = x + self.mlpf(x, s)
         return x
 
 class Transformer(torch.nn.Module):
