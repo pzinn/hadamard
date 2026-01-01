@@ -167,7 +167,8 @@ def generate(batch):
         # that part sucks: copied from string_to_array and fft -- TODO absorb string_to_array here
         signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B,nn_pad)[:, :nn]
         f = cst * torch.fft.rfft(signs, dim=1)  # B, nn2+1
-        ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # TODO should we relu? cause negative doesn't make much sense
+        #ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # TODO should we relu? cause negative doesn't make much sense
+        ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
 
 
 """
