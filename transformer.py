@@ -93,8 +93,8 @@ class Transformer(torch.nn.Module):
         pos_emb = self.transformer.wpe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
         x = pos_emb.repeat(b, 1, 1, 1)  # (b, m, t, n_embd)
-        # x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x += (score_batch @ self.transformer.wse.weight).unsqueeze(2) # (b, m, nn2+1) * (nn2+1, n_embd)
+        x[:, :, 0, :] += score_batch @ self.transformer.wse.weight # (b, m, nn2+1) * (nn2+1, n_embd)
+        # x += (score_batch @ self.transformer.wse.weight).unsqueeze(2) # (b, m, nn2+1) * (nn2+1, n_embd)
         x[:, :, 1:, :] += tok_emb  # careful, shift by 1 !!
         xx = x.view(b*m, t, config.n_embd)
         for block in self.transformer.h:
