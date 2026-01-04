@@ -71,8 +71,8 @@ class Transformer(torch.nn.Module):
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
-            wxe = torch.nn.Embedding(config.block_size, config.n_embd),
-            wse = torch.nn.Embedding(nn2+1, config.n_embd),
+            wtse = torch.nn.Embedding(2*n, config.n_embd),  # TEMP
+            wpse = torch.nn.Embedding(nm*nn2, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -84,25 +84,26 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, score_batch, offset=0, compute_loss=False):  # self.training => offset=0
-        b = batch0.shape[0]  # batch0 (b, m=nm|1, t-1<=segment_string_length), score_batch (b, m, nn2+1)
+    def forward(self, batch0, score_batch, j=0, compute_loss=False):  # self.training => j=0, otherwise j=0,..,nm-1
+        b = batch0.shape[0]  # batch0 (b, m=nm|1, t-1<=segment_string_length), score_batch (b, m, nn2)
         m = batch0.shape[1]  # if not self.training, m should be 1, otherwise nm
         # in training, remove last token since don't need to predict next one:
         batch = batch0[:, :,  :segment_string_length-1] if self.training else batch0
         t = batch.shape[2] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
-        sps_emb = self.transformer.wxe.weight[offset:offset+t*m].view(m, t, config.n_embd)  # score position embeddings of shape (m, t, n_embd)
+        pos_emb = self.transformer.wpe.weight[j*segment_string_length:j*segment_string_length+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
+        sps_emb = self.transformer.wpse.weight[j*nn2:(j+m)*nn2].view(m, nn2, config.n_embd)  # score position embeddings of shape (m, nn2, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
-        x = pos_emb.repeat(b, 1, 1, 1)  # (b, m, t, n_embd)
-        # x[:, 0, :] += score_batch @ self.transformer.wse.weight # (b, nn2+1) * (nn2+1, n_embd)
-        x += sps_emb.unsqueeze(0) * (score_batch @ self.transformer.wse.weight).unsqueeze(2)  # (b, m, nn2+1) * (nn2+1, n_embd)
-        x[:, :, 1:, :] += tok_emb  # careful, shift by 1 !!
-        xx = x.view(b*m, t, config.n_embd)
+        stk_emb = self.transformer.wtse(score_batch+n)  # (b, m, nn2, n_embd)  TEMP
+        x = torch.cat((sps_emb,pos_emb), dim=1).repeat(b, 1, 1, 1)  # (b, m, nn2+t, n_embd)
+        x[:, :, :nn2, :] += stk_emb
+        x[:, :, nn2+1:, :] += tok_emb  # careful, shift by 1 !!
+        xx = x.view(b*m, nn2+t, config.n_embd)
         for block in self.transformer.h:
             xx = block(xx)
         xx = self.transformer.ln_f(xx)
-        logits = self.lm_head(xx)
+        x = xx[:, nn2:, :]
+        logits = self.lm_head(x)
         # if requested, also calculate the loss
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
@@ -144,20 +145,18 @@ def save_model():
 # helper functions for evaluating and sampling from the model
 
 
-cst = 1 / math.sqrt(n)
-def fft(m):
-    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def generate(batch):
     #block_size = model.get_block_size()
     B = batch.shape[0]
-    ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+    ff = torch.full((B, 1, nn2+1), n, device=device, dtype=torch.float32)
+    g = torch.zeros(B, 1, nn2, device=device, dtype=torch.long)
     for j in range(nm):
         offset = j * segment_string_length
         for i in range(segment_string_length):
             batch_cond = batch[:, offset:offset+i].view(B, 1, i)
             # forward the model to get the logits for the index in the sequence
-            logits, _ = model(batch_cond, ff, offset)
+            logits, _ = model(batch_cond, g, j)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / config.temperature
             # apply softmax to convert logits to (normalized) probabilities
@@ -166,9 +165,9 @@ def generate(batch):
             batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
         # that part sucks: copied from string_to_array and fft -- TODO absorb string_to_array here
         signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B,nn_pad)[:, :nn]
-        f = cst * torch.fft.rfft(signs, dim=1)  # B, nn2+1
-        #ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # TODO should we relu? cause negative doesn't make much sense
-        ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
+        f = torch.fft.rfft(signs, dim=1)  # B, nn2+1
+        ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)  # is clamp justified here??
+        g = torch.fft.irfft(ff, n=nn)[:, :, 1:nn2+1].round().to(dtype=torch.long)  # remove zero mode, duplicates
 
 
 """
@@ -248,12 +247,12 @@ def train(data, **kwargs):
         # feed into the model
         batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
         string_batch = array_to_string(batch)
-        f = fft(batch)
-        #score_batch = torch.log(torch.real(f*f.conj()).sum(dim=1))
+        f = torch.fft.rfft(batch.view(-1, nm, nn), dim=2)
         ff = torch.view_as_real(f).square().sum(dim=-1)  # (batch_size, nm, nn2+1)
+        g = torch.fft.irfft(ff, n=nn)[:, :, 1:nn2+1].round().to(dtype=torch.long)  # remove zero mode, duplicates
         for i in range(1,nm):
-            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
-        _, loss = model(string_batch, ff, compute_loss=True)
+            g[:, :i, :] += g[:, i, :].unsqueeze(1)
+        _, loss = model(string_batch, g, compute_loss=True)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
