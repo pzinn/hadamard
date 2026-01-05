@@ -70,9 +70,8 @@ class Transformer(torch.nn.Module):
         self.block_size = config.block_size
         self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = torch.nn.Embedding(config.block_size, config.n_embd),
-            wtse = torch.nn.Embedding(2*n, config.n_embd),  # TEMP
-            wpse = torch.nn.Embedding(nm*nn2, config.n_embd),
+            wpe = torch.nn.Embedding(nn2+(config.vocab_size//nm), config.n_embd),  # what a mess, TODO move these init_model defs to inside transformer
+            wtse = torch.nn.Embedding(2*n, config.n_embd),  # TEMP overkill
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
@@ -84,18 +83,17 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, score_batch, j=0, compute_loss=False):  # self.training => j=0, otherwise j=0,..,nm-1
+    def forward(self, batch0, score_batch, compute_loss=False):  # self.training => j=0, otherwise j=0,..,nm-1
         b = batch0.shape[0]  # batch0 (b, m=nm|1, t-1<=segment_string_length), score_batch (b, m, nn2)
         m = batch0.shape[1]  # if not self.training, m should be 1, otherwise nm
         # in training, remove last token since don't need to predict next one:
         batch = batch0[:, :,  :segment_string_length-1] if self.training else batch0
         t = batch.shape[2] + 1  # add one since we're going to predict the next token (as well as all previous ones)
         # forward the transformer itself
-        pos_emb = self.transformer.wpe.weight[j*segment_string_length:j*segment_string_length+t*m].view(m, t, config.n_embd)  # position embeddings of shape (m, t, n_embd)
-        sps_emb = self.transformer.wpse.weight[j*nn2:(j+m)*nn2].view(m, nn2, config.n_embd)  # score position embeddings of shape (m, nn2, n_embd)
+        pos_emb = self.transformer.wpe.weight[:nn2+t]  # position embeddings of shape (nn2+t, n_embd)
         tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, m, t-1, n_embd)
         stk_emb = self.transformer.wtse(score_batch+n)  # (b, m, nn2, n_embd)  TEMP
-        x = torch.cat((sps_emb,pos_emb), dim=1).repeat(b, 1, 1, 1)  # (b, m, nn2+t, n_embd)
+        x = pos_emb.repeat(b, m, 1, 1)  # (b, m, nn2+t, n_embd)
         x[:, :, :nn2, :] += stk_emb
         x[:, :, nn2+1:, :] += tok_emb  # careful, shift by 1 !!
         xx = x.view(b*m, nn2+t, config.n_embd)
@@ -156,7 +154,7 @@ def generate(batch):
         for i in range(segment_string_length):
             batch_cond = batch[:, offset:offset+i].view(B, 1, i)
             # forward the model to get the logits for the index in the sequence
-            logits, _ = model(batch_cond, g, j)
+            logits, _ = model(batch_cond, g)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / config.temperature
             # apply softmax to convert logits to (normalized) probabilities
@@ -167,7 +165,7 @@ def generate(batch):
         signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B,nn_pad)[:, :nn]
         f = torch.fft.rfft(signs, dim=1)  # B, nn2+1
         #ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)  # is clamp justified here??
-        ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # is clamp justified here??
+        ff -= torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1)  # TODO rethink clamping
         g = torch.fft.irfft(ff, n=nn)[:, :, 1:nn2+1].round().to(dtype=torch.long)  # remove zero mode, duplicates
 
 
