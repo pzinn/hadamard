@@ -207,12 +207,13 @@ cst = 1 / math.sqrt(2*(nn-1))  # not quite right: zero mode different <sigh>
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
-def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
-    s = torch.view_as_real(f).square().sum(dim=(1,3))  # sum over nm copies, over real/imag
-    s[:, 0] -= (n-2)/(2*(nn-1))
-    s[:, 1:] -= 1  # eww
-    s = s.square()
+def score_fft_int(ff):
+    ff[:, 0] -= (n-2)/(2*(nn-1))  # eww
+    ff[:, 1:] -= 1  # eww
+    s = ff.square()
     return s[:,0]+2*s[:,1:].sum(dim=1)
+def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
+    return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
 def score(m):
     return score_fft(fft(m))
 
