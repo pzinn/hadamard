@@ -1,7 +1,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
+from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
 import sys
 
 # precompute roots of unity for fft delta
@@ -277,8 +277,7 @@ def improve_phases(arrays, scores):
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
-            s = -2*torch.log(ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1))
-            new_scores = s[:, 0]+2*s[:, 1:].sum(dim=1)
+            new_scores = score_fft_int(ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1))
             improved = new_scores < scores[inds]
             improved_inds = inds[improved]
             a[improved_inds, j] = x[improved]
