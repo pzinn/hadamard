@@ -5,8 +5,8 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 172  # size of matrix
-# segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
+n = 124  # size of matrix
+#segment_sums = (3, 13)  # sum of squares must be n-2. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -18,14 +18,14 @@ training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
 training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 1  # number of times data get improved per generation. only used by improve2
+num_improve = 0  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
 n_layer = 4
-n_embd = 128
+n_embd = 64
 # n_embd2 = 4*n_embd  # default choice
 n_head = 4
-stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+stacking = 5  # [5,6,7,8,9,10]  # preferably a divisor of nn
 temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 
 # less important parameters
@@ -58,7 +58,7 @@ random_seed = int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
@@ -83,14 +83,14 @@ except FileNotFoundError:
 
 if n % 4 != 0:
     raise SystemExit("good luck!")
-if n % 8 != 4:
+if n % 8 != 4:  # TODO strength to prime
     raise SystemExit("not implemented")
 
 print(f'{n=}')
 
 # array encoding -- do not change
-nn = n // 4
-nm = 4  # number of blocks
+nn = n // 4  # must be PRIME for this version!
+nm = 2  # number of blocks
 na = nm * nn  # length of array
 nn2 = (nn-1) // 2
 
@@ -99,9 +99,9 @@ if 'segment_sums' not in globals():
 
 fixed_sums = segment_sums is not None
 if fixed_sums:
-    assert sum(i*i for i in segment_sums) == n
+    assert sum(i*i for i in segment_sums) == n-2
     print(f"{segment_sums=}")
-    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
+    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
 else:
     num_ones = None
 
@@ -203,12 +203,15 @@ def rotate(array0):
 real_dtype = torch.float32
 complex_dtype = torch.complex64
 
-cst = 1 / math.sqrt(n)
+cst = 1 / math.sqrt(2*(nn-1))  # not quite right: zero mode different <sigh>
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
-    s = -2*torch.log(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
+    s = torch.view_as_real(f).square().sum(dim=(1,3))  # sum over nm copies, over real/imag
+    s[:, 0] -= (n-2)/(2*(nn-1))
+    s[:, 1:] -= 1  # eww
+    s = s.square()
     return s[:,0]+2*s[:,1:].sum(dim=1)
 def score(m):
     return score_fft(fft(m))

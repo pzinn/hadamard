@@ -5,7 +5,7 @@ from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums
 import sys
 
 # precompute roots of unity for fft delta
-cst = 1 / math.sqrt(n)
+cst = 1 / math.sqrt(2*(nn-1))
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
@@ -277,7 +277,10 @@ def improve_phases(arrays, scores):
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
-            s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
+            s = torch.real(ffs1[inds] + fmod*fmod.conj())  # TODO rewrite better
+            s[:, 0] -= (n-2)/(2*(nn-1))
+            s[:, 1:] -= 1  # eww
+            s = s.square()
             new_scores = s[:, 0]+2*s[:, 1:].sum(dim=1)
             improved = new_scores < scores[inds]
             improved_inds = inds[improved]
