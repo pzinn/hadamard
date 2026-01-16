@@ -258,9 +258,9 @@ def improve_phases(arrays, scores):
     a = arrays.view(B, nm, nn)
     for j in range(nm):
         cnt.zero_()
-        ff = f*f.conj()
+        ff = torch.view_as_real(f).square().sum(dim=-1)
         ffs1 = ff.sum(dim=1) - ff[:, j]
-        inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
+        inds = torch.nonzero((ffs1 <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
             continue
@@ -277,7 +277,7 @@ def improve_phases(arrays, scores):
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
-            s = torch.real(ffs1[inds] + fmod*fmod.conj())  # TODO rewrite better
+            s = ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1)
             s[:, 0] -= (n-2)/(2*(nn-1))
             s[:, 1:] -= 1  # eww
             s = s.square()
