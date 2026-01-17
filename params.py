@@ -5,7 +5,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 124  # size of matrix
+n = 164  # size of matrix
 #segment_sums = (3, 13)  # sum of squares must be n-2. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
@@ -18,7 +18,7 @@ training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
 training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 0  # number of times data get improved per generation. only used by improve2
+num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
 n_layer = 4
@@ -204,13 +204,20 @@ real_dtype = torch.float32
 complex_dtype = torch.complex64
 
 cst = 1 / math.sqrt(2*(nn-1))  # not quite right: zero mode different <sigh>
+cst0 = 2*(nn-1)/(n-2)
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def score_fft_int(ff):
+    """
     ff[:, 0] -= (n-2)/(2*(nn-1))  # eww
     ff[:, 1:] -= 1  # eww
     s = ff.square()
+    """
+    ff[:, 0] *= cst0  # eww
+    s = 2*(-torch.log(ff)+ff-1)  # the linear term would be useless if not for the zero mode rescaling
+    # alternative: (though past experience suggests it's probably worse)
+    # s = -2*torch.log(ff)+ff.square()-1
     return s[:,0]+2*s[:,1:].sum(dim=1)
 def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
     return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
