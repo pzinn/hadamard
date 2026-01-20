@@ -101,7 +101,7 @@ fixed_sums = segment_sums is not None
 if fixed_sums:
     assert sum(i*i for i in segment_sums) == n
     print(f"{segment_sums=}")
-    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
+    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
 else:
     num_ones = None
 
