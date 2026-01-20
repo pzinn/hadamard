@@ -15,7 +15,7 @@ wrng_all = torch.zeros((na, nm*(nn2+1)), device=device, dtype=complex_dtype)
 for i in range(nm):
     wrng_all[i*nn:(i+1)*nn, i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
-k = 11
+k = min(11,na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
