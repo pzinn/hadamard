@@ -1,7 +1,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
+from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, random_score, random_score_fft, random_score_fft_int, randomise_score_weights
 import sys
 
 # precompute roots of unity for fft delta
@@ -19,7 +19,10 @@ k = min(11,na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+    # TODO remove scores as argument, no longer used/modified    
     print(f"improve1p ", end=''); sys.stdout.flush()
+    randomise_score_weights()
+    scores = random_score(arrays)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     scores1 = torch.empty((B, na), device=device, dtype=real_dtype)

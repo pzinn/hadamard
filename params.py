@@ -5,7 +5,7 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 172  # size of matrix
+n = 148  # size of matrix
 # segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
@@ -18,11 +18,11 @@ training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
 training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 1  # number of times data get improved per generation. only used by improve2
+num_improve = 0  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
 n_layer = 4
-n_embd = 128
+n_embd = 64
 # n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
@@ -54,7 +54,7 @@ test_score = False  # for debugging purposes, test whether randomisation of arra
 
 
 import time
-random_seed = int(time.time())  # 1746533706
+random_seed = 1666 # int(time.time())  # 1746533706
 
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
@@ -214,5 +214,16 @@ def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
     return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
 def score(m):
     return score_fft(fft(m))
+def randomise_score_weights():
+    global score_weights
+    with torch.random.fork_rng():
+        score_weights = torch.rand(nn2+1, dtype=real_dtype, device=device)
+def random_score_fft_int(ff):
+    s = -torch.log(ff) + ff - 1
+    return (s*score_weights).sum(dim=1)
+def random_score_fft(f):
+    return random_score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
+def random_score(m):
+    return random_score_fft(fft(m))
 
 eps = 2e-5  # scores are heavily discretised so can be made large
