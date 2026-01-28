@@ -5,33 +5,34 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 148  # size of matrix
+n = 268  # size of matrix
 # segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
 # training parameters
-sample_size = 400_000
-training_size = sample_size//10  # must be > test_set_size
-learning_rate = 2e-3
+sample_size = 10_000_000
+training_size = sample_size//20  # must be > test_set_size
+learning_rate = 2e-4
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
-max_iterations = 30
-training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 0  # number of times data get improved per generation. only used by improve2
+max_iterations = 200
+training_steps = 500_000  # will be adjusted dynamically (to be less than that)
+num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 4
-n_embd = 64
+n_layer = 8
+n_embd = 512
 # n_embd2 = 4*n_embd  # default choice
 n_head = 4
-stacking = 5  # [5,6,7,8,9,10]  # preferably a divisor of nn
-temperature = 1.  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+temperature_delta = .02
 
 # less important parameters
 gen_decay = 0.01
 sample_batch_size = 50_000  # for sampling. must be a divisor of sample_size, and < 65536
-score_batch_size = None  # for scoring/improving. None means no batching
+score_batch_size = 1_000_000  # for scoring/improving. None means no batching
 test_set_size = None  # None | < training_size, no more than 10% ideally
 num_workers = None  # for cpu parallelisation
 
@@ -105,7 +106,7 @@ if fixed_sums:
 else:
     num_ones = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
 
 import ast
 # hparams can be updated in command line

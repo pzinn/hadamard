@@ -157,7 +157,8 @@ def generate(batch):
             # forward the model to get the logits for the index in the sequence
             logits, _ = model(batch_cond, ff, offset)
             # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / config.temperature
+            temperature = config.temperature + params.gen * config.temperature_delta
+            logits = logits[:, -1, :] / temperature
             # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
             # sample from the distribution
