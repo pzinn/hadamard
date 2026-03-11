@@ -311,10 +311,12 @@ def parallel_improve(arrays, scores, gens):
     scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
+    if arrays.shape[0] == 0:
+        return arrays, scores, gens
     print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()}")
     B = arrays.shape[0]
     B0 = 9*B//10
-    while scores[B0] < eps:
+    while B0 > 0 and scores[B0] < eps:
         B0 = 9*B0//10  # don't touch H-matrices
     B1 = B0//nT*nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])

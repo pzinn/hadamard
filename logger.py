@@ -107,7 +107,7 @@ def init_logging():
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
@@ -115,7 +115,7 @@ def init_logging():
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             pass
 
 
