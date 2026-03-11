@@ -20,7 +20,7 @@ def find_latest_gen():
     # Get all filenames matching the pattern
     files = glob.glob(params.work_dir+"GEN-*.txt")
     # Extract the numerical part using regex
-    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
+    indices = [int(re.search(r"GEN-(\d+)\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d+)\.txt", f)]
     return max(indices) if indices else 0  # Return max index, or 0 if no files found
 
 
