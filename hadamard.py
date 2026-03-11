@@ -4,6 +4,7 @@
 import torch
 import math
 import params
+params.init_from_argv()
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
 from pt import parallel_tempering, nT
