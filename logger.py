@@ -55,6 +55,8 @@ def init_logging():
         os.unlink("latest")
     except FileNotFoundError:
         pass
+    except IsADirectoryError:
+        os.rmdir("latest")
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':

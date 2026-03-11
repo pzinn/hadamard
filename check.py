@@ -58,6 +58,12 @@ img_saved = False
 
 def treat(s):
     global img_saved
+    if any(c not in "+-" for c in s):
+        print(f"invalid input: only '+' and '-' are allowed: {s!r}", file=sys.stderr)
+        return
+    if len(s) % 4 != 0:
+        print(f"invalid input length (must be divisible by 4): {len(s)}", file=sys.stderr)
+        return
     a = convert(s)
     n = len(a)
     # print(m)
