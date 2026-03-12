@@ -1,0 +1,2 @@
+# Optional logging dependency for `logging = 'tensorboard'`
+tensorboard>=2.14

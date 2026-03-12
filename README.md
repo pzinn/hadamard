@@ -1,4 +1,20 @@
 Train a transformer to produce Hadamard matrices.
+Install core dependency with:
+```
+pip install -r requirements.txt
+```
+Install one logging backend:
+```
+pip install -r requirements-wandb.txt
+```
+or
+```
+pip install -r requirements-tensorboard.txt
+```
+`check.py` has additional dependencies:
+```
+pip install -r requirements-check.txt
+```
 Modify the parameters in `params.py` (size of matrix, transformer parameters, etc) then run:
 ```
 python hadamard.py
