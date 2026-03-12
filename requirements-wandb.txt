@@ -1,0 +1,2 @@
+# Optional logging dependency for `logging = 'wandb'`
+wandb>=0.16

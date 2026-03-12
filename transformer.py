@@ -238,7 +238,14 @@ def train(data, **kwargs):
     batch_size = config.training_batch_size
 
     # init optimiser
-    optimiser = torch.optim.AdamW(model.parameters(), lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99), fused=True)
+    optimiser_kwargs = dict(lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
+    if device.startswith('cuda'):
+        optimiser_kwargs["fused"] = True
+    try:
+        optimiser = torch.optim.AdamW(model.parameters(), **optimiser_kwargs)
+    except (TypeError, RuntimeError):
+        optimiser_kwargs.pop("fused", None)
+        optimiser = torch.optim.AdamW(model.parameters(), **optimiser_kwargs)
 
     # training loop
     step = 0

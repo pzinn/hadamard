@@ -11,8 +11,8 @@ import os
 
 if params.logging == 'wandb':
     import wandb
-    wandb_entity = 'aiformath'
-    wandb_project = 'topsekrit'
+    wandb_entity = os.getenv("WANDB_ENTITY", "aiformath")
+    wandb_project = os.getenv("WANDB_PROJECT", "topsekrit")
 
 
 # helper function
@@ -20,7 +20,7 @@ def find_latest_gen():
     # Get all filenames matching the pattern
     files = glob.glob(params.work_dir+"GEN-*.txt")
     # Extract the numerical part using regex
-    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
+    indices = [int(re.search(r"GEN-(\d+)\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d+)\.txt", f)]
     return max(indices) if indices else 0  # Return max index, or 0 if no files found
 
 
@@ -55,6 +55,8 @@ def init_logging():
         os.unlink("latest")
     except FileNotFoundError:
         pass
+    except IsADirectoryError:
+        os.rmdir("latest")
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':
@@ -107,7 +109,7 @@ def init_logging():
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
@@ -115,7 +117,7 @@ def init_logging():
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             pass
 
 

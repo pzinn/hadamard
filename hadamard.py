@@ -4,6 +4,7 @@
 import torch
 import math
 import params
+params.init_from_argv()
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
 from pt import parallel_tempering, nT
@@ -311,10 +312,12 @@ def parallel_improve(arrays, scores, gens):
     scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
+    if arrays.shape[0] == 0:
+        return arrays, scores, gens
     print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()}")
     B = arrays.shape[0]
     B0 = 9*B//10
-    while scores[B0] < eps:
+    while B0 > 0 and scores[B0] < eps:
         B0 = 9*B0//10  # don't touch H-matrices
     B1 = B0//nT*nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])

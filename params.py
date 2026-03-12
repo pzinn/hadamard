@@ -65,6 +65,7 @@ logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+debugging = False
 
 import subprocess
 try:
@@ -82,29 +83,8 @@ except subprocess.CalledProcessError:
 except FileNotFoundError:
     version = "git not available"
 
-if n % 4 != 0:
-    raise SystemExit("good luck!")
-if n % 8 != 4:
-    raise SystemExit("not implemented")
-
-print(f'{n=}')
-
-# array encoding -- do not change
-nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array
-nn2 = (nn-1) // 2
-
 if 'segment_sums' not in globals():
     segment_sums = None
-
-fixed_sums = segment_sums is not None
-if fixed_sums:
-    assert sum(i*i for i in segment_sums) == n
-    print(f"{segment_sums=}")
-    num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(4)], dtype=torch.int8, device=device)
-else:
-    num_ones = None
 
 hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
 
@@ -112,34 +92,7 @@ import ast
 # hparams can be updated in command line
 for param in hparams_list:
     parser.add_argument(f"--{param}")
-args = parser.parse_args()
-debugging = args.debug
-for param in hparams_list:
-    val = getattr(args, param)
-    if val is not None:
-        globals()[param] = ast.literal_eval(val)
-
-# special cases: coupled default values
-if getattr(args, "sample_size") and not getattr(args, "training_size"):
-    training_size = sample_size//20
-#if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
-#    n_embd2 = 4*n_embd
-
-
-hparams = {name: globals().get(name) for name in hparams_list}
-
-is_sweep = any(isinstance(v, list) for v in hparams.values())
-
-if is_sweep:
-    if resume:
-        raise SystemExit("resume not supported with sweeps")
-    sweep_config = {
-        "method": "grid",
-        "parameters": {
-            k: { ("values" if isinstance(v, list) else "value"): v }
-            for k, v in hparams.items()
-            }
-        }
+sweep_config = None
 
 
 class ModelConfig:
@@ -159,17 +112,72 @@ class ModelConfig:
             wandb.config.vocab_size = self.vocab_size
             wandb.config.n_embd2 = self.n_embd2
 
-config = ModelConfig(**hparams)
+def compute_derived():
+    global nn, nm, na, nn2
+    global fixed_sums, num_ones
+    global hparams, is_sweep, sweep_config, config
+    global aut, perms, cst
+    if n % 4 != 0:
+        raise SystemExit("good luck!")
+    if n % 8 != 4:
+        raise SystemExit("not implemented")
+    print(f'{n=}')
+    # array encoding -- do not change
+    nn = n // 4
+    nm = 4  # number of blocks
+    na = nm * nn  # length of array
+    nn2 = (nn-1) // 2
+    fixed_sums = segment_sums is not None
+    if fixed_sums:
+        assert sum(i*i for i in segment_sums) == n
+        print(f"{segment_sums=}")
+        num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
+    else:
+        num_ones = None
+    hparams = {name: globals().get(name) for name in hparams_list}
+    is_sweep = any(isinstance(v, list) for v in hparams.values())
+    if is_sweep:
+        if resume:
+            raise SystemExit("resume not supported with sweeps")
+        sweep_config = {
+            "method": "grid",
+            "parameters": {
+                k: { ("values" if isinstance(v, list) else "value"): v }
+                for k, v in hparams.items()
+                }
+            }
+    else:
+        sweep_config = None
+    config = ModelConfig(**hparams)
+    # Prepare automorphisms / permutations
+    aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
+    perms = torch.tensor(
+        list(p for p in permutations(range(nm)) if not fixed_sums or tuple(segment_sums[i] for i in p) == segment_sums),
+        dtype=torch.long,
+        device=device,
+    )
+    # scoring normalisation constant
+    cst = 1 / math.sqrt(n)
+
+def init_from_argv(argv=None):
+    global debugging, training_size
+    args = parser.parse_args(argv)
+    debugging = args.debug
+    for param in hparams_list:
+        val = getattr(args, param)
+        if val is not None:
+            globals()[param] = ast.literal_eval(val)
+    # special cases: coupled default values
+    if getattr(args, "sample_size") and not getattr(args, "training_size"):
+        training_size = sample_size//20
+    #if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
+    #    n_embd2 = 4*n_embd
+    compute_derived()
 
 
 # symmetries
 from itertools import permutations
 
-# Prepare automorphisms
-aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
-
-# Prepare permutations
-perms = torch.tensor(list(p for p in permutations(range(nm)) if not fixed_sums or tuple(segment_sums[i] for i in p) == segment_sums), dtype=torch.long, device=device)
 #print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array0):
@@ -204,13 +212,14 @@ def rotate(array0):
 real_dtype = torch.float32
 complex_dtype = torch.complex64
 
-cst = 1 / math.sqrt(n)
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
-def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
-    s = -2*torch.log(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
+def score_fft_int(ff):
+    s = -2*torch.log(ff)
     return s[:,0]+2*s[:,1:].sum(dim=1)
+def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
+    return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
 def score(m):
     return score_fft(fft(m))
 

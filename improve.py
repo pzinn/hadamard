@@ -1,7 +1,7 @@
 import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
+from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
 import sys
 
 # precompute roots of unity for fft delta
@@ -15,7 +15,7 @@ wrng_all = torch.zeros((na, nm*(nn2+1)), device=device, dtype=complex_dtype)
 for i in range(nm):
     wrng_all[i*nn:(i+1)*nn, i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
-k = 11
+k = min(11,na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
@@ -258,9 +258,9 @@ def improve_phases(arrays, scores):
     a = arrays.view(B, nm, nn)
     for j in range(nm):
         cnt.zero_()
-        ff = f*f.conj()
+        ff = torch.view_as_real(f).square().sum(dim=-1)
         ffs1 = ff.sum(dim=1) - ff[:, j]
-        inds = torch.nonzero((ffs1.real <= 1).all(dim=1), as_tuple=True)[0]
+        inds = torch.nonzero((ffs1 <= 1).all(dim=1), as_tuple=True)[0]
         M = inds.shape[0]
         if M == 0:
             continue
@@ -277,8 +277,7 @@ def improve_phases(arrays, scores):
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
             fmod *= cst
-            s = -2*torch.log(torch.real(ffs1[inds] + fmod*fmod.conj()))
-            new_scores = s[:, 0]+2*s[:, 1:].sum(dim=1)
+            new_scores = score_fft_int(ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1))
             improved = new_scores < scores[inds]
             improved_inds = inds[improved]
             a[improved_inds, j] = x[improved]
