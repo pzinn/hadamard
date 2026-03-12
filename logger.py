@@ -11,8 +11,8 @@ import os
 
 if params.logging == 'wandb':
     import wandb
-    wandb_entity = 'aiformath'
-    wandb_project = 'topsekrit'
+    wandb_entity = os.getenv("WANDB_ENTITY", "aiformath")
+    wandb_project = os.getenv("WANDB_PROJECT", "topsekrit")
 
 
 # helper function

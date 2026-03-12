@@ -15,6 +15,11 @@ pip install -r requirements-tensorboard.txt
 ```
 pip install -r requirements-check.txt
 ```
+For wandb logging, you can override defaults with:
+```
+export WANDB_ENTITY=your_entity
+export WANDB_PROJECT=your_project
+```
 Modify the parameters in `params.py` (size of matrix, transformer parameters, etc) then run:
 ```
 python hadamard.py
