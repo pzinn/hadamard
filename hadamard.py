@@ -6,7 +6,7 @@ import math
 import params
 params.init_from_argv()
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
-from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
+from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -279,52 +279,44 @@ def find_aut(arrays):
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step Z: fix segment sums
+    # step A: fix segment sums if fixed sums
     if fixed_sums:
         fix_num_ones(arrays)
-    # step 0: tabu search
-    if not fixed_sums:  # TODO
-        start_timer = timer()
-        improve_tabu(arrays, scores, gens)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improve0 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i0")
-    # step Y: first pass of local search
-        start_timer = timer()
-        improve_phases(arrays, scores)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improvea time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug ia")
-        #
-        start_timer = timer()
-        if fixed_sums:
-            improve4x4_fixed(arrays, scores)
-        else:
-            improve1p(arrays, scores)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improveb time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug ib")
-    # step A: parallel tempering
+    # step B: first pass of local search
+    start_timer = timer()
+    improve_phases(arrays, scores)
+    scores = score(arrays)  # don't trust improve
+    if debugging:
+        print(f"improve B1 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="debug B1")
+    #
+    start_timer = timer()
+    if fixed_sums:
+        improve4x4_fixed(arrays, scores)
+    else:
+        improve1p(arrays, scores)
+    scores = score(arrays)  # don't trust improve
+    if debugging:
+        print(f"improve B2 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="debug B2")
+    # step C: parallel tempering (if num_improve>0)
     start_timer = timer()
     scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
     if arrays.shape[0] == 0:
         return arrays, scores, gens
-    print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()}")
     B = arrays.shape[0]
-    B0 = 9*B//10
-    while B0 > 0 and scores[B0] < eps:
-        B0 = 9*B0//10  # don't touch H-matrices
-    B1 = B0//nT*nT
+    print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
+    B1 = (B // nT) * nT  # round down to a multiple of nT
+    if scores[B1-1] < eps:  # don't touch H-matrices
+        B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
+        B1 = (B1 // nT) * nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
     if debugging:
         print(f"pt time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="debug pt")
-    # step B: second pass of local search
+    # step D: second pass of local search (if num_improve>0)
     for _ in range(config.num_improve):
         start_timer = timer()
         if fixed_sums:
@@ -333,8 +325,8 @@ def parallel_improve(arrays, scores, gens):
             improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i1")
+            print(f"improve D1 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug D1")
         #
         start_timer = timer()
         if fixed_sums:
@@ -343,17 +335,17 @@ def parallel_improve(arrays, scores, gens):
             improve_greedy(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i2")
+            print(f"improve D2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug D2")
         #
         start_timer = timer()
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if debugging:
-            print(f"improve3 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i3")
+            print(f"improve D3 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="debug D3")
         #
-    # step C: rotate the arrays to a standard form
+    # step E: rotate the arrays to a standard form
     start_timer = timer()
     arrays = find_aut(arrays)
     derotate(arrays, scores)
@@ -374,7 +366,8 @@ def best_from(arrays, scores, gens):
     # select
     if B <= config.training_size:
         return arrays, min_scores, min_gens
-    _, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
+    # _, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(min_scores * (1 + config.gen_decay * (params.gen - min_gens)), k=config.training_size, largest=False, sorted=False)
     arrays = arrays[idx]
     scores = min_scores[idx]
     gens = min_gens[idx]
