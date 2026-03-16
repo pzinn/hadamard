@@ -12,7 +12,7 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, rotate
+from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft
 import logger
 
 # -----------------------------------------------------------------------------
@@ -68,12 +68,16 @@ class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-        self.transformer = torch.nn.ModuleDict(dict(
+        modules = dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
-        ))
+        )
+        self.uses_score = config.transformer_uses_score
+        if self.uses_score:
+            modules["wse"] = torch.nn.Embedding(nn2 + 1, config.n_embd)
+        self.transformer = torch.nn.ModuleDict(modules)
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # report number of parameters (note we don't count the decoder parameters in lm_head)
         n_params = sum(p.numel() for p in self.transformer.parameters())
@@ -82,7 +86,26 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, compute_loss=False):
+    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+        if self.uses_score:
+            if score_batch is None:
+                raise RuntimeError("score_batch is required when transformer_uses_score=True")
+            b = batch0.shape[0]
+            m = batch0.shape[1]
+            batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
+            t = batch.shape[2] + 1
+            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(m, t, config.n_embd)
+            tok_emb = self.transformer.wte(batch)
+            x = pos_emb.repeat(b, 1, 1, 1)
+            x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
+            x[:, :, 1:, :] += tok_emb
+            xx = x.view(b * m, t, config.n_embd)
+            for block in self.transformer.h:
+                xx = block(xx)
+            xx = self.transformer.ln_f(xx)
+            logits = self.lm_head(xx)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
+            return logits, loss
         b = batch0.shape[0]
         batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
         t = batch.shape[1] + 1
@@ -108,6 +131,7 @@ def init_model():
     global bit_positions
     global bit_positions_cpu  # eww
     global nn_pad
+    global segment_string_length
     model = Transformer(config)
     model.to(device)
     model.need_reload = True
@@ -142,40 +166,47 @@ def generate(batch):
     the sequence max_new_tokens times, feeding the predictions back into the model each time.
     Most likely you'll want to make sure to be in model.eval() mode of operation for this.
     """
-    block_size = model.get_block_size()
-    for i in range(block_size):
-        batch_cond = batch[:, :i]
-        # forward the model to get the logits for the index in the sequence
-        logits, _ = model(batch_cond)
-        # pluck the logits at the final step and scale by desired temperature
-        temperature = config.temperature + params.gen * config.temperature_delta
-        logits = logits[:, -1, :] / temperature
-        """
-        # optionally crop the logits to only the top k options
-        if top_k is not None:
-            v, _ = torch.topk(logits, top_k)
-            logits[logits < v[:, [-1]]] = -float('Inf')
-        """
-        # apply softmax to convert logits to (normalized) probabilities
-        probs = F.softmax(logits, dim=-1)
-        # sample from the distribution
-        batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-        """
-        # either sample from the distribution or take the most likely element
-        if do_sample:
+    if config.transformer_uses_score:
+        B = batch.shape[0]
+        ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+        for j in range(nm):
+            offset = j * segment_string_length
+            for i in range(segment_string_length):
+                batch_cond = batch[:, offset:offset+i].view(B, 1, i)
+                logits, _ = model(batch_cond, score_batch=ff, offset=offset)
+                temperature = config.temperature + params.gen * config.temperature_delta
+                logits = logits[:, -1, :] / temperature
+                probs = F.softmax(logits, dim=-1)
+                batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
+            signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn]
+            f = torch.fft.rfft(signs, dim=1) / math.sqrt(4 * nn)
+            ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
+    else:
+        block_size = model.get_block_size()
+        for i in range(block_size):
+            batch_cond = batch[:, :i]
+            # forward the model to get the logits for the index in the sequence
+            logits, _ = model(batch_cond)
+            # pluck the logits at the final step and scale by desired temperature
+            temperature = config.temperature + params.gen * config.temperature_delta
+            logits = logits[:, -1, :] / temperature
+            """
+            # optionally crop the logits to only the top k options
+            if top_k is not None:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            """
+            # apply softmax to convert logits to (normalized) probabilities
+            probs = F.softmax(logits, dim=-1)
+            # sample from the distribution
             batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-        else:
-            _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
-        """
-
-@torch.inference_mode()
-def evaluate(sample):
-    model.eval()
-    batch = sample.to(device)
-    logits, loss = model(batch, compute_loss=True)
-    mean_loss = loss.mean().item()
-    model.train()  # reset model back to training mode
-    return mean_loss
+            """
+            # either sample from the distribution or take the most likely element
+            if do_sample:
+                batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
+            else:
+                _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
+            """
 
 # conversion string of tokens <-> array of signs
 @torch.no_grad()
@@ -198,6 +229,8 @@ def array_to_string(signs):  # int8 tensor to int tensor
     # Convert -1 → 0, +1 → 1
     signs1 += 1
     signs1 >>= 1
+    if config.transformer_uses_score:
+        return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
 
@@ -246,8 +279,15 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # feed into the model
-        batch = array_to_string(rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)))
-        logits, loss = model(batch, compute_loss=True)
+        batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
+        if config.transformer_uses_score:
+            string_batch = array_to_string(batch)
+            ff = torch.view_as_real(fft(batch)).square().sum(dim=-1)  # (batch_size, nm, nn2+1)
+            for i in range(1, nm):
+                ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+            logits, loss = model(string_batch, score_batch=ff, compute_loss=True)
+        else:
+            logits, loss = model(array_to_string(batch), compute_loss=True)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -270,51 +310,18 @@ def train(data, **kwargs):
         #
     print('')
 
-if True:  #not device.startswith('cuda'):
-    # unoptimised version of sample if cuda not installed
-    @torch.no_grad()
-    def sample():
-        load_model()
-        if device.startswith('cuda'):
-            torch.cuda.empty_cache()  # Free memory
-        torch.set_float32_matmul_precision('high')
-        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
-        for i in range(0, config.sample_size, config.sample_batch_size):
-            j = i + config.sample_batch_size
-            print('*', end=''); sys.stdout.flush()
-            generate(X)
-            arrays_cpu[i:j] = string_to_array(X)
-        print('')
-        return arrays_cpu
-else:
-    # sample with CPU double buffering TODO reinstate at some point
-    stream = torch.cuda.Stream()
-    @torch.no_grad()
-    def sample():
-        load_model()
-        if device.startswith('cuda'):
-            torch.cuda.empty_cache()  # Free memory
-        torch.set_float32_matmul_precision('high')
-        num_batches = config.sample_size // config.sample_batch_size
-        arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8)
-        if num_batches == 0:
-            return arrays_cpu
-        X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
-        X_cpu = [torch.zeros_like(X, device='cpu', pin_memory=True) for _ in range(2)]
-        event = [torch.cuda.Event() for _ in range(2)]
-        idx = 0
-        for i in range(num_batches+1):
-            if i > 0:
-                event[idx].synchronize()
-            if i < num_batches:
-                print('*', end=''); sys.stdout.flush()
-                with torch.cuda.stream(stream):
-                    generate(X, config.block_size, do_sample=True)
-                    X_cpu[1-idx].copy_(X, non_blocking=True)
-                    stream.record_event(event[1-idx])
-            if i > 0:
-                arrays_cpu[(i-1)*config.sample_batch_size:i*config.sample_batch_size] = string_to_array_cpu(X_cpu[idx])
-            idx = 1 - idx
-        print('')
-        return arrays_cpu
+@torch.no_grad()
+def sample():
+    load_model()
+    if device.startswith('cuda'):
+        torch.cuda.empty_cache()  # Free memory
+    torch.set_float32_matmul_precision('high')
+    X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
+    arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
+    for i in range(0, config.sample_size, config.sample_batch_size):
+        j = i + config.sample_batch_size
+        print('*', end=''); sys.stdout.flush()
+        generate(X)
+        arrays_cpu[i:j] = string_to_array(X)
+    print('')
+    return arrays_cpu

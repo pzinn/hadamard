@@ -26,6 +26,7 @@ n_embd = 128
 # n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+transformer_uses_score = False
 temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 temperature_delta = .02
 
@@ -87,7 +88,7 @@ except FileNotFoundError:
 if 'segment_sums' not in globals():
     segment_sums = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'transformer_uses_score', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
 
 import ast
 # hparams can be updated in command line
