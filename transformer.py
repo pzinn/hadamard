@@ -148,7 +148,8 @@ def generate(batch):
         # forward the model to get the logits for the index in the sequence
         logits, _ = model(batch_cond)
         # pluck the logits at the final step and scale by desired temperature
-        logits = logits[:, -1, :] / config.temperature
+        temperature = config.temperature + params.gen * config.temperature_delta
+        logits = logits[:, -1, :] / temperature
         """
         # optionally crop the logits to only the top k options
         if top_k is not None:
