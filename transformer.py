@@ -1,7 +1,7 @@
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
-# based on makemore.py
+# Transformer model and training utilities.
 import os
 import sys
 import math
@@ -15,11 +15,7 @@ import params  # for work_dir
 from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft
 import logger
 
-# -----------------------------------------------------------------------------
-
-
-# -----------------------------------------------------------------------------
-# Transformer Language Model
+# Transformer language model.
 
 class myActiv(torch.nn.Module):
     def forward(self, x):
@@ -35,7 +31,7 @@ class CausalSelfAttention(torch.nn.Module):
         self.n_head, self.n_embd = nh, C
 
     def forward(self, x):
-        B, T, C = x.shape  # batch size, sequence length, embedding dimensionality (n_embd)
+        B, T, C = x.shape  # batch, sequence, embedding (n_embd)
         nh, hs = self.n_head, C // self.n_head
         q, k, v = self.c_attn(x).split(C, dim=2)
         q = q.view(B, T, nh, hs).transpose(1, 2)  # (B, nh, T, hs)
@@ -57,7 +53,7 @@ class Block(torch.nn.Module):
             act     = myActiv(),
         ))
         m = self.mlp
-        self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))  # MLP forward
+        self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))
 
     def forward(self, x):
         x = x + self.attn(self.ln_1(x))
@@ -79,8 +75,8 @@ class Transformer(torch.nn.Module):
             modules["wse"] = torch.nn.Embedding(nn2 + 1, config.n_embd)
         self.transformer = torch.nn.ModuleDict(modules)
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # report number of parameters (note we don't count the decoder parameters in lm_head)
-        n_params = sum(p.numel() for p in self.transformer.parameters())
+        # Report total parameter count.
+        n_params = sum(p.numel() for p in self.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
 
     def get_block_size(self):
@@ -107,37 +103,37 @@ class Transformer(torch.nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
             return logits, loss
         b = batch0.shape[0]
-        batch = batch0[:, :self.block_size-1]  # in training, remove last token since don't need to predict next one
+        # During training, predict the next token for each position.
+        batch = batch0[:, :self.block_size-1]
         t = batch.shape[1] + 1
-        # forward the transformer itself
-        pos_emb = self.transformer.wpe.weight[:t]  # position embeddings of shape (1, t, n_embd)
-        tok_emb = self.transformer.wte(batch)  # token embeddings of shape (b, t-1, n_embd)
-        x = pos_emb.repeat(b, 1, 1)  # (b, t, n_embd)
+        pos_emb = self.transformer.wpe.weight[:t]
+        tok_emb = self.transformer.wte(batch)
+        x = pos_emb.repeat(b, 1, 1)
         x[:, 1:, :] += tok_emb
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        # if requested, also calculate the loss
+        # Optionally compute training loss.
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
 
-# -----------------------------------------------------------------------------
-
-
 def init_model():
-    global model  # to simplify, model, etc, are global
+    global model
     global model_path
     global bit_positions
-    global bit_positions_cpu  # eww
+    global bit_positions_cpu
     global nn_pad
     global segment_string_length
-    model = Transformer(config)
-    model.to(device)
+    model = Transformer(config).to(device)
     model.need_reload = True
-    model = torch.compile(model)
+    if device.startswith('cuda'):
+        try:
+            model = torch.compile(model)
+        except RuntimeError as e:
+            print(f"torch.compile disabled: {e}")
     model_path = os.path.join(params.work_dir, "model.pt")
-    # stuff for coding/decoding arrays
+    # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
     bit_positions_cpu = torch.arange(config.stacking, dtype=torch.int)
     segment_string_length = config.block_size // nm
@@ -155,16 +151,11 @@ def save_model():
     torch.save(model.state_dict(), model_path)
 
 
-# -----------------------------------------------------------------------------
-# helper functions for evaluating and sampling from the model
-
-
+# Sampling/evaluation helpers.
 @torch.inference_mode()
 def generate(batch):
     """
-    Take a conditioning sequence of indices batch (LongTensor of shape (b,t)) and complete
-    the sequence max_new_tokens times, feeding the predictions back into the model each time.
-    Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+    Fill token positions autoregressively in-place for a batch of sequences.
     """
     if config.transformer_uses_score:
         B = batch.shape[0]
@@ -174,6 +165,7 @@ def generate(batch):
             for i in range(segment_string_length):
                 batch_cond = batch[:, offset:offset+i].view(B, 1, i)
                 logits, _ = model(batch_cond, score_batch=ff, offset=offset)
+                # Use temperature-scaled logits at the final position.
                 temperature = config.temperature + params.gen * config.temperature_delta
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
@@ -185,9 +177,8 @@ def generate(batch):
         block_size = model.get_block_size()
         for i in range(block_size):
             batch_cond = batch[:, :i]
-            # forward the model to get the logits for the index in the sequence
             logits, _ = model(batch_cond)
-            # pluck the logits at the final step and scale by desired temperature
+            # Use temperature-scaled logits at the final position.
             temperature = config.temperature + params.gen * config.temperature_delta
             logits = logits[:, -1, :] / temperature
             """
@@ -208,25 +199,19 @@ def generate(batch):
                 _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
             """
 
-# conversion string of tokens <-> array of signs
+# Conversion between token strings and +/-1 arrays.
 @torch.no_grad()
-def string_to_array(X):  # really, int tensor to int8 tensor
+def string_to_array(X):
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
     return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
 @torch.no_grad()
-def string_to_array_cpu(X):  # really, int tensor to int8 tensor
-    B = X.shape[0]
-    signs = ((((X.unsqueeze(-1) >> bit_positions_cpu) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
-
-@torch.no_grad()
-def array_to_string(signs):  # int8 tensor to int tensor
+def array_to_string(signs):
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
     signs1[:, :, :nn] = signs.view(B, nm, nn)
-    # Convert -1 → 0, +1 → 1
+    # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
     if config.transformer_uses_score:
@@ -245,14 +230,14 @@ def train(data, **kwargs):
     print(f"max word length: {string_length}")
     print(f"number of unique characters in the vocabulary: {vocab_size}")
 
-    # these parameters are adjusted dynamically during the run
+    # Runtime-adjusted training parameters.
     max_steps = kwargs.get("max_steps", -1)
     eval_freq = kwargs.get("eval_freq", 500)
 
-    # learning rate is now a function of steps
+    # Learning rate schedule.
     lr_sched = kwargs.get("lr_sched", lambda step: 5e-4)
 
-    # for testing purposes only: scoring function
+    # Optional scoring hook used in testing.
     global score
     score = kwargs.get("score", None)
 
@@ -264,7 +249,7 @@ def train(data, **kwargs):
 
     batch_size = config.training_batch_size
 
-    # init optimiser
+    # Initialize optimizer.
     optimiser_kwargs = dict(lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
     if device.startswith('cuda'):
         optimiser_kwargs["fused"] = True
@@ -274,11 +259,11 @@ def train(data, **kwargs):
         optimiser_kwargs.pop("fused", None)
         optimiser = torch.optim.AdamW(model.parameters(), **optimiser_kwargs)
 
-    # training loop
+    # Training loop.
     step = 0
     total_loss = 0
     while True:
-        # feed into the model
+        # Sample a batch, apply random symmetry, and train.
         batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
         if config.transformer_uses_score:
             string_batch = array_to_string(batch)
@@ -293,11 +278,11 @@ def train(data, **kwargs):
             raise RuntimeError(f"{step=}: loss is NaN")
         for param_group in optimiser.param_groups:
             param_group['lr'] = lr_sched(step)
-        # calculate the gradient, update the weights
+        # Backpropagation step.
         model.zero_grad(set_to_none=True)
         loss.backward()
         optimiser.step()
-        # periodically test/save the model
+        # Periodic logging/checkpointing.
         step += 1
         if step % eval_freq == 0:
             print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
@@ -310,6 +295,7 @@ def train(data, **kwargs):
         #
     print('')
 
+# Sampling
 @torch.no_grad()
 def sample():
     load_model()
