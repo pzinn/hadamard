@@ -152,12 +152,12 @@ def save_model():
 
 
 # Sampling/evaluation helpers.
-@torch.inference_mode()
-def generate(batch):
-    """
-    Fill token positions autoregressively in-place for a batch of sequences.
-    """
-    if config.transformer_uses_score:
+if config.transformer_uses_score:
+    @torch.inference_mode()
+    def generate(batch):
+        """
+        Fill token positions autoregressively in-place for a batch of sequences.
+        """
         B = batch.shape[0]
         ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
         for j in range(nm):
@@ -173,7 +173,12 @@ def generate(batch):
             signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn]
             f = torch.fft.rfft(signs, dim=1) / math.sqrt(4 * nn)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
-    else:
+else:
+    @torch.inference_mode()
+    def generate(batch):
+        """
+        Fill token positions autoregressively in-place for a batch of sequences.
+        """
         block_size = model.get_block_size()
         for i in range(block_size):
             batch_cond = batch[:, :i]
@@ -181,23 +186,8 @@ def generate(batch):
             # Use temperature-scaled logits at the final position.
             temperature = config.temperature + params.gen * config.temperature_delta
             logits = logits[:, -1, :] / temperature
-            """
-            # optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, top_k)
-                logits[logits < v[:, [-1]]] = -float('Inf')
-            """
-            # apply softmax to convert logits to (normalized) probabilities
             probs = F.softmax(logits, dim=-1)
-            # sample from the distribution
             batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-            """
-            # either sample from the distribution or take the most likely element
-            if do_sample:
-                batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-            else:
-                _, batch[:, i] = torch.topk(probs, k=1, dim=-1).view(-1)
-            """
 
 # Conversion between token strings and +/-1 arrays.
 @torch.no_grad()
@@ -218,6 +208,18 @@ def array_to_string(signs):
         return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
+if config.transformer_uses_score:
+    @torch.no_grad()
+    def prepare_training_inputs(batch):
+        string_batch = array_to_string(batch)
+        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1)
+        for i in range(1, nm):
+            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+        return string_batch, {"score_batch": ff, "compute_loss": True}
+else:
+    @torch.no_grad()
+    def prepare_training_inputs(batch):
+        return array_to_string(batch), {"compute_loss": True}
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -266,14 +268,8 @@ def train(data, **kwargs):
     while True:
         # Sample a batch, apply random symmetry, and train.
         batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
-        if config.transformer_uses_score:
-            string_batch = array_to_string(batch)
-            ff = torch.view_as_real(fft(batch)).square().sum(dim=-1)  # (batch_size, nm, nn2+1)
-            for i in range(1, nm):
-                ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
-            logits, loss = model(string_batch, score_batch=ff, compute_loss=True)
-        else:
-            logits, loss = model(array_to_string(batch), compute_loss=True)
+        model_input, model_kwargs = prepare_training_inputs(batch)
+        logits, loss = model(model_input, **model_kwargs)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
