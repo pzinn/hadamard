@@ -197,6 +197,7 @@ def train(data, **kwargs):
             load_model()
         except FileNotFoundError:
             pass
+    model.train()
 
     batch_size = config.training_batch_size
 
@@ -243,6 +244,7 @@ def train(data, **kwargs):
 @torch.no_grad()
 def sample():
     load_model()
+    model.eval()
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')
