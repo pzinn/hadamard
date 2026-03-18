@@ -2,15 +2,19 @@
 # coding: utf-8
 
 # a script to check that matrices are Hadamard. takes input from stdin
+# also export H-matrix as picture
 
 import sys
 import numpy as np
 import scipy.linalg as sl
+from PIL import Image
 
 np.set_printoptions(threshold=sys.maxsize)
 
 
 def upblock(x):
+    n = x.shape[0]
+    nn = n // 4
     _aa, _bb, _cc, _dd = x.reshape(4, -1)
     A = sl.circulant(_aa)
     B = sl.circulant(_bb)
@@ -21,6 +25,18 @@ def upblock(x):
                      [-C, D, A, -B],
                      [-D, -C, B, A]])
 
+def upblock_mod(x):
+    n = x.shape[0]
+    nn = n // 4
+    _aa, _bb, _cc, _dd = x.reshape(4, -1)
+    A = sl.circulant(_aa)
+    B = 2*sl.circulant(_bb)
+    C = 3*sl.circulant(_cc)
+    D = 4*np.fliplr(sl.circulant(_dd))
+    return np.block([[A, B, C, D],
+                     [-B, A, -D, C],
+                     [-C, D, A, -B],
+                     [-D, -C, B, A]])
 
 def score(a):
     n = len(a)
@@ -35,13 +51,66 @@ def score(a):
 def convert(s):
     return np.array([1 if c == "+" else -1 for c in s], dtype=np.int64)
 
+img_saved = False
 
 def treat(s):
+    global img_saved
+    if any(c not in "+-" for c in s):
+        print(f"invalid input: only '+' and '-' are allowed: {s!r}", file=sys.stderr)
+        return
+    if len(s) % 4 != 0:
+        print(f"invalid input length (must be divisible by 4): {len(s)}", file=sys.stderr)
+        return
     a = convert(s)
     n = len(a)
     # print(m)
-    print(n, score(a))
-
+    s = score(a)
+    print(n, s)
+    if s==0 and not img_saved:
+        m = upblock(a)
+        # Convert ±1 to 0/255
+        img_array = ((m + 1) // 2 * 255).astype(np.uint8)
+        # Create image
+        img = Image.fromarray(img_array, mode='L')  # 'L' = grayscale
+        # Save as PNG
+        img.save(f"hadamard-{n}.png")
+        # Optional: enlarge for visibility (nearest-neighbor)
+        img.resize((2*n, 2*n), Image.NEAREST).save(f"hadamard-{n}-large.png")
+        # now colour version
+        m = upblock_mod(a)
+        color_map = {
+            -1: (0, 0, 0),        # black
+            -2: (0, 0, 0),
+            -3: (0, 0, 0),
+            -4: (0, 0, 0),
+             1: (255, 0, 0),      # red
+             2: (0, 255, 0),      # green
+             3: (0, 0, 255),      # blue
+             4: (255, 255, 0),    # yellow
+        }
+        img_array = np.zeros((n, n, 3), dtype=np.uint8)
+        for val, color in color_map.items():
+            img_array[m == val] = color
+        # Create and save image
+        img = Image.fromarray(img_array, mode="RGB")
+        img.save(f"hadamard-{n}-colour.png")
+        # Optional enlargement (for display)
+        img.resize((2*n, 2*n), Image.NEAREST).save(f"hadamard-{n}-colour-large.png")
+        # final version: randomised
+        rng = np.random.default_rng()
+        rng.shuffle(m, axis=0)
+        rng.shuffle(m, axis=1)
+        x = -1+2*rng.integers(2, size=n)
+        y = -1+2*rng.integers(2, size=n)
+        m = x[:,None] * y[None,:] * m
+        # Convert ±1 to 0/255
+        img_array = ((m + 1) // 2 * 255).astype(np.uint8)
+        # Create image
+        img = Image.fromarray(img_array, mode='L')  # 'L' = grayscale
+        # Save as PNG
+        img.save(f"hadamard-{n}-randomised.png")
+        #
+        img_saved = True  # only do it once
 
 def main():
     for line in sys.stdin:  # Reads each line from standard input

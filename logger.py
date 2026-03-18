@@ -11,8 +11,8 @@ import os
 
 if params.logging == 'wandb':
     import wandb
-    wandb_entity = 'aiformath'
-    wandb_project = 'topsekrit'
+    wandb_entity = os.getenv("WANDB_ENTITY", "aiformath")
+    wandb_project = os.getenv("WANDB_PROJECT", "topsekrit")
 
 
 # helper function
@@ -20,7 +20,7 @@ def find_latest_gen():
     # Get all filenames matching the pattern
     files = glob.glob(params.work_dir+"GEN-*.txt")
     # Extract the numerical part using regex
-    indices = [int(re.search(r"GEN-(\d{2})\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d{2})\.txt", f)]
+    indices = [int(re.search(r"GEN-(\d+)\.txt", f).group(1)) for f in files if re.search(r"GEN-(\d+)\.txt", f)]
     return max(indices) if indices else 0  # Return max index, or 0 if no files found
 
 
@@ -41,8 +41,13 @@ def init_logging():
     else:
         # make directory
         date = datetime.datetime.today().strftime('%Y-%m-%d-%H-%M-%S')
-        params.work_dir = f'training/{n}/{date}/'
-        os.makedirs(params.work_dir, exist_ok=True)
+        while True:
+            params.work_dir = f'training/{n}/{date}/'
+            try:
+                os.makedirs(params.work_dir, exist_ok=False)
+                break
+            except FileExistsError:
+                date += "_"
         #
         params.gen = 0
 
@@ -50,24 +55,39 @@ def init_logging():
         os.unlink("latest")
     except FileNotFoundError:
         pass
+    except IsADirectoryError:
+        os.rmdir("latest")
     os.symlink(params.work_dir, "latest")
 
     if params.logging == 'wandb':
         if params.logging_mode == 'offline':
             os.environ["WANDB_MODE"] = "offline"
-        myname = f'{params.n}_{date}' if not params.resume else params.work_dir[9:-1].replace("/", "_")  # ugly: get n_date out of training/n/date/
-        wandb.init(entity=wandb_entity, project=wandb_project, name=myname, id=myname, dir=params.work_dir,
-                   config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
-                   resume='allow' if params.resume else 'never',  # if is_sweep, resume not supported
-                   mode = params.logging_mode)
+        if params.resume:
+            with open(params.work_dir + "wandb_run_id.txt") as f:
+                run_id = f.read().strip()
+            run = wandb.init(entity=wandb_entity, project=wandb_project, id=run_id, dir=params.work_dir,
+                             config=config, # is_sweep and resume are incompatible
+                             resume='allow',
+                             mode = params.logging_mode)
+        else:
+            myname = f'{params.n}_{date}'
+            run = wandb.init(entity=wandb_entity, project=wandb_project, name=myname, dir=params.work_dir,
+                             config=config if not params.is_sweep else None,  # if is_sweep, config will be determined dynamically
+                             resume='never',
+                             mode = params.logging_mode)
+            with open(params.work_dir + "wandb_run_id.txt", "w") as f:
+                f.write(run.id)
         config.update()  # for sweep
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
-            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss}, commit=name == 'test')  # hacky
+            wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
+            table = wandb.Table(columns=["gen", "count"])
+            for g, c in gens_tally.items():
+                table.add_data(g, c)
             wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
-                       "histogram/scores/"+prefix: wandb.Histogram(scores), "histogram/gens/"+prefix: wandb.Histogram(gens)})
+                       "histogram/scores/"+prefix: wandb.Histogram(scores), "table/gens/"+prefix: table})
 
     # header of stats file
     stats_file = params.work_dir + 'stats.txt'  # where to save logs
@@ -89,7 +109,7 @@ def init_logging():
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
         norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
@@ -97,7 +117,7 @@ def init_logging():
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, gens, mean_score, nh):
+        def record_scores(prefix, scores, mean_score, gens_tally, nh):
             pass
 
 

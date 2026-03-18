@@ -1,40 +1,41 @@
+import torch
+import math
+
 if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-nn = 35  # size of basic block
-n = 4 * nn  # size of matrix
+n = 172  # size of matrix
+# segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
-# scoring
-score_function = 'fft log determinant'
-# score_function = 'quartic'
-# score_function = 'one'
-
 # training parameters
-sample_size = 400_000
-training_size = sample_size//10  # must be > test_set_size
-learning_rate = 2e-3
+sample_size = 1_000_000
+training_size = sample_size//20  # must be > test_set_size
+learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 200_000  # will be adjusted dynamically (to be less than that)
+training_steps = 150_000  # will be adjusted dynamically (to be less than that)
 num_improve = 1  # number of times data get improved per generation. only used by improve2
 
 # transformer parameters
-n_layer = 6
+n_layer = 4
 n_embd = 128
-n_embd2 = 4*n_embd  # default choice
+# n_embd2 = 4*n_embd  # default choice
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
-gen_decay = .01 # [0., .025, .05, .075, .1, .15, .2]
+temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+temperature_delta = .02
+
 
 # less important parameters
-sample_batch_size = sample_size//10  # for sampling. must be a divisor of sample_size
+gen_decay = 0.0
+sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = 1024  # must be less than training_size, no more than 10% ideally
-num_workers = 6  # for cpu parallelisation
+test_set_size = None  # None | < training_size, no more than 10% ideally
+num_workers = None  # for cpu parallelisation
 
 resume = False  # whether to resume a previous run
 # resume = True
@@ -60,120 +61,178 @@ random_seed = int(time.time())  # 1746533706
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
-logging_mode = 'offline'  # 'online' | 'offline' -- for wandb
+logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 import argparse
 parser = argparse.ArgumentParser()
 parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-parser.add_argument("--bignum", action="store_true", help="Enable debug logging")  # PZJ: what is this for?
+debugging = False
 
 import subprocess
 try:
-    version = subprocess.check_output(
+    git_branch = subprocess.check_output(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         stderr=subprocess.DEVNULL
     ).strip().decode()
+    git_commit = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=subprocess.DEVNULL
+    ).strip().decode()
+    version = git_branch + " " + git_commit
 except subprocess.CalledProcessError:
     version = "git not available"
 except FileNotFoundError:
     version = "git not available"
 
+if 'segment_sums' not in globals():
+    segment_sums = None
+
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
+
 import ast
-
-hparams_list = ['n', 'n_layer', 'n_embd', 'n_embd2', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'score_function', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'num_workers', 'gen_decay']
-
 # hparams can be updated in command line
 for param in hparams_list:
     parser.add_argument(f"--{param}")
-args = parser.parse_args()
-debugging = args.debug
-for param in hparams_list:
-    val = getattr(args, param)
-    if val is not None:
-        globals()[param] = ast.literal_eval(val)
+sweep_config = None
 
-# special cases: coupled default values
-if getattr(args,"sample_size") and not getattr(args,"training_size"):
-    training_size = sample_size//20
-if getattr(args,"n_embd") and not getattr(args,"n_embd2"):
-    n_embd2 = 4*n_embd
-if getattr(args,"sample_size") and not getattr(args,"sample_batch_size"):
-    sample_batch_size = sample_size//10
-
-
-hparams = {name: globals().get(name) for name in hparams_list}
-
-is_sweep = any(isinstance(v, (list, tuple)) for v in hparams.values())
-
-if is_sweep:
-    if resume:
-        raise SystemExit("resume not supported with sweeps")
-    sweep_config = {
-        "method": "grid",
-        "parameters": {
-            k: {"values": list(v)} if isinstance(v, (list, tuple)) else {"value": v}
-            for k, v in hparams.items()
-            }
-        }
-
-if n % 4 != 0:
-    raise SystemExit("good luck!")
-
-print(f'{n=}')
-
-# array encoding -- do not change
-nn = n // 4
-nm = 4  # number of blocks
-na = nm * nn  # length of array
-nn2 = (nn-1) // 2
 
 class ModelConfig:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
         # Automatically computed values
         if isinstance(self.stacking, int):
-            self.block_size = 4 * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
+            self.block_size = nm * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
             self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
+        if isinstance(self.n_embd, int) and not hasattr(self,'n_embd2'):
+            self.n_embd2 = 4 * self.n_embd
     def update(self):
         if is_sweep:
             import wandb
             self.__init__(**wandb.config)
             wandb.config.block_size = self.block_size
             wandb.config.vocab_size = self.vocab_size
+            wandb.config.n_embd2 = self.n_embd2
 
+def compute_derived():
+    global nn, nm, na, nn2
+    global fixed_sums, num_ones
+    global hparams, is_sweep, sweep_config, config
+    global aut, perms, cst
+    if n % 4 != 0:
+        raise SystemExit("good luck!")
+    if n % 8 != 4:
+        raise SystemExit("not implemented")
+    print(f'{n=}')
+    # array encoding -- do not change
+    nn = n // 4
+    nm = 4  # number of blocks
+    na = nm * nn  # length of array
+    nn2 = (nn-1) // 2
+    fixed_sums = segment_sums is not None
+    if fixed_sums:
+        assert sum(i*i for i in segment_sums) == n
+        print(f"{segment_sums=}")
+        num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
+    else:
+        num_ones = None
+    hparams = {name: globals().get(name) for name in hparams_list}
+    is_sweep = any(isinstance(v, list) for v in hparams.values())
+    if is_sweep:
+        if resume:
+            raise SystemExit("resume not supported with sweeps")
+        sweep_config = {
+            "method": "grid",
+            "parameters": {
+                k: { ("values" if isinstance(v, list) else "value"): v }
+                for k, v in hparams.items()
+                }
+            }
+    else:
+        sweep_config = None
+    config = ModelConfig(**hparams)
+    # Prepare automorphisms / permutations
+    aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
+    perms = torch.tensor(
+        list(p for p in permutations(range(nm)) if p[3]==3 and (not fixed_sums or tuple(segment_sums[i] for i in p) == segment_sums)),
+        dtype=torch.long,
+        device=device,
+    )
+    # scoring normalisation constant
+    cst = 1 / math.sqrt(n)
 
-config = ModelConfig(**hparams)
+def init_from_argv(argv=None):
+    global debugging, training_size
+    args = parser.parse_args(argv)
+    debugging = args.debug
+    for param in hparams_list:
+        val = getattr(args, param)
+        if val is not None:
+            globals()[param] = ast.literal_eval(val)
+    # special cases: coupled default values
+    if getattr(args, "sample_size") and not getattr(args, "training_size"):
+        training_size = sample_size//20
+    #if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
+    #    n_embd2 = 4*n_embd
+    compute_derived()
+
 
 # symmetries
 from itertools import permutations
-import torch
-import math
 
-# Prepare automorphisms
-aut = [ i for i in range(1,nn) if math.gcd(i,nn) == 1 ]
-aut_inds = torch.tensor([[(i*j)%nn for j in range(nn)] for i in aut])
-
-# Prepare permutations -- note that these tensor are on cpu, if rotate used on gpu this needs to be changed
-perms = torch.tensor(list(p for p in permutations(range(3))), dtype=torch.long)
-rndmod = torch.tensor([len(perms), len(aut), nn, 2*nn, 2, 2, 2, 2], dtype=torch.int64)
-nrnd = rndmod.shape
-print("order of symmetry: ", rndmod.prod().item())
+#print("order of symmetry: ", rndmod.prod().item())
 
 def rotate(array0):
-    arrayx = torch.empty_like(array0)
-    array0 = array0.view(-1,nm,nn)
-    array = arrayx.view(-1,nm,nn)  # can do batches too (not currently used)
-    rnd = torch.remainder(torch.empty(nrnd, dtype=torch.int64).random_(), rndmod)
-    # automorphisms
-    array.copy_(array0[:,:,aut_inds[rnd[1].item()]])
-    # symmetry: random permute
-    array[:,:3] = array[:,perms[rnd[0]]]
-    # symmetry: random rotation/flip
-    array.copy_(torch.roll(array, shifts=rnd[2].item(), dims=2))
-    # symmetry: second rotation/flip
-    array[:,3] = torch.roll(array[:,3] if rnd[3] < nn else torch.flip(array[:,3], (1,)), shifts=rnd[3].item(), dims=1)
-    # symmetry: random signs
-    array.mul_((rnd[4:8]*2-1).unsqueeze(1))
-    #
-    return arrayx
+    B = array0.shape[0]
+    array0 = array0.to(device=device).view(B, nm, nn)
+    # --- random parameters per batch ---
+    perm_idx = torch.randint(len(perms), (B,), device=device)
+    a_idx    = torch.randint(len(aut), (B,), device=device)      # automorphism
+    flips    = torch.randint(2, (B, 2), device=device) * 2 - 1  # ±1
+    shifts   = torch.randint(nn, (B, 2), device=device)         # translation
+    flips = torch.cat([flips[:, :1].expand(-1, 3), flips[:, 1:]], dim=1)
+    shifts = torch.cat([shifts[:, :1].expand(-1, 3), shifts[:, 1:]], dim=1)
+    # --- combined affine action on Z/nnZ ---
+    base = torch.arange(nn, device=device)                       # 0..nn-1
+    a = aut[a_idx].unsqueeze(1)                                  # (1,1)
+    coeff = a * flips                                            # ±a  (B,nm)
+    shift_idx = (coeff.unsqueeze(-1) * base + shifts.unsqueeze(-1)) % nn  # (B,nm,nn)
+    # Apply combined index transformation
+    array = torch.gather(array0, 2, shift_idx)
+    # --- block permutation per batch ---
+    perm = perms[perm_idx]
+    # array = array[torch.arange(B)[:, None], perm]
+    perm_expanded = perm.unsqueeze(-1).expand(B, nm, nn)
+    array = torch.gather(array, 1, perm_expanded)
+    if not fixed_sums:
+        signs = torch.randint(2, (B, nm), device=device, dtype=torch.int8) * 2 - 1  # ±1
+        # --- independent overall signs ---
+        array *= signs.unsqueeze(-1)
+    return array
 
+# obsolete: only one scoring function implemented
+# score_function = 'fft log determinant'
+
+real_dtype = torch.float32
+complex_dtype = torch.complex64
+
+def fft(m):
+    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
+@torch.inference_mode()
+def score_fft(f):  # score in terms of precomputed fft
+    # we do separately real pieces for accuracy reasons
+    s = - torch.log(torch.real(f[:, :, 0].pow(2).sum(dim=1)))
+    if nn % 2 == 0:
+        s -= torch.log(torch.real(f[:, :, nn//2].pow(2).sum(dim=1)))
+        f = f[:, :, 1:-1]
+    else:
+        f = f[:, :, 1:]
+    ff = f[:, :3, :].pow(2).sum(dim=1)
+    f2 = f * f.conj()  # TODO rewrite
+    ff.mul_(ff.conj()) # TODO rewrite
+    s -= torch.log(torch.real(ff+f2[:, 3]*(2*f2.sum(dim=1)-f2[:, 3]))).sum(dim=1)
+    return 2*s
+def score(m):
+    return score_fft(fft(m))
+
+
+eps = 2e-5  # scores are heavily discretised so can be made large
