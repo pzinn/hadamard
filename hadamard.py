@@ -180,13 +180,10 @@ def batch_score(arrays):  # same as parallel_score but in batches of score_batch
         else:
             arrays_gpu = arrays.to(device=device)
         return arrays, parallel_score(arrays_gpu)
-    scores = torch.empty((0,), dtype=real_dtype)
     if arrays is None:
         arrays = generate_random_arrays(config.sample_size, 'cpu')  # lame? reinstate old way?
-    batches = batch_generator(arrays)
-    for batch in batches:
-        new_scores = parallel_score(batch)
-        scores = torch.cat((scores, new_scores), dim=0)
+    score_parts = [parallel_score(batch) for batch in batch_generator(arrays)]
+    scores = torch.cat(score_parts, dim=0)
     return arrays, scores
 
 def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
@@ -390,9 +387,12 @@ def batch_improve(arrays0, scores0, gens0):
         for i in range(0, B, config.score_batch_size):
             j = i + config.score_batch_size
             new_arrays, new_scores, new_gens = parallel_improve(arrays0[i:j].to(device=device), scores0[i:j].to(device=device), gens0[i:j].to(device=device))
-            arrays = torch.cat((arrays, new_arrays), dim=0)
-            scores = torch.cat((scores, new_scores), dim=0)
-            gens = torch.cat((gens, new_gens), dim=0)
+            if i == 0:
+                arrays, scores, gens = new_arrays, new_scores, new_gens
+            else:
+                arrays = torch.cat((arrays, new_arrays), dim=0)
+                scores = torch.cat((scores, new_scores), dim=0)
+                gens = torch.cat((gens, new_gens), dim=0)
             arrays, scores, gens = best_from(arrays, scores, gens)
     return arrays.cpu(), scores.cpu(), gens.cpu()
 
