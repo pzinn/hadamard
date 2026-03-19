@@ -9,8 +9,6 @@ import math
 import torch
 import torch.nn
 from torch.nn import functional as F
-from torch.utils.data import Dataset
-from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
 from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft
 import logger

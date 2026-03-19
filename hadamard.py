@@ -2,7 +2,6 @@
 # coding: utf-8
 
 import torch
-import math
 import params
 params.init_from_argv()
 from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
@@ -13,12 +12,6 @@ import transformer
 # logging/debugging
 import sys
 from timeit import default_timer as timer  # to measure exec time
-
-"""
-if debugging:
-    # Start recording memory snapshot history
-    torch.cuda.memory._record_memory_history(max_entries=100000)
-"""
 
 if fixed_sums:
     def generate_random_blocks(B, n, k, device):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
@@ -63,33 +56,6 @@ def record_stats(arrays, scores, gens, prefix=""):
     mc_size = 1000
     with torch.random.fork_rng():
         s = (arrays[torch.randint(B, (mc_size,), device=arrays.device)] * arrays[torch.randint(B, (mc_size,), device=arrays.device)]).sum(dim=1).abs().sum()/(mc_size*na)
-    """
-    # proper/slow way: REDO ONE DAY
-    mc_size = 1000
-    perms = params.perms.tolist()
-    s = torch.tensor(0., device=arrays.device)
-    for _ in range(mc_size):
-        a1 = arrays[torch.randint(B,())]
-        a2 = arrays[torch.randint(B,())]
-        a13 = a1[:3*nn].reshape(3,nn)
-        a23 = a1[:3*nn].reshape(3,nn)
-        a11 = a1[3*nn:]
-        a21 = a2[3*nn:]
-        fft_a1 = torch.fft.fft(a11, dim=0)
-        fft_a2 = torch.fft.fft(a21, dim=0)
-        corr1 = torch.fft.ifft(fft_a1 * torch.conj(fft_a2), dim=0).real
-        corr2 = torch.fft.ifft(fft_a1 * fft_a2, dim=0).real
-        corr = torch.stack([corr1,corr2],dim=0)
-        corr = torch.abs(corr)
-        s += torch.max(corr)
-        ss = 0
-        for p in perms:
-            sss = torch.sum(a13[p]*a23,dim=(0,1))
-            if sss>ss:
-                ss=sss
-        s += ss
-    s /= mc_size * na
-    """
     s = s.item()
     print(f"Correlation: {s}")
 
@@ -158,16 +124,6 @@ def batch_generator(arrays):
     for i in range(0, B, config.score_batch_size):
         j = i + config.score_batch_size
         yield arrays[i:j].to(device=device)
-
-"""
-def random_batch_generator():
-    n_full_batches = config.sample_size // config.score_batch_size
-    remainder = config.sample_size % config.score_batch_size
-    for _ in range(n_full_batches):
-        yield generate_random_arrays(config.score_batch_size)
-    if remainder:
-        yield generate_random_arrays(remainder)
-"""
 
 def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
     torch.set_float32_matmul_precision('highest')
@@ -447,11 +403,6 @@ def main():
             record_stats(arrays, scores, gens, "selected")
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
         if params.gen == config.max_iterations:
-            """
-            if debugging:
-                torch.cuda.memory._dump_snapshot("profile.pkl")
-                torch.cuda.memory._record_memory_history(enabled=None)
-            """
             break
         if params.skip_first_training:
             params.skip_first_training = False
