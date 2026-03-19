@@ -29,7 +29,7 @@ A symlink `latest/` is created to point to the latest data.
 Hadamard matrices for each run are saved in `hada.txt`.
 Use `check.py` to check that they are indeed hadamard matrices, e.g.,
 ```
-python check.py < latest/hada.txt | uniq
+python check.py latest/hada.txt
 ```
 Logging is in two forms:
 * there is wandb or tensorboard logging, which summarises three types of information:
