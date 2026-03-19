@@ -86,8 +86,11 @@ def init_logging():
             table = wandb.Table(columns=["gen", "count"])
             for g, c in gens_tally.items():
                 table.add_data(g, c)
-            wandb.log({"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
-                       "histogram/scores/"+prefix: wandb.Histogram(scores), "table/gens/"+prefix: table})
+            finite_scores = scores[torch.isfinite(scores)]
+            log_data = {"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh, "table/gens/"+prefix: table}
+            if len(finite_scores) > 0:
+                log_data["histogram/scores/"+prefix] = wandb.Histogram(finite_scores)
+            wandb.log(log_data)
 
     # header of stats file
     stats_file = params.work_dir + 'stats.txt'  # where to save logs
