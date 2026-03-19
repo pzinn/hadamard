@@ -23,7 +23,7 @@ num_improve = 1  # number of times data get improved per generation. only used b
 # transformer parameters
 n_layer = 4
 n_embd = 128
-# n_embd2 = 4*n_embd  # default choice
+# n_embd2 = 4*n_embd  # default choice; only include if *not* default choice (can't be in hparams_list because of potential sweep issue)
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 transformer_uses_score = False
@@ -35,19 +35,16 @@ temperature_delta = .02
 gen_decay = 0.0
 sample_batch_size = 100_000  # for sampling
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = None  # None | < training_size, no more than 10% ideally
-num_workers = None  # for cpu parallelisation
 
-resume = False  # whether to resume a previous run
-# resume = True
+resume = False  # True | False, whether to resume a previous run
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
 # training parameters can be different though
 # also, for now resume is not compatible with sweep
 if resume:
-    pass
     # provide work_dir manually, default is latest
     # provide gen, default is latest
+    pass
 
 skip_first_training = False  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
 skip_first_improve = resume  # leave as is unless you know what you're doing
@@ -57,7 +54,7 @@ test_score = False  # for debugging purposes, test whether randomisation of arra
 
 
 import time
-random_seed = int(time.time())  # 1746533706
+random_seed = int(time.time())
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
@@ -92,7 +89,7 @@ except FileNotFoundError:
 if 'segment_sums' not in globals():
     segment_sums = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'transformer_uses_score', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'transformer_uses_score', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta']
 
 import ast
 # hparams can be updated in command line
@@ -176,10 +173,7 @@ def init_from_argv(argv=None):
     # special cases: coupled default values
     if getattr(args, "sample_size") and not getattr(args, "training_size"):
         training_size = sample_size//20
-    #if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
-    #    n_embd2 = 4*n_embd
     compute_derived()
-
 
 # symmetries
 from itertools import permutations
@@ -211,9 +205,6 @@ def rotate(array0):
         # --- independent overall signs ---
         array *= signs.unsqueeze(-1)
     return array
-
-# obsolete: only one scoring function implemented
-# score_function = 'fft log determinant'
 
 real_dtype = torch.float32
 complex_dtype = torch.complex64
