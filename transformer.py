@@ -141,8 +141,14 @@ def init_model():
 
 def load_model():
     if model.need_reload:
-        model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
+        load_result = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
         print('resuming from existing model in the workdir')
+        if load_result.missing_keys or load_result.unexpected_keys:
+            print('warning: partial model load')
+            if load_result.missing_keys:
+                print(f'missing keys: {load_result.missing_keys}')
+            if load_result.unexpected_keys:
+                print(f'unexpected keys: {load_result.unexpected_keys}')
         model.need_reload = False
 
 
@@ -303,9 +309,10 @@ def sample():
     X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
     arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
     for i in range(0, config.sample_size, config.sample_batch_size):
-        j = i + config.sample_batch_size
+        j = min(i + config.sample_batch_size, config.sample_size)
+        cur_batch = X[:j-i]
         print('*', end=''); sys.stdout.flush()
-        generate(X)
-        arrays_cpu[i:j] = string_to_array(X)
+        generate(cur_batch)
+        arrays_cpu[i:j] = string_to_array(cur_batch)
     print('')
     return arrays_cpu

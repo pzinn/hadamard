@@ -33,7 +33,7 @@ temperature_delta = .02
 
 # less important parameters
 gen_decay = 0.0
-sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
+sample_batch_size = 100_000  # for sampling
 score_batch_size = None  # for scoring/improving. None means no batching
 test_set_size = None  # None | < training_size, no more than 10% ideally
 num_workers = None  # for cpu parallelisation

@@ -309,7 +309,7 @@ def parallel_improve(arrays, scores, gens):
     B = arrays.shape[0]
     print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
     B1 = (B // nT) * nT  # round down to a multiple of nT
-    if scores[B1-1] < eps:  # don't touch H-matrices
+    if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
         B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
         B1 = (B1 // nT) * nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
