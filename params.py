@@ -59,10 +59,14 @@ test_score = False  # for debugging purposes, test whether randomisation of arra
 import time
 random_seed = int(time.time())  # 1746533706
 
-device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
-
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
+
+device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+if device.startswith('cuda') and not torch.cuda.is_available():
+    raise SystemExit(f"{device=} but CUDA is not available")
+if device == 'mps' and not torch.backends.mps.is_available():
+    raise SystemExit(f"{device=} but MPS is not available")
 
 import argparse
 parser = argparse.ArgumentParser()
