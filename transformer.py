@@ -103,10 +103,8 @@ def init_model():
     model = Transformer(config).to(device)
     model.need_reload = True
     if device.startswith('cuda'):
-        try:
-            model = torch.compile(model)
-        except RuntimeError as e:
-            print(f"torch.compile disabled: {e}")
+        torch._dynamo.config.suppress_errors = True
+        model = torch.compile(model, dynamic=True)
     model_path = os.path.join(params.work_dir, "model.pt")
     # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
@@ -234,7 +232,7 @@ def train(data, **kwargs):
         # Periodic logging/checkpointing.
         step += 1
         if step % eval_freq == 0:
-            print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
+            print(f"{step=}", end='\t')
             logger.record_loss(total_loss/eval_freq, step, "train")
             total_loss = 0
             save_model()
