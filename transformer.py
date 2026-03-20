@@ -126,10 +126,8 @@ def init_model():
     model = Transformer(config).to(device)
     model.need_reload = True
     if device.startswith('cuda'):
-        try:
-            model = torch.compile(model, dynamic=True)
-        except RuntimeError as e:
-            print(f"torch.compile disabled: {e}")
+        torch._dynamo.config.suppress_errors = True
+        model = torch.compile(model, dynamic=True)
     model_path = os.path.join(params.work_dir, "model.pt")
     # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
