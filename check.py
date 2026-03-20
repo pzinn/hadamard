@@ -1,122 +1,162 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# a script to check that matrices are Hadamard. takes input from stdin
-# also export H-matrix as picture
-
+import argparse
+from collections import Counter
 import sys
-import numpy as np
-import scipy.linalg as sl
+import torch
 from PIL import Image
 
-np.set_printoptions(threshold=sys.maxsize)
+device = "cuda"
+if device.startswith("cuda") and not torch.cuda.is_available():
+    raise SystemExit(f"{device=} but CUDA is not available")
+if device == "mps" and not torch.backends.mps.is_available():
+    raise SystemExit(f"{device=} but MPS is not available")
 
 
-def upblock(x):
-    n = x.shape[0]
+def parse_args():
+    parser = argparse.ArgumentParser(description="Check Hadamard candidates from files or stdin.")
+    parser.add_argument("files", nargs="*", help="Input files. Reads stdin if omitted.")
+    parser.add_argument("--num-pictures", type=int, default=1, help="Number of Hadamard hits to export as images.")
+    parser.add_argument("--group-segment-sums", action=argparse.BooleanOptionalAction, default=True,
+                        help="Group segment sums by sorting their absolute values before summarising.")
+    return parser.parse_args()
+
+
+def circulant(rows):
+    n = rows.shape[1]
+    idx = (torch.arange(n).unsqueeze(1) - torch.arange(n).unsqueeze(0)) % n
+    return rows[:, idx]
+
+
+def upblock(batch):
+    b, n = batch.shape
     nn = n // 4
-    _aa, _bb, _cc, _dd = x.reshape(4, -1)
-    A = sl.circulant(_aa)
-    B = sl.circulant(_bb)
-    C = sl.circulant(_cc)
-    D = np.fliplr(sl.circulant(_dd))
-    return np.block([[A, B, C, D],
-                     [-B, A, -D, C],
-                     [-C, D, A, -B],
-                     [-D, -C, B, A]])
+    aa, bb, cc, dd = batch.view(b, 4, nn).unbind(dim=1)
+    a = circulant(aa)
+    b = circulant(bb)
+    c = circulant(cc)
+    d = circulant(dd)
+    df = d.flip(-1)
+    # fd = d.flip(-2)
+    row0 = torch.cat((a, b, c, df), dim=2)
+    row1 = torch.cat((-b, a, -df, c), dim=2)
+    row2 = torch.cat((-c, df, a, -b), dim=2)
+    row3 = torch.cat((-df, -c, b, a), dim=2)
+    return torch.cat((row0, row1, row2, row3), dim=1)
 
-def upblock_mod(x):
-    n = x.shape[0]
+def upblock_mod(vector):
+    n = vector.shape[0]
     nn = n // 4
-    _aa, _bb, _cc, _dd = x.reshape(4, -1)
-    A = sl.circulant(_aa)
-    B = 2*sl.circulant(_bb)
-    C = 3*sl.circulant(_cc)
-    D = 4*np.fliplr(sl.circulant(_dd))
-    return np.block([[A, B, C, D],
-                     [-B, A, -D, C],
-                     [-C, D, A, -B],
-                     [-D, -C, B, A]])
-
-def score(a):
-    n = len(a)
-    m = upblock(a)
-    neye = n * np.eye(n, dtype=np.int64)
-    mm = m.dot(m.T)-neye
-    return np.sum(mm**2)
-    # cst = n/2 * math.log(n)
-    # return cst-nl.slogdet(m)[1]
+    aa, bb, cc, dd = vector.view(4, nn)
+    a = circulant(aa.unsqueeze(0))[0]
+    b = 2 * circulant(bb.unsqueeze(0))[0]
+    c = 3 * circulant(cc.unsqueeze(0))[0]
+    d = 4 * circulant(dd.unsqueeze(0))[0]
+    df = d.flip(-1)
+    row0 = torch.cat((a, b, c, df), dim=1)
+    row1 = torch.cat((-b, a, -df, c), dim=1)
+    row2 = torch.cat((-c, df, a, -b), dim=1)
+    row3 = torch.cat((-df, -c, b, a), dim=1)
+    return torch.cat((row0, row1, row2, row3), dim=0)
 
 
-def convert(s):
-    return np.array([1 if c == "+" else -1 for c in s], dtype=np.int64)
+def score_matrices(matrices):
+    n = matrices.shape[1]
+    matrices = matrices.to(torch.float64)
+    eye = torch.eye(n, dtype=torch.float64, device=matrices.device).unsqueeze(0)
+    diff = matrices @ matrices.transpose(1, 2) - n * eye
+    return diff.square().sum(dim=(1, 2)).to(torch.int64)
 
-img_saved = False
 
-def treat(s):
-    global img_saved
-    if any(c not in "+-" for c in s):
-        print(f"invalid input: only '+' and '-' are allowed: {s!r}", file=sys.stderr)
-        return
-    if len(s) % 4 != 0:
-        print(f"invalid input length (must be divisible by 4): {len(s)}", file=sys.stderr)
-        return
-    a = convert(s)
-    n = len(a)
-    # print(m)
-    s = score(a)
-    print(n, s)
-    if s==0 and not img_saved:
-        m = upblock(a)
-        # Convert ±1 to 0/255
-        img_array = ((m + 1) // 2 * 255).astype(np.uint8)
-        # Create image
-        img = Image.fromarray(img_array, mode='L')  # 'L' = grayscale
-        # Save as PNG
-        img.save(f"hadamard-{n}.png")
-        # Optional: enlarge for visibility (nearest-neighbor)
-        img.resize((2*n, 2*n), Image.NEAREST).save(f"hadamard-{n}-large.png")
-        # now colour version
-        m = upblock_mod(a)
-        color_map = {
-            -1: (0, 0, 0),        # black
-            -2: (0, 0, 0),
-            -3: (0, 0, 0),
-            -4: (0, 0, 0),
-             1: (255, 0, 0),      # red
-             2: (0, 255, 0),      # green
-             3: (0, 0, 255),      # blue
-             4: (255, 255, 0),    # yellow
-        }
-        img_array = np.zeros((n, n, 3), dtype=np.uint8)
-        for val, color in color_map.items():
-            img_array[m == val] = color
-        # Create and save image
-        img = Image.fromarray(img_array, mode="RGB")
-        img.save(f"hadamard-{n}-colour.png")
-        # Optional enlargement (for display)
-        img.resize((2*n, 2*n), Image.NEAREST).save(f"hadamard-{n}-colour-large.png")
-        # final version: randomised
-        rng = np.random.default_rng()
-        rng.shuffle(m, axis=0)
-        rng.shuffle(m, axis=1)
-        x = -1+2*rng.integers(2, size=n)
-        y = -1+2*rng.integers(2, size=n)
-        m = x[:,None] * y[None,:] * m
-        # Convert ±1 to 0/255
-        img_array = ((m + 1) // 2 * 255).astype(np.uint8)
-        # Create image
-        img = Image.fromarray(img_array, mode='L')  # 'L' = grayscale
-        # Save as PNG
-        img.save(f"hadamard-{n}-randomised.png")
-        #
-        img_saved = True  # only do it once
+def convert_lines(lines):
+    values = [[1 if c == "+" else -1 for c in line] for line in lines]
+    return torch.tensor(values, dtype=torch.int64, device=device)
+
+
+def tensor_to_bytes(tensor):
+    return bytes(tensor.to("cpu").contiguous().view(-1).tolist())
+
+
+def save_image(tensor, path, mode):
+    h, w = tensor.shape[:2]
+    Image.frombytes(mode, (w, h), tensor_to_bytes(tensor)).save(path)
+
+
+def save_pictures(vector, matrix):
+    device = matrix.device
+    n = vector.shape[0]
+    gray = ((matrix + 1) // 2 * 255).to(torch.uint8)
+    save_image(gray, f"hadamard-{n}.png", "L")
+    Image.frombytes("L", (n, n), tensor_to_bytes(gray)).resize((2 * n, 2 * n), Image.NEAREST).save(f"hadamard-{n}-large.png")
+    mod_matrix = upblock_mod(vector.to(device))
+    color = torch.zeros((n, n, 3), dtype=torch.uint8, device=device)
+    color[mod_matrix == 1] = torch.tensor((255, 0, 0), dtype=torch.uint8, device=device)
+    color[mod_matrix == 2] = torch.tensor((0, 255, 0), dtype=torch.uint8, device=device)
+    color[mod_matrix == 3] = torch.tensor((0, 0, 255), dtype=torch.uint8, device=device)
+    color[mod_matrix == 4] = torch.tensor((255, 255, 0), dtype=torch.uint8, device=device)
+    save_image(color, f"hadamard-{n}-colour.png", "RGB")
+    Image.frombytes("RGB", (n, n), tensor_to_bytes(color)).resize((2 * n, 2 * n), Image.NEAREST).save(f"hadamard-{n}-colour-large.png")
+    perm_rows = torch.randperm(n, device=device)
+    perm_cols = torch.randperm(n, device=device)
+    signs_x = 2 * torch.randint(0, 2, (n,), dtype=torch.int64, device=device) - 1
+    signs_y = 2 * torch.randint(0, 2, (n,), dtype=torch.int64, device=device) - 1
+    randomised = signs_x[:, None] * signs_y[None, :] * matrix[perm_rows][:, perm_cols]
+    gray_randomised = ((randomised + 1) // 2 * 255).to(torch.uint8)
+    save_image(gray_randomised, f"hadamard-{n}-randomised.png", "L")
+
+
+def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
+    stripped = [line.strip() for line in lines if line.strip()]
+    summary = Counter()
+    groups = {}
+    for line in stripped:
+        if any(c not in "+-" for c in line):
+            print(f"invalid input: only '+' and '-' are allowed: {line!r}", file=sys.stderr)
+            continue
+        if len(line) % 4 != 0:
+            print(f"invalid input length (must be divisible by 4): {len(line)}", file=sys.stderr)
+            continue
+        groups.setdefault(len(line), []).append(line)
+    for n, strings in groups.items():
+        batch = convert_lines(strings)
+        segment_sums = batch.view(batch.shape[0], 4, -1).sum(dim=2)
+        if group_segment_sums:
+            segment_sums = torch.sort(segment_sums.abs(), dim=1).values
+        matrices = upblock(batch)
+        scores = score_matrices(matrices)
+        for j in range(len(strings)):
+            key = f"n={n} segment_sums={tuple(segment_sums[j].tolist())} score={int(scores[j])}"
+            summary[key] += 1
+        if pictures_remaining > 0:
+            hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0].tolist()
+            for j in hadamard_idx[:pictures_remaining]:
+                save_pictures(batch[j], matrices[j])
+            pictures_remaining -= min(pictures_remaining, len(hadamard_idx))
+    print(f"==> {source_name} <==")
+    if summary:
+        for result, count in sorted(summary.items()):
+            print(f"{count:7d} {result}")
+    else:
+        print("(no valid input lines)")
+    return pictures_remaining
+
+
+def process_file(path, pictures_remaining, group_segment_sums):
+    with open(path) as handle:
+        return process_lines(handle, path, pictures_remaining, group_segment_sums)
+
 
 def main():
-    for line in sys.stdin:  # Reads each line from standard input
-        line = line.strip()  # Remove trailing newline and spaces
-        if line:  # Ignore empty lines
-            treat(line)  # Apply function and print result
+    args = parse_args()
+    pictures_remaining = max(args.num_pictures, 0)
+    if args.files:
+        for i, path in enumerate(args.files):
+            if i > 0:
+                print()
+            pictures_remaining = process_file(path, pictures_remaining, args.group_segment_sums)
+        return
+    process_lines(sys.stdin, "stdin", pictures_remaining, args.group_segment_sums)
 
 
 if __name__ == "__main__":

@@ -9,8 +9,6 @@ import math
 import torch
 import torch.nn
 from torch.nn import functional as F
-from torch.utils.data import Dataset
-from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
 from params import na, nn, nn2, nm, device, config, resume_training, rotate
 import logger
@@ -64,12 +62,13 @@ class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-        self.transformer = torch.nn.ModuleDict(dict(
+        modules = dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
-        ))
+        )
+        self.transformer = torch.nn.ModuleDict(modules)
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
@@ -117,8 +116,14 @@ def init_model():
 
 def load_model():
     if model.need_reload:
-        model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
+        load_result = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
         print('resuming from existing model in the workdir')
+        if load_result.missing_keys or load_result.unexpected_keys:
+            print('warning: partial model load')
+            if load_result.missing_keys:
+                print(f'missing keys: {load_result.missing_keys}')
+            if load_result.unexpected_keys:
+                print(f'unexpected keys: {load_result.unexpected_keys}')
         model.need_reload = False
 
 
@@ -168,7 +173,6 @@ def array_to_string(signs):
     signs1 += 1
     signs1 >>= 1
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
-
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -251,9 +255,10 @@ def sample():
     X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
     arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
     for i in range(0, config.sample_size, config.sample_batch_size):
-        j = i + config.sample_batch_size
+        j = min(i + config.sample_batch_size, config.sample_size)
+        cur_batch = X[:j-i]
         print('*', end=''); sys.stdout.flush()
-        generate(X)
-        arrays_cpu[i:j] = string_to_array(X)
+        generate(cur_batch)
+        arrays_cpu[i:j] = string_to_array(cur_batch)
     print('')
     return arrays_cpu
