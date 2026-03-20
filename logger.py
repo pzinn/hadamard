@@ -3,11 +3,13 @@ if __name__ == "__main__":
 
 import params
 from params import config, n
-import math
 import glob
 import re
 import datetime
 import os
+import torch
+
+LOG_2 = torch.log(torch.tensor(2.0)).item()
 
 if params.logging == 'wandb':
     import wandb
@@ -78,7 +80,7 @@ def init_logging():
             with open(params.work_dir + "wandb_run_id.txt", "w") as f:
                 f.write(run.id)
         config.update()  # for sweep
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        norm = 1/(LOG_2*config.stacking)  # renormalise loss so it starts at 1
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
             print(f"{name} {loss=:.6f}", end='\t')
@@ -111,7 +113,7 @@ def init_logging():
             writer.add_scalar("Loss/"+name, norm*loss, step)
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
-        norm = 1/(math.log(2)*config.stacking)  # renormalise loss so it starts at 1
+        norm = 1/(LOG_2*config.stacking)  # renormalise loss so it starts at 1
         def record_scores(prefix, scores, mean_score, gens_tally, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
