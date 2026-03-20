@@ -123,6 +123,8 @@ def compute_derived():
     global fixed_sums, num_ones
     global hparams, is_sweep, sweep_config, config
     global aut, perms, cst
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise SystemExit("n must be an integer; sweeps over n are not supported")
     if n % 4 != 0:
         raise SystemExit("good luck!")
     if n % 8 != 4:
