@@ -1,11 +1,9 @@
-import math
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay
+from params import na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst
 import sys
 
 # precompute roots of unity for fft delta
-cst = 1 / math.sqrt(n)
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
 rng0 = torch.arange(nn, device=device, dtype=real_dtype)
 rng = torch.arange(nn2+1, device=device, dtype=real_dtype)
@@ -68,7 +66,7 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
 
 # greedy random k-bit flip
 p = .5
-invlogp = 1 / math.log(p)
+invlogp = 1 / torch.log(torch.tensor(p)).item()
 @torch.inference_mode()
 def improve_greedy(x, scores):
     print("improve_greedy ", end=''); sys.stdout.flush()

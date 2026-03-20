@@ -4,13 +4,12 @@ if __name__ == "__main__":
 # Transformer model and training utilities.
 import os
 import sys
-import math
 
 import torch
 import torch.nn
 from torch.nn import functional as F
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft
+from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft, cst
 import logger
 
 # Transformer language model.
@@ -173,7 +172,7 @@ if config.transformer_uses_score:
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
             signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn]
-            f = torch.fft.rfft(signs, dim=1) / math.sqrt(4 * nn)
+            f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
 else:
     @torch.inference_mode()
