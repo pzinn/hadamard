@@ -159,7 +159,10 @@ def improve_phases(arrays, scores):
             h[:,1:] *= torch.exp(1j * 2 * torch.pi * torch.rand((M,nn2), device=device))
             x2 = torch.fft.irfft(h,n=nn,dim=1)  # should be a 1/cst but doesn't matter
             x[:, j] = -1
-            x[:, j].masked_fill_(x2 > 0, 1)
+            if fixed_sums:
+                x[:, j].scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
+            else:
+                x[:, j].masked_fill_(x2 > 0, 1)
             new_scores = score(x)  # TODO better?
             improved = new_scores < scores[inds]
             a[inds[improved],j] = x[improved,j]
