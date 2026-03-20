@@ -337,9 +337,6 @@ def batch_improve(arrays0, scores0, gens0):
         arrays, scores, gens = best_from(arrays, scores, gens)
     else:
         B = arrays0.shape[0]
-        arrays = torch.empty((0, na), dtype=torch.int8, device=device)
-        scores = torch.empty((0,), dtype=real_dtype, device=device)
-        gens = torch.empty((0,), dtype=torch.uint8, device=device)
         for i in range(0, B, config.score_batch_size):
             j = i + config.score_batch_size
             new_arrays, new_scores, new_gens = parallel_improve(arrays0[i:j].to(device=device), scores0[i:j].to(device=device), gens0[i:j].to(device=device))

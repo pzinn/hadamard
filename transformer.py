@@ -286,7 +286,7 @@ def train(data, **kwargs):
         # Periodic logging/checkpointing.
         step += 1
         if step % eval_freq == 0:
-            print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
+            print(f"{step=}", end='\t')
             logger.record_loss(total_loss/eval_freq, step, "train")
             total_loss = 0
             save_model()
