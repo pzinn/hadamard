@@ -2,7 +2,6 @@
 # coding: utf-8
 
 import argparse
-from collections import Counter
 import sys
 import torch
 from PIL import Image
@@ -118,7 +117,7 @@ def save_pictures(vector, matrix):
 
 def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
     stripped = [line.strip() for line in lines if line.strip()]
-    summary = Counter()
+    summary = []
     groups = {}
     for line in stripped:
         if any(c not in "+-" for c in line):
@@ -135,9 +134,10 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
             segment_sums = torch.sort(segment_sums.abs(), dim=1).values
         matrices = upblock(batch)
         scores = score_matrices(matrices)
-        for j in range(len(strings)):
-            key = f"n={n} segment_sums={tuple(segment_sums[j].tolist())} score={int(scores[j])}"
-            summary[key] += 1
+        pairs = torch.cat((segment_sums.to(torch.int64), scores.unsqueeze(1)), dim=1)
+        unique_pairs, counts = torch.unique(pairs, dim=0, return_counts=True)
+        for pair, count in zip(unique_pairs.tolist(), counts.tolist()):
+            summary.append((f"n={n} segment_sums={tuple(pair[:4])} score={pair[4]}", count))
         if pictures_remaining > 0:
             hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0].tolist()
             for j in hadamard_idx[:pictures_remaining]:
@@ -145,7 +145,7 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
             pictures_remaining -= min(pictures_remaining, len(hadamard_idx))
     print(f"==> {source_name} <==")
     if summary:
-        for result, count in sorted(summary.items()):
+        for result, count in sorted(summary):
             print(f"{count:7d} {result}")
     else:
         print("(no valid input lines)")
