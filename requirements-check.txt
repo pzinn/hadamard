@@ -1,4 +1,3 @@
-# Extra dependencies for matrix validation/visualisation (`check.py`)
-numpy>=1.24
-scipy>=1.10
+# Extra dependency for matrix validation/visualisation (`check.py`)
+# Install alongside `requirements.txt` because `check.py` also uses torch.
 Pillow>=10.0

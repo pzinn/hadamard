@@ -12,41 +12,39 @@ n = 172  # size of matrix
 
 # training parameters
 sample_size = 1_000_000
-training_size = sample_size//20  # must be > test_set_size
+training_size = sample_size//20
 learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 1  # number of times data get improved per generation. only used by improve2
+training_steps = 150_000  # for gen 0. automatically decreases with gen
+num_improve = 1  # number of times data get improved per generation beyond a quick local search pass
 
 # transformer parameters
 n_layer = 4
 n_embd = 128
-# n_embd2 = 4*n_embd  # default choice
+# n_embd2 = 4*n_embd  # default choice; only include if *not* default choice (can't be in hparams_list because of potential sweep issue)
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
+transformer_uses_score = False
 temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 temperature_delta = .02
 
 
 # less important parameters
 gen_decay = 0.0
-sample_batch_size = 100_000  # for sampling. must be a divisor of sample_size, and < 65536
+sample_batch_size = 100_000  # for sampling
 score_batch_size = None  # for scoring/improving. None means no batching
-test_set_size = None  # None | < training_size, no more than 10% ideally
-num_workers = None  # for cpu parallelisation
 
-resume = False  # whether to resume a previous run
-# resume = True
+resume = False  # True | False, whether to resume a previous run
 # if True, obviously, Hadamard parameters must be the same
 # as well as transformer parameters (including stacking) unless resume_training = False
 # training parameters can be different though
 # also, for now resume is not compatible with sweep
 if resume:
-    pass
     # provide work_dir manually, default is latest
     # provide gen, default is latest
+    pass
 
 skip_first_training = False  # only meaningful if resume: start by sampling from existing model rather than training. leave False if unsure
 skip_first_improve = resume  # leave as is unless you know what you're doing
@@ -56,12 +54,19 @@ test_score = False  # for debugging purposes, test whether randomisation of arra
 
 
 import time
-random_seed = int(time.time())  # 1746533706
-
-device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+random_seed = int(time.time())
 
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
+
+eps = 2e-5  # score accuracy. scores are heavily discretised so can be made fairly large
+
+device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+# anything below this line shouldn't be changed
+if device.startswith('cuda') and not torch.cuda.is_available():
+    raise SystemExit(f"{device=} but CUDA is not available")
+if device == 'mps' and not torch.backends.mps.is_available():
+    raise SystemExit(f"{device=} but MPS is not available")
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -87,7 +92,7 @@ except FileNotFoundError:
 if 'segment_sums' not in globals():
     segment_sums = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'test_set_size', 'gen_decay', 'temperature', 'temperature_delta']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'transformer_uses_score', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta']
 
 import ast
 # hparams can be updated in command line
@@ -118,6 +123,8 @@ def compute_derived():
     global fixed_sums, num_ones
     global hparams, is_sweep, sweep_config, config
     global aut, perms, cst
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise SystemExit("n must be an integer; sweeps over n are not supported")
     if n % 4 != 0:
         raise SystemExit("good luck!")
     if n % 8 != 4:
@@ -171,10 +178,7 @@ def init_from_argv(argv=None):
     # special cases: coupled default values
     if getattr(args, "sample_size") and not getattr(args, "training_size"):
         training_size = sample_size//20
-    #if getattr(args, "n_embd") and not getattr(args, "n_embd2"):  # done in logger.py now to avoid sweep issue
-    #    n_embd2 = 4*n_embd
     compute_derived()
-
 
 # symmetries
 from itertools import permutations
@@ -207,9 +211,6 @@ def rotate(array0):
         array *= signs.unsqueeze(-1)
     return array
 
-# obsolete: only one scoring function implemented
-# score_function = 'fft log determinant'
-
 real_dtype = torch.float32
 complex_dtype = torch.complex64
 
@@ -224,4 +225,3 @@ def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
 def score(m):
     return score_fft(fft(m))
 
-eps = 2e-5  # scores are heavily discretised so can be made large

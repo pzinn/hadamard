@@ -4,15 +4,12 @@ if __name__ == "__main__":
 # Transformer model and training utilities.
 import os
 import sys
-import math
 
 import torch
 import torch.nn
 from torch.nn import functional as F
-from torch.utils.data import Dataset
-from torch.utils.data.dataloader import DataLoader
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, rotate
+from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft, cst
 import logger
 
 # Transformer language model.
@@ -64,12 +61,16 @@ class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-        self.transformer = torch.nn.ModuleDict(dict(
+        modules = dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
-        ))
+        )
+        self.uses_score = config.transformer_uses_score
+        if self.uses_score:
+            modules["wse"] = torch.nn.Embedding(nn2 + 1, config.n_embd)
+        self.transformer = torch.nn.ModuleDict(modules)
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
@@ -78,7 +79,26 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, compute_loss=False):
+    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+        if self.uses_score:
+            if score_batch is None:
+                raise RuntimeError("score_batch is required when transformer_uses_score=True")
+            b = batch0.shape[0]
+            m = batch0.shape[1]
+            batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
+            t = batch.shape[2] + 1
+            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(m, t, config.n_embd)
+            tok_emb = self.transformer.wte(batch)
+            x = pos_emb.repeat(b, 1, 1, 1)
+            x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
+            x[:, :, 1:, :] += tok_emb
+            xx = x.view(b * m, t, config.n_embd)
+            for block in self.transformer.h:
+                xx = block(xx)
+            xx = self.transformer.ln_f(xx)
+            logits = self.lm_head(xx)
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
+            return logits, loss
         b = batch0.shape[0]
         # During training, predict the next token for each position.
         batch = batch0[:, :self.block_size-1]
@@ -101,13 +121,12 @@ def init_model():
     global bit_positions
     global bit_positions_cpu
     global nn_pad
+    global segment_string_length
     model = Transformer(config).to(device)
     model.need_reload = True
     if device.startswith('cuda'):
-        try:
-            model = torch.compile(model)
-        except RuntimeError as e:
-            print(f"torch.compile disabled: {e}")
+        torch._dynamo.config.suppress_errors = True
+        model = torch.compile(model, dynamic=True)
     model_path = os.path.join(params.work_dir, "model.pt")
     # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
@@ -117,8 +136,14 @@ def init_model():
 
 def load_model():
     if model.need_reload:
-        model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
+        load_result = model.load_state_dict(torch.load(model_path, weights_only=True), strict=False)
         print('resuming from existing model in the workdir')
+        if load_result.missing_keys or load_result.unexpected_keys:
+            print('warning: partial model load')
+            if load_result.missing_keys:
+                print(f'missing keys: {load_result.missing_keys}')
+            if load_result.unexpected_keys:
+                print(f'unexpected keys: {load_result.unexpected_keys}')
         model.need_reload = False
 
 
@@ -128,29 +153,42 @@ def save_model():
 
 
 # Sampling/evaluation helpers.
-@torch.inference_mode()
-def generate(batch):
-    """
-    Fill token positions autoregressively in-place for a batch of sequences.
-    """
-    block_size = model.get_block_size()
-    for i in range(block_size):
-        batch_cond = batch[:, :i]
-        logits, _ = model(batch_cond)
-        # Use temperature-scaled logits at the final position.
-        temperature = config.temperature + params.gen * config.temperature_delta
-        logits = logits[:, -1, :] / temperature
-        probs = F.softmax(logits, dim=-1)
-        batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
-
-@torch.inference_mode()
-def evaluate(sample):
-    model.eval()
-    batch = sample.to(device)
-    logits, loss = model(batch, compute_loss=True)
-    mean_loss = loss.mean().item()
-    model.train()  # Restore training mode.
-    return mean_loss
+if config.transformer_uses_score:
+    @torch.inference_mode()
+    def generate(batch):
+        """
+        Fill token positions autoregressively in-place for a batch of sequences.
+        """
+        B = batch.shape[0]
+        ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+        for j in range(nm):
+            offset = j * segment_string_length
+            for i in range(segment_string_length):
+                batch_cond = batch[:, offset:offset+i].view(B, 1, i)
+                logits, _ = model(batch_cond, score_batch=ff, offset=offset)
+                # Use temperature-scaled logits at the final position.
+                temperature = config.temperature + params.gen * config.temperature_delta
+                logits = logits[:, -1, :] / temperature
+                probs = F.softmax(logits, dim=-1)
+                batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
+            signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn]
+            f = cst * torch.fft.rfft(signs, dim=1)
+            ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
+else:
+    @torch.inference_mode()
+    def generate(batch):
+        """
+        Fill token positions autoregressively in-place for a batch of sequences.
+        """
+        block_size = model.get_block_size()
+        for i in range(block_size):
+            batch_cond = batch[:, :i]
+            logits, _ = model(batch_cond)
+            # Use temperature-scaled logits at the final position.
+            temperature = config.temperature + params.gen * config.temperature_delta
+            logits = logits[:, -1, :] / temperature
+            probs = F.softmax(logits, dim=-1)
+            batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
 
 # Conversion between token strings and +/-1 arrays.
 @torch.no_grad()
@@ -167,8 +205,22 @@ def array_to_string(signs):
     # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
+    if config.transformer_uses_score:
+        return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
+if config.transformer_uses_score:
+    @torch.no_grad()
+    def prepare_training_inputs(batch):
+        string_batch = array_to_string(batch)
+        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1)
+        for i in range(1, nm):
+            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+        return string_batch, {"score_batch": ff, "compute_loss": True}
+else:
+    @torch.no_grad()
+    def prepare_training_inputs(batch):
+        return array_to_string(batch), {"compute_loss": True}
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -216,8 +268,9 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # Sample a batch, apply random symmetry, and train.
-        batch = array_to_string(rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True)))
-        logits, loss = model(batch, compute_loss=True)
+        batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
+        model_input, model_kwargs = prepare_training_inputs(batch)
+        logits, loss = model(model_input, **model_kwargs)
         total_loss += loss
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
@@ -230,7 +283,7 @@ def train(data, **kwargs):
         # Periodic logging/checkpointing.
         step += 1
         if step % eval_freq == 0:
-            print(f"{step=} ({step*batch_size/data_len:.1f} epochs)", end='\t')
+            print(f"{step=}", end='\t')
             logger.record_loss(total_loss/eval_freq, step, "train")
             total_loss = 0
             save_model()
@@ -251,9 +304,10 @@ def sample():
     X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
     arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
     for i in range(0, config.sample_size, config.sample_batch_size):
-        j = i + config.sample_batch_size
+        j = min(i + config.sample_batch_size, config.sample_size)
+        cur_batch = X[:j-i]
         print('*', end=''); sys.stdout.flush()
-        generate(X)
-        arrays_cpu[i:j] = string_to_array(X)
+        generate(cur_batch)
+        arrays_cpu[i:j] = string_to_array(cur_batch)
     print('')
     return arrays_cpu
