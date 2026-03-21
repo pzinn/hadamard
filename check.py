@@ -22,6 +22,17 @@ def parse_args():
     return parser.parse_args()
 
 
+def mir(a):
+    return torch.cat((torch.ones_like(a[..., :1]), a, torch.flip(a, (-1,))), dim=-1)
+def unfold(m):
+    na = m.shape[-1]
+    nn = (2*na+3)//5
+    nn2 = (nn-1) // 2
+    return torch.cat((mir(m[...,:nn2]),
+                      mir(m[...,nn2:2*nn2]),
+                      mir(m[...,2*nn2:3*nn2]),
+                      m[...,3*nn2:]),dim=-1)
+
 def circulant(rows):
     n = rows.shape[1]
     idx = (torch.arange(n).unsqueeze(1) - torch.arange(n).unsqueeze(0)) % n
@@ -70,7 +81,7 @@ def score_matrices(matrices):
 
 def convert_lines(lines):
     values = [[1 if c == "+" else -1 for c in line] for line in lines]
-    return torch.tensor(values, dtype=torch.int64, device=device)
+    return unfold(torch.tensor(values, dtype=torch.int64, device=device))
 
 
 def tensor_to_bytes(tensor):
@@ -113,12 +124,15 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
         if any(c not in "+-" for c in line):
             print(f"invalid input: only '+' and '-' are allowed: {line!r}", file=sys.stderr)
             continue
+        """
         if len(line) % 4 != 0:
             print(f"invalid input length (must be divisible by 4): {len(line)}", file=sys.stderr)
             continue
+        """
         groups.setdefault(len(line), []).append(line)
-    for n, strings in groups.items():
+    for na, strings in groups.items():
         batch = convert_lines(strings)
+        n = batch.shape[1]
         segment_sums = batch.view(batch.shape[0], 4, -1).sum(dim=2)
         if group_segment_sums:
             segment_sums = torch.sort(segment_sums.abs(), dim=1).values
