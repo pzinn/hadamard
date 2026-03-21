@@ -12,13 +12,13 @@ n = 172  # size of matrix
 
 # training parameters
 sample_size = 1_000_000
-training_size = sample_size//20  # must be > test_set_size
+training_size = sample_size//20
 learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 150_000  # will be adjusted dynamically (to be less than that)
-num_improve = 1  # number of times data get improved per generation. only used by improve2
+training_steps = 150_000  # for gen 0. automatically decreases with gen
+num_improve = 1  # number of times data get improved per generation beyond a quick local search pass
 
 # transformer parameters
 n_layer = 4
@@ -58,7 +58,10 @@ random_seed = int(time.time())
 logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
+eps = 2e-5  # score accuracy. scores are heavily discretised so can be made fairly large
+
 device = 'cuda'  # device to use for compute, examples: cpu|cuda|cuda:2|mps
+# anything below this line shouldn't be changed
 if device.startswith('cuda') and not torch.cuda.is_available():
     raise SystemExit(f"{device=} but CUDA is not available")
 if device == 'mps' and not torch.backends.mps.is_available():
@@ -119,6 +122,8 @@ def compute_derived():
     global fixed_sums, num_ones
     global hparams, is_sweep, sweep_config, config
     global aut, perms, cst
+    if not isinstance(n, int) or isinstance(n, bool):
+        raise SystemExit("n must be an integer; sweeps over n are not supported")
     if n % 4 != 0:
         raise SystemExit("good luck!")
     if n % 8 != 4:
@@ -230,4 +235,3 @@ def score_fft(f):  # score in terms of precomputed fft
 def score(m):
     return score_fft(fft(m))
 
-eps = 2e-5  # scores are heavily discretised so can be made large

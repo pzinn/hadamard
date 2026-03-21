@@ -4,7 +4,6 @@ if __name__ == "__main__":
 # Transformer model and training utilities.
 import os
 import sys
-import math
 
 import torch
 import torch.nn

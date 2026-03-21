@@ -1,5 +1,4 @@
 import torch
-import math
 from params import na, nm, nn, score, device, fixed_sums, config, eps
 
 # parallel tempering
@@ -72,7 +71,7 @@ def attempt_swaps(x, scores, gens):
 swap_interval = 50
 iterations = na * swap_interval * config.num_improve
 p = .25
-invlogp = 1 / math.log(p)
+invlogp = 1 / torch.log(torch.tensor(p)).item()
 def parallel_tempering(x, scores, gens):
     global logT, T
     B = x.shape[0]
