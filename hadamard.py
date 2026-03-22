@@ -15,20 +15,21 @@ import sys
 from timeit import default_timer as timer  # to measure exec time
 
 if fixed_sums:
-    def generate_random_blocks(B, n, k, device):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
-        a = -torch.ones((B, n), dtype=torch.int8, device=device)
-        rand = torch.rand((B, n), device=device)
+    @torch.inference_mode()
+    def generate_random_blocks(B, n, k):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
+        a = -torch.ones((B, n), dtype=torch.int8)
+        rand = torch.rand((B, n))
         topk = rand.argsort(dim=1)[:, :k]        # (B, k) random unique positions per row
-        rows = torch.arange(B, device=device).unsqueeze(1)
+        rows = torch.arange(B).unsqueeze(1)
         a[rows, topk] = 1
         return a
     @torch.inference_mode()
-    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(nm)], dim=1)
+    def generate_random_arrays(batch_size):  # used to be done on gpu during first scoring, maybe reinstate at some point?
+        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j]) for j in range(nm)], dim=1)
 else:
     @torch.inference_mode()
-    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-        return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
+    def generate_random_arrays(batch_size):  # used to be done on gpu during first scoring, maybe reinstate at some point?
+        return 2 * torch.randint(2, (batch_size, na), dtype=torch.int8) - 1
 
 # MAIN-DEFINITIONS #
 
@@ -115,33 +116,19 @@ def record_stats(arrays, scores, gens, prefix=""):
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
-# but useful for logging/stats. also generates random data at gen 0
-def parallel_score(arrays):
-    scores = score(arrays)  # Compute scores in parallel
-    return scores.cpu()  # move back to cpu
-
-def batch_generator(arrays):
-    B = arrays.shape[0]
-    for i in range(0, B, config.score_batch_size):
-        j = i + config.score_batch_size
-        yield arrays[i:j].to(device=device)
-
-def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
+# but useful for logging/stats.
+def batch_score(arrays):  # score but in batches of score_batch_size, and move back and forth to cpu
     torch.set_float32_matmul_precision('highest')
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     if config.score_batch_size is None:
-        if arrays is None:
-            arrays_gpu = generate_random_arrays(config.sample_size, device)
-            arrays = arrays_gpu.to(device='cpu', dtype=torch.int8)
-        else:
-            arrays_gpu = arrays.to(device=device)
-        return arrays, parallel_score(arrays_gpu)
-    if arrays is None:
-        arrays = generate_random_arrays(config.sample_size, 'cpu')  # lame? reinstate old way?
-    score_parts = [parallel_score(batch) for batch in batch_generator(arrays)]
-    scores = torch.cat(score_parts, dim=0)
-    return arrays, scores
+        return score(arrays.to(device=device)).cpu()
+    B = arrays.shape[0]
+    scores = torch.empty(B, dtype=real_dtype)
+    for i in range(0, B, config.score_batch_size):
+        j = i + config.score_batch_size
+        scores[i:j] = score(arrays[i:j].to(device=device))
+    return scores
 
 def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
     a = arrays.view(-1, nm, nn)
@@ -378,9 +365,10 @@ def main():
         except FileNotFoundError:
             arrays = torch.empty((0, na), dtype=torch.int8)
     else:
-        arrays = None
+        arrays = generate_random_arrays(config.sample_size)
 
-    arrays, scores = batch_score(arrays)
+
+    scores = batch_score(arrays)
     gens = torch.full(scores.shape, params.gen, dtype=torch.uint8)
     record_stats(arrays, scores, gens, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
@@ -425,7 +413,7 @@ def main():
         params.gen += 1
         start_timer = timer()
         new_arrays = transformer.sample()
-        new_arrays, new_scores = batch_score(new_arrays)
+        new_scores = batch_score(new_arrays)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
         # combine, but mix
