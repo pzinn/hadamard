@@ -96,7 +96,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Hadamard gen tally: {hada_tally}")
 
     if len(hada_inds) > 0:
-        new_hada_tensor = find_aut(arrays[hada_inds].to(device=device))
+        new_hada_tensor = find_aut_exact(arrays[hada_inds].to(device=device))
         derotate(new_hada_tensor)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor, new_hada_tensor.cpu()), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
@@ -213,13 +213,39 @@ def apply_aut(idx, arrays0):
     return arrays
 
 @torch.inference_mode()
-def find_aut(arrays):
+def find_aut_heuristic(arrays):
     f = fft(arrays)
     f = f.abs().sum(dim=1)  # (B,nn2+1)
     idx = f[:, aut1].argmax(dim=1)   # (B,) over nn2+1 options
     # now apply aut
     arrays1 = apply_aut(idx, arrays)
     return arrays1
+
+@torch.inference_mode()
+def find_aut_exact(arrays):
+    B = arrays.shape[0]
+    best = None
+    for i in range(len(aut1)):
+        idx = torch.full((B,), i, device=device, dtype=torch.long)
+        candidate = apply_aut(idx, arrays)
+        derotate(candidate)
+        if best is None:
+            best = candidate
+            continue
+        undecided = torch.ones(B, device=device, dtype=torch.bool)
+        better = torch.zeros(B, device=device, dtype=torch.bool)
+        for k in range(na):
+            rows = torch.nonzero(undecided, as_tuple=True)[0]
+            if rows.numel() == 0:
+                break
+            cand_k = candidate[rows, k]
+            best_k = best[rows, k]
+            gt = cand_k > best_k
+            lt = cand_k < best_k
+            better[rows[gt]] = True
+            undecided[rows[gt | lt]] = False
+        best[better] = candidate[better]
+    return best
 
 @torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
@@ -293,7 +319,7 @@ def parallel_improve(arrays, scores, gens):
         #
     # step E: rotate the arrays to a standard form
     start_timer = timer()
-    arrays = find_aut(arrays)
+    arrays = find_aut_heuristic(arrays)
     derotate(arrays, scores)
     if debugging:
         print(f"derotate time: {timer() - start_timer}")
