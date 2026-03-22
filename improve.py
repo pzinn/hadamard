@@ -222,12 +222,10 @@ def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
     # now try every combo
     inds = inds.view(B, nm*ksw)
     base = torch.arange(B, device=device)
-    #print(inds,x,scores)
     cur = torch.gather(x, 1, inds)
     for i in range(sw.shape[0]):
         x[base.unsqueeze(1), inds] = sw[i]
-        new_scores = score(x)  # TODO use fft
-        #print(x,new_scores)
+        new_scores = score(x)
         improved = new_scores < scores
         scores[improved] = new_scores[improved]
         cur[improved] = sw[i]

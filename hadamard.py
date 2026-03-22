@@ -4,7 +4,7 @@
 import torch
 import params
 params.init_from_argv()
-from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
+from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
@@ -172,17 +172,23 @@ def derotate(arrays, scores=None):
         # negate if the chosen scalar product is > 0
         chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
         a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    if not fixed_sums:  # TODO even w/ fixed sums, there can be a partial permutation symmetry
+    if fixed_sums:
+        candidates = a[:, perms, :].reshape(B, len(perms), na)
+        perm_order = torch.arange(len(perms), device=device).expand(B, len(perms)).clone()
+        for k in range(na - 1, -1, -1):
+            key_in_order = candidates[:, :, k].gather(1, perm_order)
+            ordk = torch.argsort(key_in_order, dim=1, stable=True)
+            perm_order = perm_order.gather(1, ordk)
+        best = candidates[torch.arange(B, device=device), perm_order[:, 0]].view(B, nm, nn)
+        a.copy_(best)
+    else:
         # 2nd phase: permute the nmxnn parts
-        # start with identity permutation for each batch
         perm = torch.arange(nm, device=device).expand(B, nm).clone()
-        # stable sort by last key first, then previous..., up to first column
         for k in range(nn):
-            key = a[:, :, k]                 # (B, m)
+            key = a[:, :, k]
             key_in_curr_order = key.gather(1, perm)
             ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
             perm = perm.gather(1, ordk)
-        # apply permutation to rows
         sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
         a.copy_(sorted_a)
     if params.test_score:
