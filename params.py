@@ -217,8 +217,9 @@ complex_dtype = torch.complex64
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 def approx(u):  # approximation of 2*(-log(1+u)+u)
-    # return 2 * (u - torch.log1p(u))  # exact answer
-    return u.square()*(0.753145+0.27216*u)/(1+0.948746*u)
+    return 2 * (u - torch.log1p(u))  # exact answer
+    # return u.square()*(0.753145+0.27216*u)/(1+0.948746*u)  # [-1,2] min
+    # return u.square()*(0.970833+0.12142*u)/(1+0.825207*u)    # [-.9,2] min
 @torch.inference_mode()
 def score_fft_int(ff,cf=1):
     s = approx(ff-1)
