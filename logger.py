@@ -14,7 +14,7 @@ LOG_2 = torch.log(torch.tensor(2.0)).item()
 if params.logging == 'wandb':
     import wandb
     wandb_entity = os.getenv("WANDB_ENTITY", "aiformath")
-    wandb_project = os.getenv("WANDB_PROJECT", "topsekrit")
+    wandb_project = os.getenv("WANDB_PROJECT", "hadamard")
 
 
 # helper function
