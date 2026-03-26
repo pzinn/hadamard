@@ -11,39 +11,31 @@ T = .1 ** logT
 @torch.inference_mode()
 def improve_T(x, scores, k):  # random k-bit flip at finite T.
     BperT = x.shape[1]
-    flip_inds = torch.rand((nT, BperT, na), device=device).topk(k, dim=2).indices
-    # propose flips
-    flip_vals = x.gather(2, flip_inds)
-    x.scatter_(2, flip_inds, -flip_vals)
+    flip_inds = torch.randint(na, (nT, BperT, k), device=device)
+    flip_mask = torch.zeros((nT, BperT, na), device=device, dtype=torch.bool)
+    flip_mask.scatter_(2, flip_inds, True)
+    x[flip_mask] *= -1
     scores_prop = score(x).view(nT, BperT)
-    # Metropolis acceptance
     dE = scores_prop - scores
-    #accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    #accept = (scores > eps) & ((dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None]))  # remove first test?
-    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # slower but simpler
-    # broadcast the mask to k bits and gather flips to revert
-    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
-    # reflip only rejected ones
-    x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
+    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:, None])
+    reject_mask = flip_mask & (~accept).unsqueeze(2)
+    x[reject_mask] *= -1
     scores[accept] = scores_prop[accept]
 
 @torch.inference_mode()
 def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     BperT = x.shape[1]
     j = torch.randint(nm, (), device=device)
-    flip_inds = j*nn + torch.rand((nT, BperT, nn), device=device).topk(k, dim=2).indices
-    # propose flips
+    base_inds = torch.rand(nn, device=device).topk(k).indices.view(1, 1, k)
+    shifts = torch.randint(nn, (nT, BperT, 1), device=device)
+    flip_inds = j * nn + (base_inds + shifts) % nn
     flip_vals = x.gather(2, flip_inds)
     flip_vals_rot = torch.roll(flip_vals, shifts=1, dims=2)
     x.scatter_(2, flip_inds, flip_vals_rot)
     scores_prop = score(x).view(nT, BperT)
-    # Metropolis acceptance
     dE = scores_prop - scores
-    # accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # remove first test?
-    # broadcast the mask to k bits and gather flips to revert
-    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
-    # reflip only rejected ones
+    accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:, None])
+    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, flip_vals_rot))
     scores[accept] = scores_prop[accept]
 
@@ -69,13 +61,14 @@ def attempt_swaps(x, scores, gens):
     return accepted
 
 swap_interval = 50
-iterations = na * swap_interval * config.num_improve
 p = .25
 invlogp = 1 / torch.log(torch.tensor(p)).item()
 def parallel_tempering(x, scores, gens):
     global logT, T
+    iterations = na * swap_interval * config.num_improve
     B = x.shape[0]
-    BperT = B // nT  # should divide please
+    assert B % nT == 0, f"parallel_tempering requires batch size divisible by {nT}, got {B}"
+    BperT = B // nT
     if BperT == 0:
         return
     x = x.view(nT, BperT, na)
