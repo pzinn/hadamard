@@ -84,14 +84,9 @@ def init_logging():
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, mean_score, gens_tally, nh):
-            table = wandb.Table(columns=["gen", "count"])
-            for g, c in gens_tally.items():
-                table.add_data(g, c)
-            finite_scores = scores[torch.isfinite(scores)]
-            log_data = {"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh, "table/gens/"+prefix: table}
-            if len(finite_scores) > 0:
-                log_data["histogram/scores/"+prefix] = wandb.Histogram(finite_scores)
+        def record_scores(prefix, scores, mean_score, nh):
+            log_data = {"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
+                        "histogram/scores/"+prefix: wandb.Histogram(scores)}
             wandb.log(log_data)
 
     # header of stats file
@@ -114,7 +109,7 @@ def init_logging():
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
         norm = 1/(LOG_2*config.stacking)  # renormalise loss so it starts at 1
-        def record_scores(prefix, scores, mean_score, gens_tally, nh):
+        def record_scores(prefix, scores, mean_score, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
             writer.add_scalar("Zero_score/"+prefix, nh, params.gen)
             writer.flush()
@@ -122,7 +117,7 @@ def init_logging():
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
             print(f"{name} {loss=:.6f}", end='\t')
-        def record_scores(prefix, scores, mean_score, gens_tally, nh):
+        def record_scores(prefix, scores, mean_score, nh):
             pass
 
 
