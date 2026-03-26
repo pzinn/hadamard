@@ -60,13 +60,6 @@ def record_stats(arrays, scores, gens, prefix=""):
     s = s.item()
     print(f"Correlation: {s}")
 
-    if fixed_sums:
-        # check #1's
-        a = arrays.view(B, nm, nn)
-        k = (a.sum(dim=2).to(device=device)+nn)//2
-        kcheck = (k == num_ones).all(dim=1)
-        print(f"Correct # ones: {kcheck.sum()/B}")
-
     # now scores
     min_score = torch.min(scores)
     print(f"Min score: {min_score}")
@@ -80,22 +73,30 @@ def record_stats(arrays, scores, gens, prefix=""):
     max_score = torch.max(scores)
     print(f"Max score: {max_score}")
 
-    # tally=Counter([val[1] for val in vals])
-    gens_count = torch.bincount(gens)
-    gens_count, gens_order = gens_count.sort(descending=True)
-    gens_tally = {g: c for g, c in zip(gens_order.tolist(), gens_count.tolist()) if c > 0}
+    def tally_str(data):
+        fmt = (lambda x:x.item()) if data.ndim == 1 else (lambda x:tuple(x.tolist()))
+        unique_data, counts = torch.unique(data, dim=0, return_counts=True)
+        idx = torch.argsort(counts, descending=True)
+        return "{" + ", ".join(f"{fmt(unique_data[i])}: {counts[i].item():_}" for i in idx) + "}"
+
+    gens_tally = tally_str(gens)
     print(f"Gen tally: {gens_tally}")
 
     hada_inds = torch.nonzero(scores < eps, as_tuple=True)[0]
     nh = len(hada_inds) / len(arrays)
     print(f"Hadamard ratio: {nh}")
 
-    hada_count = torch.bincount(gens[hada_inds])
-    hada_count, hada_order = hada_count.sort(descending=True)
-    hada_tally = {g: c for g, c in zip(hada_order.tolist(), hada_count.tolist()) if c > 0}
-    print(f"Hadamard gen tally: {hada_tally}")
+    segment_sums = arrays.view(B, nm, nn).sum(dim=2)
+    segment_sums = torch.sort(segment_sums.abs(), dim=1).values
+    ss_tally = tally_str(segment_sums)
+    print(f"Segment sums tally: {ss_tally}")
+
+    hada_gens_tally = tally_str(gens[hada_inds])
+    hada_ss_tally = tally_str(segment_sums[hada_inds])
 
     if len(hada_inds) > 0:
+        print(f"Hadamard gen tally: {hada_gens_tally}")
+        print(f"Hadamard segment sums tally: {hada_ss_tally}")
         new_hada_tensor = find_aut_exact(arrays[hada_inds].to(device=device))
         derotate(new_hada_tensor)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor, new_hada_tensor.cpu()), dim=0), dim=0)
@@ -107,11 +108,11 @@ def record_stats(arrays, scores, gens, prefix=""):
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
-            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
+            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} gens, H-gens, H-segment sums tallies\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_gens_tally} {hada_ss_tally}\n")
 
     if prefix and not prefix.startswith("debug"):
-        logger.record_scores(prefix, scores, avg_score, gens_tally, nh)
+        logger.record_scores(prefix, scores, avg_score, nh)
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
