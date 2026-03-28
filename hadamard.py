@@ -5,7 +5,7 @@ import torch
 import math
 import params
 params.init_from_argv()
-from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, aut_inds1, aut_inds3, real_dtype, eps, unfold
+from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, aut_inds1, aut_inds3, real_dtype, eps, unfold
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
@@ -346,11 +346,12 @@ def main():
     transformer.init_model()
 
     # torch functions
-    torch.manual_seed(random_seed)
+    seed = int(config.random_seed)
+    torch.manual_seed(seed)
     if device.startswith('cuda'):
         torch.cuda.set_device(0)  # Use GPU 0
         torch.cuda.empty_cache()  # Free memory before large computation
-        torch.cuda.manual_seed_all(random_seed)
+        torch.cuda.manual_seed_all(seed)
 
     # STEP 0
 
