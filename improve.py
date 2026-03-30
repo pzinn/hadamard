@@ -20,34 +20,22 @@ def improve_local(arrays, scores):  # combined optimised 1-bit flip / opportunis
     print("improve_local", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
-    scores1 = torch.empty((B, na), device=device, dtype=real_dtype)
     while True:
         M = active_rows.numel()
         if verbose:
-            print(f'{M/B}')
-        cur_rows = active_rows
-        while True:
-            f = fft(arrays[cur_rows])  # better than flip updating for accuracy
-            fl = f.view(-1, nm*(nn2+1))
-            fmod = torch.empty_like(f)
-            flmod = fmod.view(-1, nm*(nn2+1))
-            for j in range(na):
-                torch.mul(arrays[cur_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
-                flmod.add_(fl)
-                scores1[cur_rows, j] = score_fft(fmod)
-            mask = (scores1[cur_rows] < scores[cur_rows].unsqueeze(1)).any(dim=1)
-            if not mask.any():
-                break
-            # easy ones: 1-bit flip.
-            cur_rows = cur_rows[mask]
-            min_scores, inds = scores1[cur_rows].min(dim=1)
-            scores[cur_rows] = min_scores
-            arrays[cur_rows, inds] *= -1
-        # hard ones: brute force k best candidates
-        _, indsk = torch.topk(scores1[active_rows], k, dim=1, sorted=False, largest=False)
-        cur = torch.gather(arrays[active_rows], 1, indsk)
-        f = fft(arrays[active_rows])
+            print(f'active ratio {M/B}')
+        scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
+        f = fft(arrays[active_rows])  # better than flip updating for accuracy
         fl = f.view(M, nm*(nn2+1))
+        fmod = torch.empty_like(f)
+        flmod = fmod.view(-1, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(arrays[active_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            scores1[:, j] = score_fft(fmod)
+        # k best flip candidates
+        _, indsk = torch.topk(scores1, k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(arrays[active_rows], 1, indsk)
         mask = torch.zeros((M,), device=device, dtype=torch.bool)
         for j in gray_code:
             inds = indsk[:, j]  # actual index for each sample
@@ -59,7 +47,6 @@ def improve_local(arrays, scores):  # combined optimised 1-bit flip / opportunis
                 mask[improved] = True  # these will get saved for next round
                 improved_rows = active_rows[improved]
                 scores[improved_rows] = new_scores[improved]
-                # arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
                 arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved]), cur[improved])
         if not mask.any():
             break
