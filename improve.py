@@ -16,37 +16,25 @@ for i in range(nm):
 k = min(11,na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
-def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+def improve1p(arrays, scores):  # optimised k-bit flip
     print(f"improve1p ", end=''); sys.stdout.flush()
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
-    scores1 = torch.empty((B, na), device=device, dtype=real_dtype)
     while True:
         M = active_rows.numel()
         print(f'{M/B}')
-        cur_rows = active_rows
-        while True:
-            f = fft(arrays[cur_rows])  # better than flip updating for accuracy
-            fl = f.view(-1, nm*(nn2+1))
-            fmod = torch.empty_like(f)
-            flmod = fmod.view(-1, nm*(nn2+1))
-            for j in range(na):
-                torch.mul(arrays[cur_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
-                flmod.add_(fl)
-                scores1[cur_rows, j] = score_fft(fmod)
-            mask = (scores1[cur_rows] < scores[cur_rows].unsqueeze(1)).any(dim=1)
-            if not mask.any():
-                break
-            # easy ones: 1-bit flip.
-            cur_rows = cur_rows[mask]
-            min_scores, inds = scores1[cur_rows].min(dim=1)
-            scores[cur_rows] = min_scores
-            arrays[cur_rows, inds] *= -1
-        # hard ones: brute force k best candidates
-        _, indsk = torch.topk(scores1[active_rows], k, dim=1, sorted=False, largest=False)
-        cur = torch.gather(arrays[active_rows], 1, indsk)
-        f = fft(arrays[active_rows])
+        scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
+        f = fft(arrays[active_rows])  # better than flip updating for accuracy
         fl = f.view(M, nm*(nn2+1))
+        fmod = torch.empty_like(f)
+        flmod = fmod.view(-1, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(arrays[active_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            scores1[:, j] = score_fft(fmod)
+        # k best flip candidates
+        _, indsk = torch.topk(scores1, k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(arrays[active_rows], 1, indsk)
         mask = torch.zeros((M,), device=device, dtype=torch.bool)
         for j in gray_code:
             inds = indsk[:, j]  # actual index for each sample
