@@ -13,7 +13,7 @@ wrng_all = torch.zeros((na, nm*(nn2+1)), device=device, dtype=complex_dtype)
 for i in range(nm):
     wrng_all[i*nn:(i+1)*nn, i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
-k = min(11,na)
+k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # optimised k-bit flip
@@ -46,7 +46,7 @@ def improve1p(arrays, scores):  # optimised k-bit flip
                 mask[improved] = True  # these will get saved for next round
                 improved_rows = active_rows[improved]
                 scores[improved_rows] = new_scores[improved]
-                #arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+                # arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
                 arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved]), cur[improved])
         if not mask.any():
             break

@@ -108,7 +108,7 @@ class ModelConfig:
         if isinstance(self.stacking, int):
             self.block_size = nm * ((nn-1)//self.stacking+1)  # n//stacking  only works if stacking | n
             self.vocab_size = 1 << self.stacking  # vocab_size is all the possible characters
-        if isinstance(self.n_embd, int) and not hasattr(self,'n_embd2'):
+        if isinstance(self.n_embd, int) and not hasattr(self, 'n_embd2'):
             self.n_embd2 = 4 * self.n_embd
     def update(self):
         if is_sweep:
@@ -150,7 +150,7 @@ def compute_derived():
         sweep_config = {
             "method": "grid",
             "parameters": {
-                k: { ("values" if isinstance(v, list) else "value"): v }
+                k: {("values" if isinstance(v, list) else "value"): v}
                 for k, v in hparams.items()
                 }
             }
@@ -222,7 +222,7 @@ def score_fft_int(ff):
     s = 2*(ff-1-torch.log(ff))
     return 2*s.sum(dim=1)-s[:,0]
 def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
-    return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
+    return score_fft_int(torch.view_as_real(f).square().sum(dim=(1, 3)))  # sum over nm copies, over real/imag
 def score(m):
     return score_fft(fft(m))
 

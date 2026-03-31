@@ -269,7 +269,7 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # Sample a batch, apply random symmetry, and train.
-        batch = rotate(data[torch.randint(data_len,(batch_size,))].to(device, non_blocking=True))
+        batch = rotate(data[torch.randint(data_len, (batch_size,))].to(device, non_blocking=True))
         model_input, model_kwargs = prepare_training_inputs(batch)
         logits, loss = model(model_input, **model_kwargs)
         total_loss += loss
