@@ -83,6 +83,7 @@ class Transformer(torch.nn.Module):
         if self.uses_score:
             if score_batch is None:
                 raise RuntimeError("score_batch is required when transformer_uses_score=True")
+            score_batch = score_batch.to(dtype=self.transformer.wse.weight.dtype)
             b = batch0.shape[0]
             m = batch0.shape[1]
             batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
@@ -160,7 +161,7 @@ if config.transformer_uses_score:
         Fill token positions autoregressively in-place for a batch of sequences.
         """
         B = batch.shape[0]
-        ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+        ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wse.weight.dtype)
         for j in range(nm):
             offset = j * segment_string_length
             for i in range(segment_string_length):
@@ -171,7 +172,7 @@ if config.transformer_uses_score:
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
-            signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn]
+            signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn].to(dtype=model.transformer.wse.weight.dtype)
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
 else:
@@ -213,7 +214,7 @@ if config.transformer_uses_score:
     @torch.no_grad()
     def prepare_training_inputs(batch):
         string_batch = array_to_string(batch)
-        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1)
+        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
         for i in range(1, nm):
             ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
         return string_batch, {"score_batch": ff, "compute_loss": True}

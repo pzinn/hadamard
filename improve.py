@@ -66,7 +66,7 @@ def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic 
 
 # greedy random k-bit flip
 p = .5
-invlogp = 1 / torch.log(torch.tensor(p)).item()
+invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 @torch.inference_mode()
 def improve_greedy(x, scores):
     print("improve_greedy ", end=''); sys.stdout.flush()
@@ -78,7 +78,7 @@ def improve_greedy(x, scores):
     flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     for _ in range(50):  #?
-        k = 2 + torch.log(torch.rand(()))*invlogp
+        k = 2 + torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp
         k = int(k.clamp(2, na//2))
         n_inds = na // k
         # create all at once a bunch of subsets to sample
@@ -107,7 +107,7 @@ def improve_greedy_fixed(x, scores):
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     for _ in range(300):  #?
         j = torch.randint(nm, (1,1), device=device)
-        k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*.5*invlogp)
+        k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*.5*invlogp)
         k = int(k.clamp(3, nn//2))
         n_inds = nn // k
         # create all at once a bunch of subsets to sample

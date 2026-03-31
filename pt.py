@@ -1,11 +1,11 @@
 import torch
-from params import na, nm, nn, score, device, fixed_sums, config, eps
+from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtype
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
 r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188
 # T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
-logT = r * torch.arange(nT, device=device, dtype=torch.float32)
+logT = r * torch.arange(nT, device=device, dtype=real_dtype)
 T = .1 ** logT
 
 @torch.inference_mode()
@@ -26,7 +26,7 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
 def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     BperT = x.shape[1]
     j = torch.randint(nm, (), device=device)
-    base_inds = torch.rand(nn, device=device).topk(k).indices.view(1, 1, k)
+    base_inds = torch.rand(nn, device=device, dtype=real_dtype).topk(k).indices.view(1, 1, k)
     shifts = torch.randint(nn, (nT, BperT, 1), device=device)
     flip_inds = j * nn + (base_inds + shifts) % nn
     flip_vals = x.gather(2, flip_inds)
@@ -62,7 +62,7 @@ def attempt_swaps(x, scores, gens):
 
 swap_interval = 50
 p = .25
-invlogp = 1 / torch.log(torch.tensor(p)).item()
+invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
     global logT, T
     iterations = na * swap_interval * config.num_improve
@@ -77,11 +77,11 @@ def parallel_tempering(x, scores, gens):
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
-            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is (3-p)/(1-p)
+            k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)  # average k is (3-p)/(1-p)
             k = int(k.clamp(3, nn//2))
             improve_T_fixed_sums(x, scores, k=k)
         else:
-            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is 1/(1-p)
+            k = 1 + torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)  # average k is 1/(1-p)
             k = int(k.clamp(1, na//2))
             improve_T(x, scores, k=k)
         # --- replica swaps ---
