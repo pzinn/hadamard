@@ -218,6 +218,7 @@ def randomise_score_weights():
     global score_weights
     with torch.random.fork_rng():
         score_weights = torch.rand(nn2+1, dtype=real_dtype, device=device)
+    score_weights[0] *= .5
 def random_score_fft_int(ff):
     s = -torch.log(ff) + ff - 1
     return (s*score_weights).sum(dim=1)
