@@ -217,9 +217,9 @@ complex_dtype = torch.complex64
 def fft(m):
     return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
 @torch.inference_mode()
-def score_fft_int(ff,cf=1):
+def score_fft_int(ff):
     s = 2*(ff-1-torch.log(ff))
-    return s[:,0]+2*s[:,1:].sum(dim=1)
+    return 2*s.sum(dim=1)-s[:,0]
 def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
     return score_fft_int(torch.view_as_real(f).square().sum(dim=(1,3)))  # sum over nm copies, over real/imag
 def score(m):
