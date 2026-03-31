@@ -1,4 +1,25 @@
 Train a transformer to produce Hadamard matrices.
+Install core dependency with:
+```
+pip install -r requirements.txt
+```
+Install one logging backend:
+```
+pip install -r requirements-wandb.txt
+```
+or
+```
+pip install -r requirements-tensorboard.txt
+```
+`check.py` has additional dependencies:
+```
+pip install -r requirements-check.txt
+```
+For wandb logging, you can override defaults with:
+```
+export WANDB_ENTITY=your_entity
+export WANDB_PROJECT=your_project
+```
 Modify the parameters in `params.py` (size of matrix, transformer parameters, etc) then run:
 ```
 python hadamard.py
@@ -8,7 +29,7 @@ A symlink `latest/` is created to point to the latest data.
 Hadamard matrices for each run are saved in `hada.txt`.
 Use `check.py` to check that they are indeed hadamard matrices, e.g.,
 ```
-python check.py < latest/hada.txt | uniq
+python check.py latest/hada.txt
 ```
 Logging is in two forms:
 * there is wandb or tensorboard logging, which summarises three types of information:
