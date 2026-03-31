@@ -74,7 +74,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Max score: {max_score}")
 
     def tally_str(data):
-        fmt = (lambda x:x.item()) if data.ndim == 1 else (lambda x:tuple(x.tolist()))
+        fmt = (lambda x: x.item()) if data.ndim == 1 else (lambda x: tuple(x.tolist()))
         unique_data, counts = torch.unique(data, dim=0, return_counts=True)
         idx = torch.argsort(counts, descending=True)
         return "{" + ", ".join(f"{fmt(unique_data[i])}: {counts[i].item():_}" for i in idx) + "}"
@@ -142,7 +142,7 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
             a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-vec = torch.frac(torch.exp(.1*torch.arange(1,nn+1, device=device, dtype=real_dtype)))  # doesn't really matter, used for ordering
+vec = torch.frac(torch.exp(.1*torch.arange(1, nn+1, device=device, dtype=real_dtype)))  # doesn't really matter, used for ordering
 fft_vec = torch.fft.rfft(vec)
 fft_conj_vec = torch.conj(fft_vec)
 base = torch.arange(nn, device=device)
@@ -195,7 +195,7 @@ def derotate(arrays, scores=None):
     if params.test_score:
         scores2 = score(arrays)
         if (scores1-scores2).abs().max() > eps:
-            raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
+            raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(), (scores1-scores2).abs().mean().item())
 
 aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
 # aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
@@ -401,12 +401,11 @@ def main():
     else:
         arrays = generate_random_arrays(config.sample_size)
 
-
     scores = batch_score(arrays)
     gens = torch.full(scores.shape, params.gen, dtype=torch.uint8)
     record_stats(arrays, scores, gens, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
-    # MAIN-LOOP #
+    # MAIN-LOOP
 
     while True:
         if params.skip_first_improve:
@@ -430,11 +429,11 @@ def main():
                 torch.cuda.empty_cache()
             # train on GEN-gen
             print(f"\n***Training on GEN-{params.gen:02d}***")
-            coeff = 1 if params.gen==0 or not resume_training else (1+params.gen)**-1.5
+            coeff = 1 if params.gen == 0 or not resume_training else (1+params.gen)**-1.5
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
                 return coeff * config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
-            max_steps = config.training_steps if coeff==1 else config.training_steps//10
+            max_steps = config.training_steps if coeff == 1 else config.training_steps//10
             eval_freq = 1000
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
