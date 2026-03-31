@@ -215,7 +215,8 @@ real_dtype = torch.float32
 complex_dtype = torch.complex64
 
 def fft(m):
-    return cst * torch.fft.rfft(m.view(-1, nm, nn), dim=2)  # cst there for accuracy
+    m = m.view(-1, nm, nn).to(dtype=real_dtype)
+    return cst * torch.fft.rfft(m, dim=2)  # cst there for accuracy
 @torch.inference_mode()
 def score_fft_int(ff,cf=1):
     s = 2*(ff-1-torch.log(ff))
