@@ -179,7 +179,7 @@ def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
     flmod = fmod.view(B, nm*(nn2+1))
     # first find nmx(2+2) locations for optimal flips
     best_scores = torch.full((B, nm, 2, 2), float('inf'), dtype=real_dtype, device=device)
-    inds = torch.empty((B, nm, 2, 2), dtype=torch.long, device=device)
+    inds = torch.full((B, nm, 2, 2), -1, dtype=torch.long, device=device)
     for j in range(nm):
         r1 = j*nn
         r = nn
@@ -192,38 +192,34 @@ def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
             minuses = torch.nonzero(~mask, as_tuple=True)[0]
             pluses = torch.nonzero(mask, as_tuple=True)[0]
             # update minuses
-            mask = scores[minuses].unsqueeze(1) < best_scores[minuses, j, 0]  # (B,2)
-            # mask[:,0] means highest score
+            cand = scores1[minuses]
+            mask = cand.unsqueeze(1) < best_scores[minuses, j, 0]
             minuses1 = minuses[mask[:, 0]]
             best_scores[minuses1, j, 0, 1] = best_scores[minuses1, j, 0, 0]
-            best_scores[minuses1, j, 0, 0] = scores1[minuses1]
+            best_scores[minuses1, j, 0, 0] = cand[mask[:, 0]]
             inds[minuses1, j, 0, 1] = inds[minuses1, j, 0, 0]
             inds[minuses1, j, 0, 0] = i
-            # mask[:,1] means next to highest score
             minuses1 = minuses[~mask[:, 0] & mask[:, 1]]
-            best_scores[minuses1, j, 0, 1] = scores1[minuses1]
+            best_scores[minuses1, j, 0, 1] = cand[~mask[:, 0] & mask[:, 1]]
             inds[minuses1, j, 0, 1] = i
             # update pluses
-            mask = scores[pluses].unsqueeze(1) < best_scores[pluses, j, 1]  # (B,2)
-            # mask[:,0] means highest score
+            cand = scores1[pluses]
+            mask = cand.unsqueeze(1) < best_scores[pluses, j, 1]
             pluses1 = pluses[mask[:, 0]]
             best_scores[pluses1, j, 1, 1] = best_scores[pluses1, j, 1, 0]
-            best_scores[pluses1, j, 1, 0] = scores1[pluses1]
+            best_scores[pluses1, j, 1, 0] = cand[mask[:, 0]]
             inds[pluses1, j, 1, 1] = inds[pluses1, j, 1, 0]
             inds[pluses1, j, 1, 0] = i
-            # mask[:,1] means next to highest score
             pluses1 = pluses[~mask[:, 0] & mask[:, 1]]
-            best_scores[pluses1, j, 1, 1] = scores1[pluses1]
+            best_scores[pluses1, j, 1, 1] = cand[~mask[:, 0] & mask[:, 1]]
             inds[pluses1, j, 1, 1] = i
     # now try every combo
     inds = inds.view(B, nm*ksw)
     base = torch.arange(B, device=device)
-    #print(inds,x,scores)
     cur = torch.gather(x, 1, inds)
     for i in range(sw.shape[0]):
         x[base.unsqueeze(1), inds] = sw[i]
-        new_scores = score(x)  # TODO use fft
-        #print(x,new_scores)
+        new_scores = score(x)
         improved = new_scores < scores
         scores[improved] = new_scores[improved]
         cur[improved] = sw[i]

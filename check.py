@@ -2,7 +2,8 @@
 # coding: utf-8
 
 import argparse
-from collections import Counter
+import base64
+import hashlib
 import sys
 import torch
 from PIL import Image
@@ -83,32 +84,38 @@ def save_image(tensor, path, mode):
     Image.frombytes(mode, (w, h), tensor_to_bytes(tensor)).save(path)
 
 
+def short_hash(tensor):
+    digest = hashlib.blake2b(tensor.to(torch.int8).to(torch.uint8).to("cpu").contiguous().view(-1).numpy().tobytes(), digest_size=4).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")[:5]
+
+
 def save_pictures(vector, matrix):
     device = matrix.device
     n = vector.shape[0]
+    stem = f"hadamard-{n}-{short_hash(vector)}"
     gray = ((matrix + 1) // 2 * 255).to(torch.uint8)
-    save_image(gray, f"hadamard-{n}.png", "L")
-    Image.frombytes("L", (n, n), tensor_to_bytes(gray)).resize((2 * n, 2 * n), Image.NEAREST).save(f"hadamard-{n}-large.png")
+    save_image(gray, f"{stem}.png", "L")
+    Image.frombytes("L", (n, n), tensor_to_bytes(gray)).resize((2 * n, 2 * n), Image.NEAREST).save(f"{stem}-large.png")
     mod_matrix = upblock_mod(vector.to(device))
     color = torch.zeros((n, n, 3), dtype=torch.uint8, device=device)
     color[mod_matrix == 1] = torch.tensor((255, 0, 0), dtype=torch.uint8, device=device)
     color[mod_matrix == 2] = torch.tensor((0, 255, 0), dtype=torch.uint8, device=device)
     color[mod_matrix == 3] = torch.tensor((0, 0, 255), dtype=torch.uint8, device=device)
     color[mod_matrix == 4] = torch.tensor((255, 255, 0), dtype=torch.uint8, device=device)
-    save_image(color, f"hadamard-{n}-colour.png", "RGB")
-    Image.frombytes("RGB", (n, n), tensor_to_bytes(color)).resize((2 * n, 2 * n), Image.NEAREST).save(f"hadamard-{n}-colour-large.png")
+    save_image(color, f"{stem}-colour.png", "RGB")
+    Image.frombytes("RGB", (n, n), tensor_to_bytes(color)).resize((2 * n, 2 * n), Image.NEAREST).save(f"{stem}-colour-large.png")
     perm_rows = torch.randperm(n, device=device)
     perm_cols = torch.randperm(n, device=device)
     signs_x = 2 * torch.randint(0, 2, (n,), dtype=torch.int64, device=device) - 1
     signs_y = 2 * torch.randint(0, 2, (n,), dtype=torch.int64, device=device) - 1
     randomised = signs_x[:, None] * signs_y[None, :] * matrix[perm_rows][:, perm_cols]
     gray_randomised = ((randomised + 1) // 2 * 255).to(torch.uint8)
-    save_image(gray_randomised, f"hadamard-{n}-randomised.png", "L")
+    save_image(gray_randomised, f"{stem}-randomised.png", "L")
 
 
 def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
     stripped = [line.strip() for line in lines if line.strip()]
-    summary = Counter()
+    summary = []
     groups = {}
     for line in stripped:
         if any(c not in "+-" for c in line):
@@ -125,9 +132,10 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
             segment_sums = torch.sort(segment_sums.abs(), dim=1).values
         matrices = upblock(batch)
         scores = score_matrices(matrices)
-        for j in range(len(strings)):
-            key = f"n={n} segment_sums={tuple(segment_sums[j].tolist())} score={int(scores[j])}"
-            summary[key] += 1
+        pairs = torch.cat((segment_sums.to(torch.int64), scores.unsqueeze(1)), dim=1)
+        unique_pairs, counts = torch.unique(pairs, dim=0, return_counts=True)
+        for pair, count in zip(unique_pairs.tolist(), counts.tolist()):
+            summary.append((f"n={n} segment_sums={tuple(pair[:4])} score={pair[4]}", count))
         if pictures_remaining > 0:
             hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0].tolist()
             for j in hadamard_idx[:pictures_remaining]:
@@ -135,7 +143,7 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
             pictures_remaining -= min(pictures_remaining, len(hadamard_idx))
     print(f"==> {source_name} <==")
     if summary:
-        for result, count in sorted(summary.items()):
+        for result, count in sorted(summary):
             print(f"{count:7d} {result}")
     else:
         print("(no valid input lines)")
