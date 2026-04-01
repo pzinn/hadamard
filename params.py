@@ -185,7 +185,7 @@ from itertools import permutations
 
 #print("order of symmetry: ", rndmod.prod().item())
 
-def rotate(array0):
+def randomise_symmetry(array0):
     B = array0.shape[0]
     array0 = array0.to(device=device).view(B, nm, nn)
     # --- random parameters per batch ---
@@ -224,4 +224,3 @@ def score_fft(f):  # score in terms of precomputed fft f (b, nm, nn2+1)
     return score_fft_int(torch.view_as_real(f).square().sum(dim=(1, 3)))  # sum over nm copies, over real/imag
 def score(m):
     return score_fft(fft(m))
-

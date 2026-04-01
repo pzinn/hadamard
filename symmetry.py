@@ -55,7 +55,9 @@ def build_context(n=None, segment_sums=None, device=None, real_dtype=None):
 
 
 @torch.inference_mode()
-def derotate(arrays, ctx, scores=None, score_fn=None, eps=None):
+def canonicalise_local_symmetry(arrays, ctx, scores=None, score_fn=None, eps=None):
+    # Canonicalise the non-automorphism symmetries: blockwise dihedral actions,
+    # optional sign changes, and allowed block permutations.
     if score_fn is not None:
         scores1 = score_fn(arrays)
         if scores is not None and (scores - scores1).abs().max() > eps:
@@ -127,7 +129,7 @@ def apply_aut(idx, arrays0, ctx):
 
 
 @torch.inference_mode()
-def find_aut_heuristic(arrays, ctx, fft_fn):
+def _apply_aut_heuristic(arrays, ctx, fft_fn):
     f = fft_fn(arrays)
     f = f.abs().sum(dim=1)
     idx = f[:, ctx.aut1].argmax(dim=1)
@@ -135,13 +137,20 @@ def find_aut_heuristic(arrays, ctx, fft_fn):
 
 
 @torch.inference_mode()
-def find_aut_exact(arrays, ctx):
+def canonicalise_heuristic(arrays, ctx, fft_fn, scores=None, score_fn=None, eps=None):
+    arrays = _apply_aut_heuristic(arrays, ctx, fft_fn)
+    canonicalise_local_symmetry(arrays, ctx, scores, score_fn, eps)
+    return arrays
+
+
+@torch.inference_mode()
+def canonicalise_exact(arrays, ctx):
     B = arrays.shape[0]
     best = None
     for i in range(len(ctx.aut1)):
         idx = torch.full((B,), i, device=ctx.device, dtype=torch.long)
         candidate = apply_aut(idx, arrays, ctx)
-        derotate(candidate, ctx)
+        canonicalise_local_symmetry(candidate, ctx)
         if best is None:
             best = candidate
             continue
