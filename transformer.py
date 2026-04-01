@@ -120,7 +120,6 @@ def init_model():
     global model
     global model_path
     global bit_positions
-    global bit_positions_cpu
     global nn_pad
     global segment_string_length
     model = Transformer(config).to(device)
@@ -131,7 +130,6 @@ def init_model():
     model_path = os.path.join(params.work_dir, "model.pt")
     # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
-    bit_positions_cpu = torch.arange(config.stacking, dtype=torch.int)
     segment_string_length = config.block_size // nm
     nn_pad = segment_string_length * config.stacking
 
@@ -154,12 +152,13 @@ def save_model():
 
 
 # Sampling/evaluation helpers.
-if config.transformer_uses_score:
-    @torch.inference_mode()
-    def generate(batch):
-        """
-        Fill token positions autoregressively in-place for a batch of sequences.
-        """
+@torch.inference_mode()
+def generate(batch):
+    """
+    Fill token positions autoregressively in-place for a batch of sequences.
+    """
+    temperature = config.temperature + params.gen * config.temperature_delta
+    if model.uses_score:
         B = batch.shape[0]
         ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wse.weight.dtype)
         for j in range(nm):
@@ -167,29 +166,20 @@ if config.transformer_uses_score:
             for i in range(segment_string_length):
                 batch_cond = batch[:, offset:offset+i].view(B, 1, i)
                 logits, _ = model(batch_cond, score_batch=ff, offset=offset)
-                # Use temperature-scaled logits at the final position.
-                temperature = config.temperature + params.gen * config.temperature_delta
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
             signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn].to(dtype=model.transformer.wse.weight.dtype)
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
-else:
-    @torch.inference_mode()
-    def generate(batch):
-        """
-        Fill token positions autoregressively in-place for a batch of sequences.
-        """
-        block_size = model.get_block_size()
-        for i in range(block_size):
-            batch_cond = batch[:, :i]
-            logits, _ = model(batch_cond)
-            # Use temperature-scaled logits at the final position.
-            temperature = config.temperature + params.gen * config.temperature_delta
-            logits = logits[:, -1, :] / temperature
-            probs = F.softmax(logits, dim=-1)
-            batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
+        return
+    block_size = model.get_block_size()
+    for i in range(block_size):
+        batch_cond = batch[:, :i]
+        logits, _ = model(batch_cond)
+        logits = logits[:, -1, :] / temperature
+        probs = F.softmax(logits, dim=-1)
+        batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
 
 # Conversion between token strings and +/-1 arrays.
 @torch.no_grad()
@@ -210,18 +200,15 @@ def array_to_string(signs):
         return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
-if config.transformer_uses_score:
-    @torch.no_grad()
-    def prepare_training_inputs(batch):
-        string_batch = array_to_string(batch)
+@torch.no_grad()
+def prepare_training_inputs(batch):
+    string_batch = array_to_string(batch)
+    if model.uses_score:
         ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
         for i in range(1, nm):
             ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
         return string_batch, {"score_batch": ff, "compute_loss": True}
-else:
-    @torch.no_grad()
-    def prepare_training_inputs(batch):
-        return array_to_string(batch), {"compute_loss": True}
+    return string_batch, {"compute_loss": True}
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
