@@ -7,7 +7,7 @@ import hashlib
 import sys
 import torch
 from PIL import Image
-from symmetry import build_context, find_aut_exact
+from symmetry import build_context, canonicalise_exact
 import math
 
 device = "cuda"
@@ -88,7 +88,7 @@ def convert_lines(lines):
 
 
 def max_batch_size_for_n(n):
-    return 2**max(1,25-math.floor(2*math.log(n)/math.log(2)))
+    return 2**max(1,26-math.floor(2*math.log(n)/math.log(2)))
 
 def tensor_to_bytes(tensor):
     return bytes(tensor.to("cpu").contiguous().view(-1).tolist())
@@ -169,7 +169,7 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
                     save_pictures(chunk[j], matrices[j])
                 pictures_remaining -= min(pictures_remaining, hadamard_idx.numel())
             if hadamard_idx.numel() > 0:
-                canonical_parts.append(find_aut_exact(chunk[hadamard_idx], symmetry_ctx).to(torch.int8).cpu())
+                canonical_parts.append(canonicalise_exact(chunk[hadamard_idx], symmetry_ctx).to(torch.int8).cpu())
         lines_out = [
             (f"segment_sums={segment_sums} score={score}", count)
             for (segment_sums, score), count in pair_counts.items()

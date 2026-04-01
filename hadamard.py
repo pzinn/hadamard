@@ -9,7 +9,7 @@ from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fi
 from pt import parallel_tempering, nT
 import logger
 import transformer
-from symmetry import build_context, derotate, find_aut_exact, find_aut_heuristic
+from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
 # logging/debugging
 import sys
 from timeit import default_timer as timer  # to measure exec time
@@ -98,7 +98,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     if len(hada_inds) > 0:
         print(f"Hadamard gen tally: {hada_gens_tally}")
         print(f"Hadamard segment sums tally: {hada_ss_tally}")
-        new_hada_tensor = find_aut_exact(arrays[hada_inds].to(device=device), symmetry_ctx)
+        new_hada_tensor = canonicalise_exact(arrays[hada_inds].to(device=device), symmetry_ctx)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor, new_hada_tensor.cpu()), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
@@ -216,8 +216,7 @@ def parallel_improve(arrays, scores, gens):
         #
     # step E: rotate the arrays to a standard form
     start_timer = timer()
-    arrays = find_aut_heuristic(arrays, symmetry_ctx, fft)
-    derotate(arrays, symmetry_ctx, scores, score if params.test_score else None, eps)
+    arrays = canonicalise_heuristic(arrays, symmetry_ctx, fft, scores, score if params.test_score else None, eps)
     if debugging:
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)

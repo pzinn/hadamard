@@ -9,7 +9,7 @@ import torch
 import torch.nn
 from torch.nn import functional as F
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, rotate, fft, cst
+from params import na, nn, nn2, nm, device, config, resume_training, randomise_symmetry, fft, cst
 import logger
 
 # Transformer language model.
@@ -269,7 +269,7 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # Sample a batch, apply random symmetry, and train.
-        batch = rotate(data[torch.randint(data_len, (batch_size,))].to(device, non_blocking=True))
+        batch = randomise_symmetry(data[torch.randint(data_len, (batch_size,))].to(device, non_blocking=True))
         model_input, model_kwargs = prepare_training_inputs(batch)
         logits, loss = model(model_input, **model_kwargs)
         total_loss += loss
