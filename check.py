@@ -7,6 +7,7 @@ import hashlib
 import sys
 import torch
 from PIL import Image
+from symmetry import build_context, find_aut_exact
 
 device = "cuda"
 if device.startswith("cuda") and not torch.cuda.is_available():
@@ -125,7 +126,7 @@ def save_pictures(vector, matrix):
 
 def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
     stripped = [line.strip() for line in lines if line.strip()]
-    summary = []
+    summary = {}
     groups = {}
     for line in stripped:
         if any(c not in "+-" for c in line):
@@ -144,17 +145,28 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
         scores = score_matrices(matrices)
         pairs = torch.cat((segment_sums.to(torch.int64), scores.unsqueeze(1)), dim=1)
         unique_pairs, counts = torch.unique(pairs, dim=0, return_counts=True)
+        lines_out = []
         for pair, count in zip(unique_pairs.tolist(), counts.tolist()):
-            summary.append((f"n={n} segment_sums={tuple(pair[:4])} score={pair[4]}", count))
+            lines_out.append((f"segment_sums={tuple(pair[:4])} score={pair[4]}", count))
+        hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0]
         if pictures_remaining > 0:
-            hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0].tolist()
-            for j in hadamard_idx[:pictures_remaining]:
+            for j in hadamard_idx.tolist()[:pictures_remaining]:
                 save_pictures(batch[j], matrices[j])
-            pictures_remaining -= min(pictures_remaining, len(hadamard_idx))
+            pictures_remaining -= min(pictures_remaining, hadamard_idx.numel())
+        distinct_hadamard = 0
+        if hadamard_idx.numel() > 0:
+            symmetry_ctx = build_context(n=n, device=device)
+            canonical = find_aut_exact(batch[hadamard_idx], symmetry_ctx)
+            distinct_hadamard = torch.unique(canonical.to(torch.int8), dim=0).shape[0]
+        summary[n] = (lines_out, hadamard_idx.numel(), distinct_hadamard)
     print(f"==> {source_name} <==")
     if summary:
-        for result, count in sorted(summary):
-            print(f"{count:7d} {result}")
+        for n in sorted(summary):
+            lines_out, hadamard_count, distinct_hadamard = summary[n]
+            for result, count in sorted(lines_out):
+                print(f"{count:7d} n={n} {result}")
+            print(f"{hadamard_count:7d} n={n} hadamard")
+            print(f"{distinct_hadamard:7d} n={n} distinct_hadamard")
     else:
         print("(no valid input lines)")
     return pictures_remaining
