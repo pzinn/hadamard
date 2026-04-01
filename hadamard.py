@@ -9,6 +9,7 @@ from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fi
 from pt import parallel_tempering, nT
 import logger
 import transformer
+from symmetry import build_context, derotate, find_aut_exact, find_aut_heuristic
 # logging/debugging
 import sys
 from timeit import default_timer as timer  # to measure exec time
@@ -97,8 +98,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     if len(hada_inds) > 0:
         print(f"Hadamard gen tally: {hada_gens_tally}")
         print(f"Hadamard segment sums tally: {hada_ss_tally}")
-        new_hada_tensor = find_aut_exact(arrays[hada_inds].to(device=device))
-        derotate(new_hada_tensor)
+        new_hada_tensor = find_aut_exact(arrays[hada_inds].to(device=device), symmetry_ctx)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor, new_hada_tensor.cpu()), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
@@ -142,111 +142,7 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
             a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-vec = torch.frac(torch.exp(.1*torch.arange(1, nn+1, device=device, dtype=real_dtype)))  # doesn't really matter, used for ordering
-fft_vec = torch.fft.rfft(vec)
-fft_conj_vec = torch.conj(fft_vec)
-base = torch.arange(nn, device=device)
-@torch.inference_mode()
-def derotate(arrays, scores=None):
-    if params.test_score:
-        scores1 = score(arrays)
-        if scores is not None and (scores-scores1).abs().max() > eps:
-            raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(), (scores-scores1).abs().mean().item())
-    # 1st phase: cyclically permute/reflect/negate the nm*nn
-    B = arrays.shape[0]
-    a = arrays.view(B, nm, nn)
-    fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
-    sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
-    sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
-    sps = torch.cat([sp_rot, sp_rev], dim=2)   # (B, m, 2 * nn)
-    if fixed_sums:
-        flat_idx = sps.argmax(dim=2)         # (B, m) over 2*nn options
-    else:
-        flat_idx = sps.abs().argmax(dim=2)         # (B, m) over 2*nn options
-    # Gather the chosen transform from the original 'a'
-    signed_base = torch.where(flat_idx >= nn, -1, 1).unsqueeze(-1) * base
-    idx = (signed_base + flat_idx.unsqueeze(-1)) % nn
-    transformed = a.gather(2, idx)  # (B, m, nn)
-    if fixed_sums:
-        a.copy_(transformed)
-    else:
-        # negate if the chosen scalar product is > 0
-        chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
-        a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    if fixed_sums:
-        candidates = a[:, perms, :].reshape(B, len(perms), na)
-        perm_order = torch.arange(len(perms), device=device).expand(B, len(perms)).clone()
-        for k in range(na - 1, -1, -1):
-            key_in_order = candidates[:, :, k].gather(1, perm_order)
-            ordk = torch.argsort(key_in_order, dim=1, stable=True)
-            perm_order = perm_order.gather(1, ordk)
-        best = candidates[torch.arange(B, device=device), perm_order[:, 0]].view(B, nm, nn)
-        a.copy_(best)
-    else:
-        # 2nd phase: permute the nmxnn parts
-        perm = torch.arange(nm, device=device).expand(B, nm).clone()
-        for k in range(nn):
-            key = a[:, :, k]
-            key_in_curr_order = key.gather(1, perm)
-            ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
-            perm = perm.gather(1, ordk)
-        sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
-        a.copy_(sorted_a)
-    if params.test_score:
-        scores2 = score(arrays)
-        if (scores1-scores2).abs().max() > eps:
-            raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(), (scores1-scores2).abs().mean().item())
-
-aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
-# aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
-
-@torch.inference_mode()
-def apply_aut(idx, arrays0):
-    B = arrays0.shape[0]
-    arrays04 = arrays0.view(B, nm, nn)
-    arrays = torch.empty_like(arrays0)
-    arrays4 = arrays.view(B, nm, nn)
-    # automorphism
-    # inds = aut_inds[idx]
-    a = aut[idx]
-    inds = torch.outer(a, torch.arange(nn, device=device)) % nn
-    arrays4.scatter_(2, inds.unsqueeze(1).expand(B, nm, nn), arrays04)
-    return arrays
-
-@torch.inference_mode()
-def find_aut_heuristic(arrays):
-    f = fft(arrays)
-    f = f.abs().sum(dim=1)  # (B,nn2+1)
-    idx = f[:, aut1].argmax(dim=1)   # (B,) over nn2+1 options
-    # now apply aut
-    arrays1 = apply_aut(idx, arrays)
-    return arrays1
-
-@torch.inference_mode()
-def find_aut_exact(arrays):
-    B = arrays.shape[0]
-    best = None
-    for i in range(len(aut1)):
-        idx = torch.full((B,), i, device=device, dtype=torch.long)
-        candidate = apply_aut(idx, arrays)
-        derotate(candidate)
-        if best is None:
-            best = candidate
-            continue
-        undecided = torch.ones(B, device=device, dtype=torch.bool)
-        better = torch.zeros(B, device=device, dtype=torch.bool)
-        for k in range(na):
-            rows = torch.nonzero(undecided, as_tuple=True)[0]
-            if rows.numel() == 0:
-                break
-            cand_k = candidate[rows, k]
-            best_k = best[rows, k]
-            gt = cand_k > best_k
-            lt = cand_k < best_k
-            better[rows[gt]] = True
-            undecided[rows[gt | lt]] = False
-        best[better] = candidate[better]
-    return best
+symmetry_ctx = build_context()
 
 @torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
@@ -320,8 +216,8 @@ def parallel_improve(arrays, scores, gens):
         #
     # step E: rotate the arrays to a standard form
     start_timer = timer()
-    arrays = find_aut_heuristic(arrays)
-    derotate(arrays, scores)
+    arrays = find_aut_heuristic(arrays, symmetry_ctx, fft)
+    derotate(arrays, symmetry_ctx, scores, score if params.test_score else None, eps)
     if debugging:
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
