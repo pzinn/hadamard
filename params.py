@@ -33,7 +33,7 @@ temperature_delta = .02
 
 # less important parameters
 gen_decay = 0.0
-sample_batch_size = 100_000  # for sampling
+sample_batch_size = 100_000  # for sampling; on some older GPUs this may need to stay below 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 
 resume = False  # True | False, whether to resume a previous run
