@@ -8,6 +8,7 @@ import sys
 import torch
 from PIL import Image
 from symmetry import build_context, find_aut_exact
+import math
 
 device = "cuda"
 if device.startswith("cuda") and not torch.cuda.is_available():
@@ -86,6 +87,9 @@ def convert_lines(lines):
     return torch.tensor(values, dtype=torch.int64, device=device)
 
 
+def max_batch_size_for_n(n):
+    return 2**max(1,25-math.floor(2*math.log(n)/math.log(2)))
+
 def tensor_to_bytes(tensor):
     return bytes(tensor.to("cpu").contiguous().view(-1).tolist())
 
@@ -128,37 +132,52 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
     stripped = [line.strip() for line in lines if line.strip()]
     summary = {}
     groups = {}
+    bad_length_reported = set()
     for line in stripped:
         if any(c not in "+-" for c in line):
             print(f"invalid input: only '+' and '-' are allowed: {line!r}", file=sys.stderr)
             continue
         if len(line) % 4 != 0:
-            print(f"invalid input length (must be divisible by 4): {len(line)}", file=sys.stderr)
+            if len(line) not in bad_length_reported:
+                print(f"invalid input length (must be divisible by 4): {len(line)}", file=sys.stderr)
+                bad_length_reported.add(len(line))
             continue
         groups.setdefault(len(line), []).append(line)
     for n, strings in groups.items():
         batch = convert_lines(strings)
-        segment_sums = batch.view(batch.shape[0], 4, -1).sum(dim=2)
-        if group_segment_sums:
-            segment_sums = torch.sort(segment_sums.abs(), dim=1).values
-        matrices = upblock(batch)
-        scores = score_matrices(matrices)
-        pairs = torch.cat((segment_sums.to(torch.int64), scores.unsqueeze(1)), dim=1)
-        unique_pairs, counts = torch.unique(pairs, dim=0, return_counts=True)
-        lines_out = []
-        for pair, count in zip(unique_pairs.tolist(), counts.tolist()):
-            lines_out.append((f"segment_sums={tuple(pair[:4])} score={pair[4]}", count))
-        hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0]
-        if pictures_remaining > 0:
-            for j in hadamard_idx.tolist()[:pictures_remaining]:
-                save_pictures(batch[j], matrices[j])
-            pictures_remaining -= min(pictures_remaining, hadamard_idx.numel())
+        pair_counts = {}
+        hadamard_count = 0
+        canonical_parts = []
+        symmetry_ctx = build_context(n=n, device=device)
+        batch_size = max_batch_size_for_n(n)
+        for i in range(0, batch.shape[0], batch_size):
+            chunk = batch[i:i + batch_size]
+            segment_sums = chunk.view(chunk.shape[0], 4, -1).sum(dim=2)
+            if group_segment_sums:
+                segment_sums = torch.sort(segment_sums.abs(), dim=1).values
+            matrices = upblock(chunk)
+            scores = score_matrices(matrices)
+            pairs = torch.cat((segment_sums.to(torch.int64), scores.unsqueeze(1)), dim=1)
+            unique_pairs, counts = torch.unique(pairs, dim=0, return_counts=True)
+            for pair, count in zip(unique_pairs.tolist(), counts.tolist()):
+                key = (tuple(pair[:4]), pair[4])
+                pair_counts[key] = pair_counts.get(key, 0) + count
+            hadamard_idx = torch.nonzero(scores == 0, as_tuple=True)[0]
+            hadamard_count += hadamard_idx.numel()
+            if pictures_remaining > 0:
+                for j in hadamard_idx.tolist()[:pictures_remaining]:
+                    save_pictures(chunk[j], matrices[j])
+                pictures_remaining -= min(pictures_remaining, hadamard_idx.numel())
+            if hadamard_idx.numel() > 0:
+                canonical_parts.append(find_aut_exact(chunk[hadamard_idx], symmetry_ctx).to(torch.int8).cpu())
+        lines_out = [
+            (f"segment_sums={segment_sums} score={score}", count)
+            for (segment_sums, score), count in pair_counts.items()
+        ]
         distinct_hadamard = 0
-        if hadamard_idx.numel() > 0:
-            symmetry_ctx = build_context(n=n, device=device)
-            canonical = find_aut_exact(batch[hadamard_idx], symmetry_ctx)
-            distinct_hadamard = torch.unique(canonical.to(torch.int8), dim=0).shape[0]
-        summary[n] = (lines_out, hadamard_idx.numel(), distinct_hadamard)
+        if canonical_parts:
+            distinct_hadamard = torch.unique(torch.cat(canonical_parts, dim=0), dim=0).shape[0]
+        summary[n] = (lines_out, hadamard_count, distinct_hadamard)
     print(f"==> {source_name} <==")
     if summary:
         for n in sorted(summary):
