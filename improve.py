@@ -58,11 +58,12 @@ def penalty(f):  # penalty to stray from correct segment sums
     return torch.abs(torch.real(f[:,:,0])-ss[None,:]).sum(dim=1)
 def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
-z0 = cst  # is that the correct scaling with n?
+zmul = 1.5  # adjustable parameter
 @torch.inference_mode()
 def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
     print(f"improve1p_fixed ", end=''); sys.stdout.flush()
-    z = z0
+    z = cst  # is that the correct scaling with n?
+    oldz = 0
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     while True:
@@ -72,9 +73,7 @@ def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively en
         pen = penalty(f)
         mask = pen > eps  # always continue with ones violating segment_sums
         print(f"{M/B} {mask.sum()/B}")
-        scores[active_rows] += z * pen  # adjust scores to future higher value of z
-        if z > z0:  # eww
-            z *= 2
+        scores[active_rows] += (z-oldz) * pen  # adjust scores to new value of z
         fl = f.view(M, nm*(nn2+1))
         fmod = torch.empty_like(f)
         flmod = fmod.view(-1, nm*(nn2+1))
@@ -100,9 +99,8 @@ def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively en
         if not mask.any():
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
-        if z == z0:  #eww
-            z *= 2
-
+        oldz = z
+        z *= zmul
 
 # greedy random k-bit flip
 p = .5
