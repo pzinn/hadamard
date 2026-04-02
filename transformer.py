@@ -186,13 +186,18 @@ def generate(batch):
 def string_to_array(X):
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
+    if config.left_pad_stacks:
+        return signs[:, :, nn_pad - nn:].to(dtype=torch.int8).view(B, na)
     return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
 
 @torch.no_grad()
 def array_to_string(signs):
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
-    signs1[:, :, :nn] = signs.view(B, nm, nn)
+    if config.left_pad_stacks:
+        signs1[:, :, nn_pad - nn:] = signs.view(B, nm, nn)
+    else:
+        signs1[:, :, :nn] = signs.view(B, nm, nn)
     # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
