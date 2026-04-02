@@ -1,6 +1,6 @@
 import torch
 import params
-from params import na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst
+from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, segment_sums
 import sys
 
 # precompute roots of unity for fft delta
@@ -51,6 +51,58 @@ def improve1p(arrays, scores):  # optimised k-bit flip
         if not mask.any():
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+
+if segment_sums is not None:
+    ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
+def penalty(f):  # penalty to stray from correct segment sums
+    return torch.abs(torch.real(f[:,:,0])-ss[None,:]).sum(dim=1)
+def mod_score_fft(f, z):
+    return score_fft(f) + z * penalty(f)
+z0 = cst  # is that the correct scaling with n?
+@torch.inference_mode()
+def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+    print(f"improve1p_fixed ", end=''); sys.stdout.flush()
+    z = z0
+    B = arrays.shape[0]
+    active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    while True:
+        M = active_rows.numel()
+        scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
+        f = fft(arrays[active_rows])  # better than flip updating for accuracy
+        pen = penalty(f)
+        mask = pen > eps  # always continue with ones violating segment_sums
+        print(f"{M/B} {mask.sum()/B}")
+        scores[active_rows] += z * pen  # adjust scores to future higher value of z
+        if z > z0:  # eww
+            z *= 2
+        fl = f.view(M, nm*(nn2+1))
+        fmod = torch.empty_like(f)
+        flmod = fmod.view(-1, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(arrays[active_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            scores1[:, j] = mod_score_fft(fmod, z)
+        # k best flip candidates
+        _, indsk = torch.topk(scores1, k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(arrays[active_rows], 1, indsk)
+        for j in gray_code:
+            inds = indsk[:, j]  # actual index for each sample
+            fl += cur[:, j].unsqueeze(1) * wrng_all[inds]
+            cur[:, j] *= -1  # need to keep track of these two
+            new_scores = mod_score_fft(f, z)
+            improved = new_scores < scores[active_rows]
+            if improved.any():
+                mask[improved] = True  # these will get saved for next round
+                improved_rows = active_rows[improved]
+                scores[improved_rows] = new_scores[improved]
+                # arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+                arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved]), cur[improved])
+        if not mask.any():
+            break
+        active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+        if z == z0:  #eww
+            z *= 2
+
 
 # greedy random k-bit flip
 p = .5
