@@ -224,22 +224,19 @@ def parallel_improve(arrays, scores, gens):
 @torch.inference_mode()
 def best_from(arrays, scores, gens):
     # deduplicate
-    arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
-    B = arrays.shape[0]
-    min_gens = torch.empty(B, device=device, dtype=torch.uint8)
-    min_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
+    unique_arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
+    B = unique_arrays.shape[0]
+    unique_gens = torch.empty(B, device=device, dtype=torch.uint8)
+    unique_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
     # normally scores should be equal but who knows
-    min_scores = torch.empty(B, device=device, dtype=real_dtype)
-    min_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
+    unique_scores = torch.empty(B, device=device, dtype=real_dtype)
+    unique_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
     # select
     if B <= config.training_size:
-        return arrays, min_scores, min_gens
-    # _, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
-    _, idx = torch.topk(min_scores * (1 + config.gen_decay * (params.gen - min_gens)), k=config.training_size, largest=False, sorted=False)
-    arrays = arrays[idx]
-    scores = min_scores[idx]
-    gens = min_gens[idx]
-    return arrays, scores, gens
+        return unique_arrays, unique_scores, unique_gens
+    # _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(unique_scores * (1 + config.gen_decay * (params.gen - unique_gens)), k=config.training_size, largest=False, sorted=False)
+    return unique_arrays[idx], unique_scores[idx], unique_gens[idx]
 
 @torch.inference_mode()
 def batch_improve(arrays0, scores0, gens0):
