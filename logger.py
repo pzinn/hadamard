@@ -99,8 +99,8 @@ def init_logging():
         from torch.utils.tensorboard import SummaryWriter
         writer = SummaryWriter(log_dir=params.work_dir)
         layout = {"combined": {"loss": ["Multiline", ["Loss/train", "Loss/test"]],
-                               "score": ["Multline", ["Score/sample", "Score/improved", "Score/selected"]],
-                               "zero_score": ["Multline", ["Zero_score/sample", "Zero_score/improved", "Zero_score/selected"]],
+                               "score": ["Multiline", ["Score/sample", "Score/improved", "Score/selected"]],
+                               "zero_score": ["Multiline", ["Zero_score/sample", "Zero_score/improved", "Zero_score/selected"]],
                                }
                   }
         writer.add_custom_scalars(layout)

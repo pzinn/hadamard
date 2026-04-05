@@ -264,7 +264,7 @@ def train(data, **kwargs):
         batch = randomise_symmetry(data[torch.randint(data_len, (batch_size,))].to(device, non_blocking=True))
         model_input, model_kwargs = prepare_training_inputs(batch)
         logits, loss = model(model_input, **model_kwargs)
-        total_loss += loss
+        total_loss += loss.item()
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
         for param_group in optimiser.param_groups:
