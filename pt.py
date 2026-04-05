@@ -66,12 +66,14 @@ def attempt_swaps(x, scores, gens):
         gens[idx + 1] = torch.where(accept, g_lo, g_hi)
     return accepted
 
-swap_interval = 50
 p = .25
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
     global logT, T
-    iterations = na * swap_interval * config.num_improve
+    iterations = na * 50 * config.num_improve
+    avg_k = (3-p)/(1-p) if fixed_sums else 1/(1-p)
+    swap_interval = max(na//avg_k, 10)
+    warmup_swaps = 5 * swap_interval
     B = x.shape[0]
     assert B % nT == 0, f"parallel_tempering requires batch size divisible by {nT}, got {B}"
     BperT = B // nT
@@ -83,17 +85,17 @@ def parallel_tempering(x, scores, gens):
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
-            k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)  # average k is (3-p)/(1-p)
+            k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(3, nn//2))
             improve_T_fixed_sums(x, scores, k=k)
         else:
-            k = 1 + torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)  # average k is 1/(1-p)
+            k = 1 + torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(1, na//2))
             improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores, gens) / BperT
-            if t > swap_interval * 10:
+            if t > warmup_swaps:
                 # autotune Ts
                 for i in range(nT-1):
                     if acc[i] < .2:
