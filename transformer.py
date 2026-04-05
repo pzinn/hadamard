@@ -210,8 +210,9 @@ def prepare_training_inputs(batch):
     string_batch = array_to_string(batch)
     if model.uses_score:
         ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
-        for i in range(1, nm):
-            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+        # remaining budget = 1 - cumsum of previous blocks (matching generation)
+        cumsum = torch.cumsum(ff, dim=1)
+        ff = torch.clamp(1 - torch.cat([torch.zeros_like(ff[:, :1, :]), cumsum[:, :-1, :]], dim=1), min=0)
         return string_batch, {"score_batch": ff, "compute_loss": True}
     return string_batch, {"compute_loss": True}
 
