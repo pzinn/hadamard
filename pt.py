@@ -44,20 +44,26 @@ def attempt_swaps(x, scores, gens):
     #  x: (nT, BperT, n)
     #  scores, gens: (nT, BperT)
     accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
-    for i in range(nT-1):
-        T1, T2 = T[i], T[i+1]
-        E1, E2 = scores[i], scores[i+1]              # (BperT,)
-        accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
-        accepted[i] += accept.sum(dim=0)
-        xc = x[i, accept].clone()
-        x[i, accept] = x[i+1, accept]
-        x[i+1, accept] = xc
-        scoresc = scores[i, accept].clone()
-        scores[i, accept] = scores[i+1, accept]
-        scores[i+1, accept] = scoresc
-        gensc = gens[i, accept].clone()
-        gens[i, accept] = gens[i+1, accept]
-        gens[i+1, accept] = gensc
+    for parity in range(2):  # even-odd decomposition: independent pairs can swap in parallel
+        idx = torch.arange(parity, nT-1, 2, device=device)
+        if idx.numel() == 0:
+            continue
+        T1 = T[idx]                                     # (P,)
+        T2 = T[idx + 1]                                 # (P,)
+        E1 = scores[idx]                                # (P, BperT)
+        E2 = scores[idx + 1]                            # (P, BperT)
+        accept = (E1 - E2) * (T1 - T2).unsqueeze(1) < -torch.log(torch.rand_like(E1)) * (T1 * T2).unsqueeze(1)
+        accepted[idx] = accept.sum(dim=1)
+        accept_3d = accept.unsqueeze(2)                 # (P, BperT, 1) for broadcasting over na
+        x_lo, x_hi = x[idx].clone(), x[idx + 1].clone()
+        x[idx]     = torch.where(accept_3d, x_hi, x_lo)
+        x[idx + 1] = torch.where(accept_3d, x_lo, x_hi)
+        s_lo, s_hi = scores[idx].clone(), scores[idx + 1].clone()
+        scores[idx]     = torch.where(accept, s_hi, s_lo)
+        scores[idx + 1] = torch.where(accept, s_lo, s_hi)
+        g_lo, g_hi = gens[idx].clone(), gens[idx + 1].clone()
+        gens[idx]     = torch.where(accept, g_hi, g_lo)
+        gens[idx + 1] = torch.where(accept, g_lo, g_hi)
     return accepted
 
 swap_interval = 50
