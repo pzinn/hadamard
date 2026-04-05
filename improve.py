@@ -155,6 +155,7 @@ def improve_greedy_fixed(x, scores):
             xx = .5*x[:, inds].to(complex_dtype)
             w = wrng_all[inds]
             xx2 = xx.clone()
+            changed = torch.zeros(B, device=device, dtype=torch.bool)
             for _ in range(k-1):
                 xx2 = torch.roll(xx2, shifts=1, dims=1)
                 torch.matmul(xx-xx2, w, out=flmod)
@@ -164,8 +165,10 @@ def improve_greedy_fixed(x, scores):
                 fl[improved_inds] = flmod[improved_inds]
                 xx[improved_inds] = xx2[improved_inds]
                 scores[improved_inds] = new_scores[improved_inds]
+                changed[improved_inds] = True
                 cnt += improved_inds.shape[0]
-            x[:, inds] = (2*xx).real.to(torch.int8)
+            changed_inds = torch.nonzero(changed, as_tuple=True)[0]
+            x[changed_inds.unsqueeze(1), inds] = (2*xx[changed_inds]).real.to(torch.int8)
     print(f'{cnt} ({cnt/B})')
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
