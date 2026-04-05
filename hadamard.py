@@ -237,7 +237,7 @@ def best_from(arrays, scores, gens):
     if B <= config.training_size:
         return unique_arrays, unique_scores, unique_gens
     # _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
-    _, idx = torch.topk(unique_scores + config.gen_decay * (params.gen - unique_gens), k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(unique_scores * (1 + config.gen_decay * (params.gen - unique_gens)), k=config.training_size, largest=False, sorted=False)
     return unique_arrays[idx], unique_scores[idx], unique_gens[idx]
 
 @torch.inference_mode()
