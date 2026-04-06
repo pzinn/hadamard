@@ -44,6 +44,27 @@ def attempt_swaps(x, scores, gens):
     #  x: (nT, BperT, n)
     #  scores, gens: (nT, BperT)
     accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
+    for i in range(nT-1):
+        T1, T2 = T[i], T[i+1]
+        E1, E2 = scores[i], scores[i+1]              # (BperT,)
+        accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
+        accepted[i] += accept.sum(dim=0)
+        xc = x[i, accept].clone()
+        x[i, accept] = x[i+1, accept]
+        x[i+1, accept] = xc
+        scoresc = scores[i, accept].clone()
+        scores[i, accept] = scores[i+1, accept]
+        scores[i+1, accept] = scoresc
+        gensc = gens[i, accept].clone()
+        gens[i, accept] = gens[i+1, accept]
+        gens[i+1, accept] = gensc
+    return accepted
+
+@torch.no_grad()
+def attempt_swaps_vectorised(x, scores, gens):  # not used. faster but performs slightly worse
+    #  x: (nT, BperT, n)
+    #  scores, gens: (nT, BperT)
+    accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
     for parity in range(2):  # even-odd decomposition: independent pairs can swap in parallel
         idx = torch.arange(parity, nT-1, 2, device=device)
         if idx.numel() == 0:
@@ -66,7 +87,7 @@ def attempt_swaps(x, scores, gens):
         gens[idx + 1] = torch.where(accept, g_lo, g_hi)
     return accepted
 
-p = .25
+p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
     global logT, T
