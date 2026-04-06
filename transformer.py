@@ -216,8 +216,7 @@ def prepare_training_inputs(batch):
     string_batch = array_to_string(batch)
     if model.uses_score:
         ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
-        for i in range(1, nm):
-            ff[:, :i, :] += ff[:, i, :].unsqueeze(1)
+        ff = torch.flip(torch.cumsum(torch.flip(ff, dims=(1,)), dim=1), dims=(1,))
         return string_batch, {"score_batch": ff, "compute_loss": True}
     return string_batch, {"compute_loss": True}
 
