@@ -154,7 +154,14 @@ def save_model():
 
 # Sampling/evaluation helpers.
 @torch.inference_mode()
-def generate(batch):
+def decode_segment_tokens(X, dtype=torch.int8):
+    B = X.shape[0]
+    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)
+    return signs[:, :nn].to(dtype=dtype)
+
+
+@torch.inference_mode()
+def generate(batch, arrays):
     """
     Fill token positions autoregressively in-place for a batch of sequences.
     """
@@ -170,7 +177,8 @@ def generate(batch):
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
-            signs = ((((batch[:, offset:offset+segment_string_length].unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)[:, :nn].to(dtype=model.transformer.wse.weight.dtype)
+            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=model.transformer.wse.weight.dtype)
+            arrays[:, j*nn:(j+1)*nn] = signs.to(dtype=torch.int8)
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
         return
@@ -181,13 +189,14 @@ def generate(batch):
         logits = logits[:, -1, :] / temperature
         probs = F.softmax(logits, dim=-1)
         batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
+    arrays.copy_(string_to_array(batch))
 
 # Conversion between token strings and +/-1 arrays.
 @torch.no_grad()
 def string_to_array(X):
     B = X.shape[0]
-    signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nm, nn_pad)
-    return signs[:, :, :nn].to(dtype=torch.int8).view(B, na)
+    signs = decode_segment_tokens(X.view(B * nm, segment_string_length), dtype=torch.int8)
+    return signs.view(B, na)
 
 @torch.no_grad()
 def array_to_string(signs):
@@ -292,11 +301,13 @@ def sample():
     torch.set_float32_matmul_precision('high')
     X = torch.empty(config.sample_batch_size, config.block_size, dtype=torch.int, device=device)
     arrays_cpu = torch.empty((config.sample_size, na), dtype=torch.int8, pin_memory=True)
+    arrays = torch.empty((config.sample_batch_size, na), dtype=torch.int8, device=device)
     for i in range(0, config.sample_size, config.sample_batch_size):
         j = min(i + config.sample_batch_size, config.sample_size)
         cur_batch = X[:j-i]
+        cur_arrays = arrays[:j-i]
         print('*', end=''); sys.stdout.flush()
-        generate(cur_batch)
-        arrays_cpu[i:j] = string_to_array(cur_batch)
+        generate(cur_batch, cur_arrays)
+        arrays_cpu[i:j] = cur_arrays
     print('')
     return arrays_cpu
