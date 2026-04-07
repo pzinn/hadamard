@@ -71,8 +71,8 @@ if device == 'mps' and not torch.backends.mps.is_available():
 
 import argparse
 parser = argparse.ArgumentParser()
-parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-debugging = False
+parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+verbose = False
 
 import subprocess
 try:
@@ -169,9 +169,9 @@ def compute_derived():
     cst = 1 / math.sqrt(n)
 
 def init_from_argv(argv=None):
-    global debugging, training_size
+    global verbose, training_size
     args = parser.parse_args(argv)
-    debugging = args.debug
+    verbose = args.verbose
     for param in hparams_list:
         val = getattr(args, param)
         if val is not None:

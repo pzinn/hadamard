@@ -15,3 +15,13 @@ def print(*args, **kwargs):
         builtins.print(stamp, end="", file=file)
     builtins.print(*args, **kwargs)
     _print_at_line_start = end.endswith("\n")
+
+
+def print_header(text, file=sys.stdout):
+    global _print_at_line_start
+    if not _print_at_line_start:
+        builtins.print(file=file)
+    banner = f"===== {text} ====="
+    builtins.print(file=file)
+    builtins.print(banner, file=file)
+    _print_at_line_start = True

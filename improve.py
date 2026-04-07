@@ -1,6 +1,6 @@
 import torch
 import params
-from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, segment_sums
+from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, segment_sums, verbose
 from timestamped_print import print
 import sys
 
@@ -18,12 +18,13 @@ k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # optimised k-bit flip
-    print(f"improve1p ", end=''); sys.stdout.flush()
+    print(f"improve1p"); sys.stdout.flush()
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     while True:
         M = active_rows.numel()
-        print(f'{M/B}')
+        if verbose:
+            print(f'{M/B}')
         scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
         f = fft(arrays[active_rows])  # better than flip updating for accuracy
         fl = f.view(M, nm*(nn2+1))
@@ -62,7 +63,7 @@ def mod_score_fft(f, z):
 zmul = 1.5  # adjustable parameter
 @torch.inference_mode()
 def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
-    print(f"improve1p_fixed ", end=''); sys.stdout.flush()
+    print(f"improve1p_fixed"); sys.stdout.flush()
     z = cst  # is that the correct scaling with n?
     oldz = 0
     B = arrays.shape[0]
@@ -73,7 +74,8 @@ def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively en
         f = fft(arrays[active_rows])  # better than flip updating for accuracy
         pen = penalty(f)
         mask = pen > eps  # always continue with ones violating segment_sums
-        print(f"{M/B} {mask.sum()/B}")
+        if verbose:
+            print(f"{M/B} {mask.sum()/B}")
         scores[active_rows] += (z-oldz) * pen  # adjust scores to new value of z
         fl = f.view(M, nm*(nn2+1))
         fmod = torch.empty_like(f)
@@ -108,7 +110,7 @@ p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 @torch.inference_mode()
 def improve_greedy(x, scores):
-    print("improve_greedy ", end=''); sys.stdout.flush()
+    print("improve_greedy"); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -132,11 +134,12 @@ def improve_greedy(x, scores):
             x[improved_inds.unsqueeze(1), inds] *= -1
             scores[improved_inds] = new_scores[improved_inds]
             cnt += improved_inds.shape[0]
-    print(f'{cnt} ({cnt/B})')
+    if verbose:
+        print(f'{cnt} ({cnt/B})')
 
 @torch.inference_mode()
 def improve_greedy_fixed(x, scores):
-    print("improve_greedy_fixed ", end=''); sys.stdout.flush()
+    print("improve_greedy_fixed"); sys.stdout.flush()
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -170,7 +173,8 @@ def improve_greedy_fixed(x, scores):
                 cnt += improved_inds.shape[0]
             changed_inds = torch.nonzero(changed, as_tuple=True)[0]
             x[changed_inds.unsqueeze(1), inds] = (2*xx[changed_inds]).real.to(torch.int8)
-    print(f'{cnt} ({cnt/B})')
+    if verbose:
+        print(f'{cnt} ({cnt/B})')
 
 sw0 = torch.tensor([[-1, -1, 1, 1], [-1, 1, -1, 1], [-1, 1, 1, -1], [1, -1, -1, 1], [1, -1, 1, -1], [1, 1, -1, -1]], device=device, dtype=torch.int8)
 psw, ksw = sw0.shape  # psw = ksw choose ksw/2
@@ -180,7 +184,7 @@ sw = sw0[sw_idx].reshape(-1, nm * ksw)
 
 @torch.inference_mode()
 def improve_phases(arrays, scores):
-    print(f"improve_phases ", end=''); sys.stdout.flush()
+    print(f"improve_phases"); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
@@ -214,11 +218,12 @@ def improve_phases(arrays, scores):
             f[improved_inds, j] = fmod[improved]
             cnt += improved_inds.shape[0]
             h[:, 1:] *= torch.exp(1j * (torch.rand((M, nn2), device=device)-.5))
-        print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
+        if verbose:
+            print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
 
 @torch.inference_mode()
 def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
-    print(f"improve4x4_fixed ", end=''); sys.stdout.flush()
+    print(f"improve4x4_fixed"); sys.stdout.flush()
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = x.shape[0]
     f = fft(x)
@@ -273,4 +278,5 @@ def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
         cur[improved] = sw[i]
         cnt += torch.sum(improved)
     x.scatter_(1, inds, cur)
-    print(f'{cnt/B}')
+    if verbose:
+        print(f'{cnt/B}')

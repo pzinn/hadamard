@@ -1,6 +1,7 @@
 import torch
-from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtype
+from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtype, verbose
 from timestamped_print import print
+import sys
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
@@ -91,6 +92,7 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used. faster but performs 
 p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
+    print(f"parallel_tempering"); sys.stdout.flush()
     global logT, T
     iterations = na * 50 * config.num_improve
     avg_k = (3-p)/(1-p) if fixed_sums else 1/(1-p)
@@ -125,4 +127,5 @@ def parallel_tempering(x, scores, gens):
                     elif acc[i] > .3:
                         logT[i+1:] += .05 * (logT[i+1] - logT[i])
                 T = .1 ** logT
-            print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
+            if verbose:
+                print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
