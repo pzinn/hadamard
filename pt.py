@@ -1,5 +1,6 @@
 import torch
 from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtype
+from timestamped_print import print
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20

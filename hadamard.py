@@ -10,6 +10,7 @@ from pt import parallel_tempering, nT
 import logger
 import transformer
 from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
+from timestamped_print import print
 # logging/debugging
 import sys
 from timeit import default_timer as timer  # to measure exec time
@@ -89,8 +90,9 @@ def record_stats(arrays, scores, gens, prefix=""):
 
     segment_sums = arrays.view(B, nm, nn).sum(dim=2)
     segment_sums = torch.sort(segment_sums.abs(), dim=1).values
-    ss_tally = tally_str(segment_sums)
-    print(f"Segment sums tally: {ss_tally}")
+    if debugging:
+        ss_tally = tally_str(segment_sums)
+        print(f"Segment sums tally: {ss_tally}")
 
     hada_gens_tally = tally_str(gens[hada_inds])
     hada_ss_tally = tally_str(segment_sums[hada_inds])
@@ -289,7 +291,7 @@ def main():
         try:
             with open(init_sample, 'r') as f:
                 arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
-            print(f'***Loading initial sample from {init_sample}***')
+            print(f'\n***Loading initial sample from {init_sample}***')
         except FileNotFoundError:
             arrays = torch.empty((0, na), dtype=torch.int8)
     else:

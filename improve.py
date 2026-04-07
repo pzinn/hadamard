@@ -1,6 +1,7 @@
 import torch
 import params
 from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, segment_sums
+from timestamped_print import print
 import sys
 
 # precompute roots of unity for fft delta
