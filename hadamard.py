@@ -33,19 +33,18 @@ else:
 
 # MAIN-DEFINITIONS #
 
-def write_arrays_buffer(buffer, a):
+def arrays_to_bytes(a):
     plus, minus = ord('+'), ord('-')
     rows = torch.where(a > 0, plus, minus).to(torch.uint8)
-    for r in rows:
-        buffer.write(bytes(r.tolist()))
-        buffer.write(b"\n")
+    newlines = torch.full((rows.shape[0], 1), ord('\n'), dtype=torch.uint8, device=rows.device)
+    return bytes(torch.cat((rows, newlines), dim=1).to("cpu", memory_format=torch.contiguous_format).view(-1).tolist())
 
 def write_arrays(file_path, a):
     with open(file_path, 'wb') as file:
-        write_arrays_buffer(file, a)
+        file.write(arrays_to_bytes(a))
 
 def print_arrays(a):
-    write_arrays_buffer(sys.stdout.buffer, a)
+    sys.stdout.buffer.write(arrays_to_bytes(a))
     sys.stdout.flush()
 
 # for keeping track of stats
