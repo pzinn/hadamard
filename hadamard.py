@@ -4,13 +4,13 @@
 import torch
 import params
 params.init_from_argv()
-from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
+from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
 from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
 from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
-# logging/debugging
+from timestamped_print import print, print_header
 import sys
 from timeit import default_timer as timer  # to measure exec time
 
@@ -88,10 +88,9 @@ def record_stats(arrays, scores, gens, prefix=""):
     print(f"Hadamard ratio: {nh}")
     segment_sums = arrays.view(B, nm, nn).sum(dim=2)
     segment_sums = torch.sort(segment_sums.abs(), dim=1).values
-    """
-    ss_tally = tally_str(segment_sums)
-    print(f"Segment sums tally: {ss_tally}")
-    """
+    if verbose:
+        ss_tally = tally_str(segment_sums)
+        print(f"Segment sums tally: {ss_tally}")
     hada_gens_tally = tally_str(gens[hada_inds])
     hada_ss_tally = tally_str(segment_sums[hada_inds])
 
@@ -111,7 +110,7 @@ def record_stats(arrays, scores, gens, prefix=""):
             file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} gens, H-gens, H-segment sums tallies\n")
         file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_gens_tally} {hada_ss_tally}\n")
 
-    if prefix and not prefix.startswith("debug"):
+    if prefix and not prefix.startswith("improve"):
         logger.record_scores(prefix, scores, avg_score, nh)
 
 
@@ -155,9 +154,9 @@ def parallel_improve(arrays, scores, gens):
     start_timer = timer()
     improve_phases(arrays, scores)
     scores = score(arrays)  # don't trust improve
-    if debugging:
+    if verbose:
         print(f"improve B1 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug B1")
+        record_stats(arrays, scores, gens, prefix="improve B1")
     #
     start_timer = timer()
     if fixed_sums:
@@ -165,9 +164,9 @@ def parallel_improve(arrays, scores, gens):
     else:
         improve1p(arrays, scores)
     scores = score(arrays)  # don't trust improve
-    if debugging:
+    if verbose:
         print(f"improve B2 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug B2")
+        record_stats(arrays, scores, gens, prefix="improve B2")
     # step C: parallel tempering (if num_improve>0)
     start_timer = timer()
     scores, inds = torch.sort(scores, descending=True)
@@ -182,9 +181,9 @@ def parallel_improve(arrays, scores, gens):
         B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
         B1 = (B1 // nT) * nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
-    if debugging:
+    if verbose:
         print(f"pt time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug pt")
+        record_stats(arrays, scores, gens, prefix="improve pt")
     # step D: second pass of local search (if num_improve>0)
     for _ in range(config.num_improve):
         start_timer = timer()
@@ -193,9 +192,9 @@ def parallel_improve(arrays, scores, gens):
         else:
             improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
+        if verbose:
             print(f"improve D1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug D1")
+            record_stats(arrays, scores, gens, prefix="improve D1")
         #
         start_timer = timer()
         if fixed_sums:
@@ -203,21 +202,21 @@ def parallel_improve(arrays, scores, gens):
         else:
             improve_greedy(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
+        if verbose:
             print(f"improve D2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug D2")
+            record_stats(arrays, scores, gens, prefix="improve D2")
         #
         start_timer = timer()
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
+        if verbose:
             print(f"improve D3 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug D3")
+            record_stats(arrays, scores, gens, prefix="improve D3")
         #
     # step E: rotate the arrays to a standard form
     start_timer = timer()
     arrays = canonicalise_heuristic(arrays, symmetry_ctx, fft, scores, score if params.test_score else None, eps)
-    if debugging:
+    if verbose:
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
@@ -287,7 +286,7 @@ def main():
         try:
             with open(init_sample, 'r') as f:
                 arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
-            print(f'***Loading initial sample from {init_sample}***')
+            print(f'\n***Loading initial sample from {init_sample}***')
         except FileNotFoundError:
             arrays = torch.empty((0, na), dtype=torch.int8)
     else:
@@ -304,12 +303,12 @@ def main():
             params.skip_first_improve = False
         else:
             # improve existing data, write to GEN-(gen)
-            print('\n***Improving***')
+            print_header("Improving")
             start_timer = timer()
             arrays, scores, gens = batch_improve(arrays, scores, gens)
-            if debugging:
+            if verbose:
                 print(f"improving time: {timer() - start_timer}")
-            print('\n***Selecting***')  # technically already done, but left for clarity of output
+            print_header("Selecting")  # technically already done, but left for clarity of output
             record_stats(arrays, scores, gens, "selected")
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
         if params.gen == config.max_iterations:
@@ -320,7 +319,7 @@ def main():
             if device.startswith('cuda'):
                 torch.cuda.empty_cache()
             # train on GEN-gen
-            print(f"\n***Training on GEN-{params.gen:02d}***")
+            print_header(f"Training On GEN-{params.gen:02d}")
             coeff = 1 if params.gen == 0 or not resume_training else (1+params.gen)**-1.5
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
@@ -329,12 +328,12 @@ def main():
             eval_freq = 1000
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
-            if debugging:
+            if verbose:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
         if device.startswith('cuda'):
             torch.cuda.empty_cache()
-        print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
+        print_header(f"Sampling From Transformer Trained On GEN-{params.gen:02d}")
         params.gen += 1
         start_timer = timer()
         new_arrays = transformer.sample()
@@ -355,7 +354,7 @@ def main():
         combined_gens[perm[:A]] = gens
         combined_gens[perm[A:]] = new_gens
         arrays, scores, gens = combined_arrays, combined_scores, combined_gens
-        if debugging:
+        if verbose:
             print(f"sampling time: {timer() - start_timer}")
 
 

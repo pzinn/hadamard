@@ -11,6 +11,7 @@ from torch.nn import functional as F
 import params  # for work_dir
 from params import na, nn, nn2, nm, device, config, resume_training, randomise_symmetry, fft, cst
 import logger
+from timestamped_print import print
 
 # Transformer language model.
 
