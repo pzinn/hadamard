@@ -20,8 +20,8 @@ def print(*args, **kwargs):
 def print_header(text, file=sys.stdout):
     global _print_at_line_start
     if not _print_at_line_start:
-        builtins.print(file=file)
+        builtins.print(file=file, flush=True)
     banner = f"===== {text} ====="
-    builtins.print(file=file)
-    builtins.print(banner, file=file)
+    builtins.print(file=file, flush=True)
+    builtins.print(banner, file=file, flush=True)
     _print_at_line_start = True

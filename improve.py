@@ -2,7 +2,6 @@ import torch
 import params
 from params import n, na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, segment_sums, verbose
 from timestamped_print import print
-import sys
 
 # precompute roots of unity for fft delta
 w = torch.exp(2j * torch.tensor(torch.pi, device=device, dtype=real_dtype) / nn)
@@ -18,7 +17,7 @@ k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
 def improve1p(arrays, scores):  # optimised k-bit flip
-    print(f"improve1p"); sys.stdout.flush()
+    print("improve1p", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     while True:
@@ -63,7 +62,7 @@ def mod_score_fft(f, z):
 zmul = 1.5  # adjustable parameter
 @torch.inference_mode()
 def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
-    print(f"improve1p_fixed"); sys.stdout.flush()
+    print("improve1p_fixed", flush=True)
     z = cst  # is that the correct scaling with n?
     oldz = 0
     B = arrays.shape[0]
@@ -110,7 +109,7 @@ p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 @torch.inference_mode()
 def improve_greedy(x, scores):
-    print("improve_greedy"); sys.stdout.flush()
+    print("improve_greedy", flush=True)
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -139,7 +138,7 @@ def improve_greedy(x, scores):
 
 @torch.inference_mode()
 def improve_greedy_fixed(x, scores):
-    print("improve_greedy_fixed"); sys.stdout.flush()
+    print("improve_greedy_fixed", flush=True)
     B = x.shape[0]
     # precompute fft
     f = fft(x)
@@ -184,7 +183,7 @@ sw = sw0[sw_idx].reshape(-1, nm * ksw)
 
 @torch.inference_mode()
 def improve_phases(arrays, scores):
-    print(f"improve_phases"); sys.stdout.flush()
+    print("improve_phases", flush=True)
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = arrays.shape[0]
     f = fft(arrays)
@@ -223,7 +222,7 @@ def improve_phases(arrays, scores):
 
 @torch.inference_mode()
 def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
-    print(f"improve4x4_fixed"); sys.stdout.flush()
+    print("improve4x4_fixed", flush=True)
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
     B = x.shape[0]
     f = fft(x)
