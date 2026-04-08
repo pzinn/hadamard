@@ -27,9 +27,9 @@ if segment_sums is not None:
     assert sum(s * s for s in segment_sums) == n
     print(f"{segment_sums=}")
 eps = 2e-5
-symmetry_ctx = build_context(nn=nn, nm=1, device=device, real_dtype=torch.float32)
-sequence_batch_size = 1 << 16
+sequence_batch_size = 1 << 20  # to be adjusted, depending on available GPU memory
 
+symmetry_ctx = build_context(nn=nn, nm=1, device=device, real_dtype=torch.float32)
 
 def pm1_sequence_batches(n: int, batch_size: int):
     rows = 1 << n
@@ -174,17 +174,24 @@ for i, (block_classes, block_multiplicities) in enumerate(block_tables[1:], star
     new_partial_sums = None
     new_partial_counts = None
     print(f"combination step {i}")
-    for j in range(small_table.shape[0]):
-        summed_autocorrelations = large_table + small_table[j].unsqueeze(0)
-        spectra = torch.fft.rfft(summed_autocorrelations, dim=1).real
-        mask = (spectra <= n+eps).all(dim=-1)
+    L = large_table.shape[0]
+    S = small_table.shape[0]
+    combo_batch = max(1, min(S, (sequence_batch_size + L - 1) // L))
+    for j_start in range(0, S, combo_batch):
+        j_end = min(j_start + combo_batch, S)
+        batch_small = small_table[j_start:j_end]           # (B_s, nn)
+        batch_small_counts = small_counts[j_start:j_end]   # (B_s,)
+        summed = (large_table.unsqueeze(0) + batch_small.unsqueeze(1)).reshape(-1, nn)
+        spectra = torch.fft.rfft(summed, dim=1).real
+        mask = (spectra <= n+eps).all(dim=-1)               # (B_s * L,)
         if mask.any():
-            canonical_sums = canonicalise_automorphism_exact(summed_autocorrelations[mask], symmetry_ctx)
+            combined_counts = (batch_small_counts.unsqueeze(1) * large_counts.unsqueeze(0)).reshape(-1)
+            canonical_sums = canonicalise_automorphism_exact(summed[mask], symmetry_ctx)
             new_partial_sums, new_partial_counts = merge_tables(
                 new_partial_sums,
                 new_partial_counts,
                 canonical_sums,
-                small_counts[j] * large_counts[mask],
+                combined_counts[mask],
             )
     if new_partial_sums is None:
         partial_sums = torch.empty((0, large_table.shape[1]), device=device, dtype=partial_sums.dtype)
