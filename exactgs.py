@@ -4,8 +4,6 @@
 # script to compute exactly # GS H-matrices
 
 import sys
-from itertools import combinations
-
 import torch
 
 from symmetry import build_context, canonicalise_automorphism_exact
@@ -43,34 +41,55 @@ def pm1_sequence_batches(n: int, batch_size: int):
         yield (bits * 2 - 1).to(dtype=torch.int8)
 
 
-def pm1_sequence_batches_with_sum(n: int, total_sum: int, batch_size: int):
-    if (n + total_sum) % 2 != 0:
+def necklace_batches_with_sum(length: int, total_sum: int, batch_size: int):
+    """Generate ±1 necklace representatives with fixed sum, in batches.
+
+    Yields (sequences, orbit_sizes) tensors.  Uses Sawada's fixed-content
+    necklace algorithm so only one representative per cyclic orbit is produced;
+    orbit_sizes carries the weight (= minimal period) for each representative.
+    """
+    if (length + total_sum) % 2 != 0:
         return
-    num_ones = (n + total_sum) // 2
-    if num_ones < 0 or num_ones > n:
+    num_ones = (length + total_sum) // 2
+    if num_ones < 0 or num_ones > length:
         return
-    if num_ones == 0:
-        yield -torch.ones((1, n), dtype=torch.int8, device=device)
+    if length == 0:
+        yield (torch.ones((1, 0), dtype=torch.int8, device=device),
+               torch.ones((1,), dtype=torch.long, device=device))
         return
-    if num_ones == n:
-        yield torch.ones((1, n), dtype=torch.int8, device=device)
-        return
-    chunk = []
-    for comb in combinations(range(n), num_ones):
-        chunk.append(comb)
-        if len(chunk) == batch_size:
-            positions = torch.tensor(chunk, dtype=torch.long, device=device)
-            sequences = -torch.ones((positions.shape[0], n), dtype=torch.int8, device=device)
-            rows = torch.arange(positions.shape[0], device=device).unsqueeze(1)
-            sequences[rows, positions] = 1
-            yield sequences
-            chunk = []
-    if chunk:
-        positions = torch.tensor(chunk, dtype=torch.long, device=device)
-        sequences = -torch.ones((positions.shape[0], n), dtype=torch.int8, device=device)
-        rows = torch.arange(positions.shape[0], device=device).unsqueeze(1)
-        sequences[rows, positions] = 1
-        yield sequences
+    divs = [d for d in range(1, length) if length % d == 0]
+
+    a = [0] * (length + 1)
+    remaining = [length - num_ones, num_ones]
+    buf_seq = []
+    buf_per = []
+
+    def min_period():
+        for d in divs:
+            if all(a[i + 1] == a[(i % d) + 1] for i in range(d, length)):
+                return d
+        return length
+
+    def gen(t, p):
+        if t > length:
+            if length % p == 0:
+                buf_seq.append(list(a[1:length + 1]))
+                buf_per.append(min_period())
+            return
+        for j in range(a[t - p], 2):
+            if remaining[j] > 0:
+                a[t] = j
+                remaining[j] -= 1
+                gen(t + 1, p if j == a[t - p] else t)
+                remaining[j] += 1
+
+    gen(1, 1)
+    for i in range(0, len(buf_seq), batch_size):
+        buf_slice_seq = buf_seq[i:i + batch_size]
+        buf_slice_per = buf_per[i:i + batch_size]
+        seqs = torch.tensor(buf_slice_seq, dtype=torch.int8, device=device) * 2 - 1
+        periods = torch.tensor(buf_slice_per, dtype=torch.long, device=device)
+        yield seqs, periods
 
 def unique_rows_with_counts(rows, counts=None):
     if counts is None:
@@ -101,10 +120,10 @@ def build_block_table(required_sum=None):
     autocorrelation_classes = None
     class_multiplicities = None
     if required_sum is None:
-        iterator = pm1_sequence_batches(nn, sequence_batch_size)
+        iterator = ((batch, None) for batch in pm1_sequence_batches(nn, sequence_batch_size))
     else:
-        iterator = pm1_sequence_batches_with_sum(nn, required_sum, sequence_batch_size)
-    for sequences in iterator:
+        iterator = necklace_batches_with_sum(nn, required_sum, sequence_batch_size)
+    for sequences, weights in iterator:
         spectra = torch.fft.rfft(sequences, dim=1)
         power_spectra = torch.view_as_real(spectra).square().sum(dim=-1)
         mask = (power_spectra <= n + eps).all(dim=-1)
@@ -112,7 +131,8 @@ def build_block_table(required_sum=None):
         if power_spectra.numel() == 0:
             continue
         chunk_classes = torch.fft.irfft(power_spectra, n=nn).round().to(dtype=autocorrel_dtype)
-        chunk_classes, chunk_counts = unique_rows_with_counts(chunk_classes)
+        chunk_weights = weights[mask] if weights is not None else None
+        chunk_classes, chunk_counts = unique_rows_with_counts(chunk_classes, chunk_weights)
         autocorrelation_classes, class_multiplicities = merge_tables(
             autocorrelation_classes, class_multiplicities, chunk_classes, chunk_counts
         )
