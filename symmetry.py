@@ -13,17 +13,17 @@ def build_context(n=None, segment_sums=None, device=None, real_dtype=None):
         nn = params.nn
         na = params.na
         nn2 = params.nn2
+        nm = params.nm
         if segment_sums is None and getattr(params, "fixed_sums", False):
             segment_sums = params.segment_sums
     else:
         nn = n // 4
-        na = 4 * nn
+        na = nm * nn
         nn2 = (nn - 1) // 2
     if device is None:
         device = params.device
     if real_dtype is None:
         real_dtype = params.real_dtype
-    nm = 4
     fixed_sums = segment_sums is not None
     aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
     perms = torch.tensor(
