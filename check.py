@@ -148,7 +148,7 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
         pair_counts = {}
         hadamard_count = 0
         canonical_parts = []
-        symmetry_ctx = build_context(n=n, device=device)
+        symmetry_ctx = build_context(nn=n // 4, nm=4, device=device)
         batch_size = max_batch_size_for_n(n)
         for i in range(0, batch.shape[0], batch_size):
             chunk = batch[i:i + batch_size]

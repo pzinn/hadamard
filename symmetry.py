@@ -7,9 +7,8 @@ import torch
 import params
 
 
-def build_context(n=None, segment_sums=None, device=None, real_dtype=None):
-    if n is None:
-        n = params.n
+def build_context(nn=None, nm=None, segment_sums=None, device=None, real_dtype=None):
+    if nn is None:
         nn = params.nn
         na = params.na
         nn2 = params.nn2
@@ -17,7 +16,8 @@ def build_context(n=None, segment_sums=None, device=None, real_dtype=None):
         if segment_sums is None and getattr(params, "fixed_sums", False):
             segment_sums = params.segment_sums
     else:
-        nn = n // 4
+        if nm is None:
+            raise ValueError("build_context requires nm when nn is provided")
         na = nm * nn
         nn2 = (nn - 1) // 2
     if device is None:
@@ -38,7 +38,6 @@ def build_context(n=None, segment_sums=None, device=None, real_dtype=None):
     vec = torch.frac(torch.exp(0.1 * torch.arange(1, nn + 1, device=device, dtype=real_dtype)))
     fft_vec = torch.fft.rfft(vec)
     return SimpleNamespace(
-        n=n,
         nm=nm,
         nn=nn,
         na=na,
@@ -141,6 +140,32 @@ def canonicalise_heuristic(arrays, ctx, fft_fn, scores=None, score_fn=None, eps=
     arrays = _apply_aut_heuristic(arrays, ctx, fft_fn)
     canonicalise_local_symmetry(arrays, ctx, scores, score_fn, eps)
     return arrays
+
+
+@torch.inference_mode()
+def canonicalise_automorphism_exact(arrays, ctx):
+    B = arrays.shape[0]
+    best = None
+    for i in range(len(ctx.aut1)):
+        idx = torch.full((B,), i, device=ctx.device, dtype=torch.long)
+        candidate = apply_aut(idx, arrays, ctx)
+        if best is None:
+            best = candidate
+            continue
+        undecided = torch.ones(B, device=ctx.device, dtype=torch.bool)
+        better = torch.zeros(B, device=ctx.device, dtype=torch.bool)
+        for k in range(ctx.na):
+            rows = torch.nonzero(undecided, as_tuple=True)[0]
+            if rows.numel() == 0:
+                break
+            cand_k = candidate[rows, k]
+            best_k = best[rows, k]
+            gt = cand_k > best_k
+            lt = cand_k < best_k
+            better[rows[gt]] = True
+            undecided[rows[gt | lt]] = False
+        best[better] = candidate[better]
+    return best
 
 
 @torch.inference_mode()
