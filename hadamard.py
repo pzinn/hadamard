@@ -2,54 +2,49 @@
 # coding: utf-8
 
 import torch
-import math
 import params
-from params import na, nm, nn, nn2, device, resume, resume_training, random_seed, is_sweep, debugging, config, score, fft, fixed_sums, num_ones, aut, real_dtype, eps
-from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve_tabu
+params.init_from_argv()
+from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
+from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
-# logging/debugging
+from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
+from timestamped_print import print, print_header
 import sys
 from timeit import default_timer as timer  # to measure exec time
 
-"""
-if debugging:
-    # Start recording memory snapshot history
-    torch.cuda.memory._record_memory_history(max_entries=100000)
-"""
-
 if fixed_sums:
-    def generate_random_blocks(B, n, k, device):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
-        a = -torch.ones((B, n), dtype=torch.int8, device=device)
-        rand = torch.rand((B, n), device=device)
+    @torch.inference_mode()
+    def generate_random_blocks(B, n, k):  # Generate a (B, n) tensor of ±1 with exactly k entries of +1 per row.
+        a = -torch.ones((B, n), dtype=torch.int8)
+        rand = torch.rand((B, n))
         topk = rand.argsort(dim=1)[:, :k]        # (B, k) random unique positions per row
-        rows = torch.arange(B, device=device).unsqueeze(1)
+        rows = torch.arange(B).unsqueeze(1)
         a[rows, topk] = 1
         return a
     @torch.inference_mode()
-    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j], device) for j in range(nm)], dim=1)
+    def generate_random_arrays(batch_size):  # used to be done on gpu during first scoring, maybe reinstate at some point?
+        return torch.cat([generate_random_blocks(batch_size, nn, num_ones[j]) for j in range(nm)], dim=1)
 else:
     @torch.inference_mode()
-    def generate_random_arrays(batch_size, device):  # used to be pure gpu, maybe reinstate at some point?
-        return 2 * torch.randint(2, (batch_size, na), device=device, dtype=torch.int8) - 1
+    def generate_random_arrays(batch_size):  # used to be done on gpu during first scoring, maybe reinstate at some point?
+        return 2 * torch.randint(2, (batch_size, na), dtype=torch.int8) - 1
 
 # MAIN-DEFINITIONS #
 
-def write_arrays_buffer(buffer, a):
+def arrays_to_bytes(a):
     plus, minus = ord('+'), ord('-')
     rows = torch.where(a > 0, plus, minus).to(torch.uint8)
-    for r in rows:
-        buffer.write(bytes(r.tolist()))
-        buffer.write(b"\n")
+    newlines = torch.full((rows.shape[0], 1), ord('\n'), dtype=torch.uint8, device=rows.device)
+    return bytes(torch.cat((rows, newlines), dim=1).to("cpu", memory_format=torch.contiguous_format).view(-1).tolist())
 
 def write_arrays(file_path, a):
     with open(file_path, 'wb') as file:
-        write_arrays_buffer(file, a)
+        file.write(arrays_to_bytes(a))
 
 def print_arrays(a):
-    write_arrays_buffer(sys.stdout.buffer, a)
+    sys.stdout.buffer.write(arrays_to_bytes(a))
     sys.stdout.flush()
 
 # for keeping track of stats
@@ -62,42 +57,8 @@ def record_stats(arrays, scores, gens, prefix=""):
     mc_size = 1000
     with torch.random.fork_rng():
         s = (arrays[torch.randint(B, (mc_size,), device=arrays.device)] * arrays[torch.randint(B, (mc_size,), device=arrays.device)]).sum(dim=1).abs().sum()/(mc_size*na)
-    """
-    # proper/slow way: REDO ONE DAY
-    mc_size = 1000
-    perms = params.perms.tolist()
-    s = torch.tensor(0., device=arrays.device)
-    for _ in range(mc_size):
-        a1 = arrays[torch.randint(B,())]
-        a2 = arrays[torch.randint(B,())]
-        a13 = a1[:3*nn].reshape(3,nn)
-        a23 = a1[:3*nn].reshape(3,nn)
-        a11 = a1[3*nn:]
-        a21 = a2[3*nn:]
-        fft_a1 = torch.fft.fft(a11, dim=0)
-        fft_a2 = torch.fft.fft(a21, dim=0)
-        corr1 = torch.fft.ifft(fft_a1 * torch.conj(fft_a2), dim=0).real
-        corr2 = torch.fft.ifft(fft_a1 * fft_a2, dim=0).real
-        corr = torch.stack([corr1,corr2],dim=0)
-        corr = torch.abs(corr)
-        s += torch.max(corr)
-        ss = 0
-        for p in perms:
-            sss = torch.sum(a13[p]*a23,dim=(0,1))
-            if sss>ss:
-                ss=sss
-        s += ss
-    s /= mc_size * na
-    """
     s = s.item()
     print(f"Correlation: {s}")
-
-    if fixed_sums:
-        # check #1's
-        a = arrays.view(B, nm, nn)
-        k = (a.sum(dim=2).to(device=device)+nn)//2
-        kcheck = (k == num_ones).all(dim=1)
-        print(f"Correct # ones: {kcheck.sum()/B}")
 
     # now scores
     min_score = torch.min(scores)
@@ -112,24 +73,30 @@ def record_stats(arrays, scores, gens, prefix=""):
     max_score = torch.max(scores)
     print(f"Max score: {max_score}")
 
-    # tally=Counter([val[1] for val in vals])
-    gens_count = torch.bincount(gens)
-    gens_count, gens_order = gens_count.sort(descending=True)
-    gens_tally = {g: c for g, c in zip(gens_order.tolist(), gens_count.tolist()) if c > 0}
+    def tally_str(data):
+        fmt = (lambda x: x.item()) if data.ndim == 1 else (lambda x: tuple(x.tolist()))
+        unique_data, counts = torch.unique(data, dim=0, return_counts=True)
+        idx = torch.argsort(counts, descending=True)
+        return "{" + ", ".join(f"{fmt(unique_data[i])}: {counts[i].item():_}" for i in idx) + "}"
+
+    gens_tally = tally_str(gens)
     print(f"Gen tally: {gens_tally}")
 
     hada_inds = torch.nonzero(scores < eps, as_tuple=True)[0]
     nh = len(hada_inds) / len(arrays)
     print(f"Hadamard ratio: {nh}")
-
-    hada_count = torch.bincount(gens[hada_inds])
-    hada_count, hada_order = hada_count.sort(descending=True)
-    hada_tally = {g: c for g, c in zip(hada_order.tolist(), hada_count.tolist()) if c > 0}
-    print(f"Hadamard gen tally: {hada_tally}")
+    segment_sums = arrays.view(B, nm, nn).sum(dim=2)
+    segment_sums = torch.sort(segment_sums.abs(), dim=1).values
+    if verbose:
+        ss_tally = tally_str(segment_sums)
+        print(f"Segment sums tally: {ss_tally}")
+    hada_gens_tally = tally_str(gens[hada_inds])
+    hada_ss_tally = tally_str(segment_sums[hada_inds])
 
     if len(hada_inds) > 0:
-        new_hada_tensor = find_aut(arrays[hada_inds].to(device=device))
-        derotate(new_hada_tensor)
+        print(f"Hadamard gen tally: {hada_gens_tally}")
+        print(f"Hadamard segment sums tally: {hada_ss_tally}")
+        new_hada_tensor = canonicalise_exact(arrays[hada_inds].to(device=device), symmetry_ctx)
         record_stats.hada_tensor = torch.unique(torch.cat((record_stats.hada_tensor, new_hada_tensor.cpu()), dim=0), dim=0)
         total_nh = len(record_stats.hada_tensor)
         print(f"Total number of Hadamard: {total_nh}")
@@ -139,54 +106,27 @@ def record_stats(arrays, scores, gens, prefix=""):
     with open(logger.stats_file, 'a') as file:
         if not record_stats.has_run:
             record_stats.has_run = True
-            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} tally / H-tally\n")
-        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_tally}\n")
+            file.write(f"{'gen':>3} {'':<10}: {'min score':>10} {'med score':>10} {'avg score':>10} {'max score':>10} {'autocorrel':>10} {'H-ratio':>10} {'H-number':>10} gens, H-gens, H-segment sums tallies\n")
+        file.write(f"{params.gen:>3} {prefix:<10}: {min_score:10.6f} {med_score:10.6f} {avg_score:10.6f} {max_score:10.6f} {s:10.6f} {nh:10.6f} {len(hada_inds):>10} {gens_tally} {hada_gens_tally} {hada_ss_tally}\n")
 
-    if prefix and not prefix.startswith("debug"):
-        logger.record_scores(prefix, scores, avg_score, gens_tally, nh)
+    if prefix and not prefix.startswith("improve"):
+        logger.record_scores(prefix, scores, avg_score, nh)
 
 
 # scoring. technically we don't need this since the scores could be computed when improving;
-# but useful for logging/stats. also generates random data at gen 0
-def parallel_score(arrays):
-    scores = score(arrays)  # Compute scores in parallel
-    return scores.cpu()  # move back to cpu
-
-def batch_generator(arrays):
-    B = arrays.shape[0]
-    for i in range(0, B, config.score_batch_size):
-        j = i + config.score_batch_size
-        yield arrays[i:j].to(device=device)
-
-"""
-def random_batch_generator():
-    n_full_batches = config.sample_size // config.score_batch_size
-    remainder = config.sample_size % config.score_batch_size
-    for _ in range(n_full_batches):
-        yield generate_random_arrays(config.score_batch_size)
-    if remainder:
-        yield generate_random_arrays(remainder)
-"""
-
-def batch_score(arrays):  # same as parallel_score but in batches of score_batch_size
+# but useful for logging/stats.
+def batch_score(arrays):  # score but in batches of score_batch_size, and move back and forth to cpu
     torch.set_float32_matmul_precision('highest')
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
     if config.score_batch_size is None:
-        if arrays is None:
-            arrays_gpu = generate_random_arrays(config.sample_size, device)
-            arrays = arrays_gpu.to(device='cpu', dtype=torch.int8)
-        else:
-            arrays_gpu = arrays.to(device=device)
-        return arrays, parallel_score(arrays_gpu)
-    scores = torch.empty((0,), dtype=real_dtype)
-    if arrays is None:
-        arrays = generate_random_arrays(config.sample_size, 'cpu')  # lame? reinstate old way?
-    batches = batch_generator(arrays)
-    for batch in batches:
-        new_scores = parallel_score(batch)
-        scores = torch.cat((scores, new_scores), dim=0)
-    return arrays, scores
+        return score(arrays.to(device=device)).cpu()
+    B = arrays.shape[0]
+    scores = torch.empty(B, dtype=real_dtype)
+    for i in range(0, B, config.score_batch_size):
+        j = i + config.score_batch_size
+        scores[i:j] = score(arrays[i:j].to(device=device))
+    return scores
 
 def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
     a = arrays.view(-1, nm, nn)
@@ -200,128 +140,50 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
             a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-vec = torch.frac(torch.exp(.1*torch.arange(1,nn+1, device=device, dtype=real_dtype)))  # doesn't really matter, used for ordering
-fft_vec = torch.fft.rfft(vec)
-fft_conj_vec = torch.conj(fft_vec)
-base = torch.arange(nn, device=device)
-@torch.inference_mode()
-def derotate(arrays, scores=None):
-    if params.test_score:
-        scores1 = score(arrays)
-        if scores is not None and (scores-scores1).abs().max() > eps:
-            raise RuntimeError("score incorrect", scores, scores1, (scores-scores1).abs().max().item(), (scores-scores1).abs().mean().item())
-    # 1st phase: cyclically permute/reflect/negate the nm*nn
-    B = arrays.shape[0]
-    a = arrays.view(B, nm, nn)
-    fft_a = torch.fft.rfft(a, dim=2)  # use fft to quickly compute scalar product with some random vector for ordering
-    sp_rot = torch.fft.irfft(fft_conj_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
-    sp_rev = torch.fft.irfft(fft_vec[None, None, :] * fft_a, n=nn, dim=2)  # (B, m, nn)
-    sps = torch.cat([sp_rot, sp_rev], dim=2)   # (B, m, 2 * nn)
-    if fixed_sums:
-        flat_idx = sps.argmax(dim=2)         # (B, m) over 2*nn options
-    else:
-        flat_idx = sps.abs().argmax(dim=2)         # (B, m) over 2*nn options
-    # Gather the chosen transform from the original 'a'
-    signed_base = torch.where(flat_idx >= nn, -1, 1).unsqueeze(-1) * base
-    idx = (signed_base + flat_idx.unsqueeze(-1)) % nn
-    transformed = a.gather(2, idx)  # (B, m, nn)
-    if fixed_sums:
-        a.copy_(transformed)
-    else:
-        # negate if the chosen scalar product is > 0
-        chosen_sps = sps.gather(2, flat_idx.unsqueeze(-1)).squeeze(-1)  # (B,m)
-        a.copy_(torch.where(chosen_sps > 0, -1, 1).unsqueeze(-1) * transformed)
-    if not fixed_sums:  # TODO even w/ fixed sums, there can be a partial permutation symmetry
-        # 2nd phase: permute the nmxnn parts
-        # start with identity permutation for each batch
-        perm = torch.arange(nm, device=device).expand(B, nm).clone()
-        # stable sort by last key first, then previous..., up to first column
-        for k in range(nn):
-            key = a[:, :, k]                 # (B, m)
-            key_in_curr_order = key.gather(1, perm)
-            ordk = torch.argsort(key_in_curr_order, dim=1, stable=True)
-            perm = perm.gather(1, ordk)
-        # apply permutation to rows
-        sorted_a = a.gather(1, perm.unsqueeze(-1).expand(-1, -1, nn))
-        a.copy_(sorted_a)
-    if params.test_score:
-        scores2 = score(arrays)
-        if (scores1-scores2).abs().max() > eps:
-            raise RuntimeError("score not preserved by sort", scores1, scores2, (scores1-scores2).abs().max().item(),(scores1-scores2).abs().mean().item())
-
-aut1 = aut[aut <= nn2]  # variant of aut that stops at nn2
-# aut_inds = torch.outer(aut, torch.arange(nn, device=device)) % nn
-
-@torch.inference_mode()
-def apply_aut(idx, arrays0):
-    B = arrays0.shape[0]
-    arrays04 = arrays0.view(B, nm, nn)
-    arrays = torch.empty_like(arrays0)
-    arrays4 = arrays.view(B, nm, nn)
-    # automorphism
-    # inds = aut_inds[idx]
-    a = aut[idx]
-    inds = torch.outer(a, torch.arange(nn, device=device)) % nn
-    arrays4.scatter_(2, inds.unsqueeze(1).expand(B, nm, nn), arrays04)
-    return arrays
-
-@torch.inference_mode()
-def find_aut(arrays):
-    f = fft(arrays)
-    f = f.abs().sum(dim=1)  # (B,nn2+1)
-    idx = f[:, aut1].argmax(dim=1)   # (B,) over nn2+1 options
-    # now apply aut
-    arrays1 = apply_aut(idx, arrays)
-    return arrays1
+symmetry_ctx = build_context()
 
 @torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step Z: fix segment sums
+    # step A: fix segment sums if fixed sums
     if fixed_sums:
         fix_num_ones(arrays)
-    # step 0: tabu search
-    if not fixed_sums:  # TODO
-        start_timer = timer()
-        improve_tabu(arrays, scores, gens)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improve0 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i0")
-    # step Y: first pass of local search
-        start_timer = timer()
-        improve_phases(arrays, scores)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improvea time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug ia")
-        #
-        start_timer = timer()
-        if fixed_sums:
-            improve4x4_fixed(arrays, scores)
-        else:
-            improve1p(arrays, scores)
-        scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improveb time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug ib")
-    # step A: parallel tempering
+    # step B: first pass of local search
+    start_timer = timer()
+    improve_phases(arrays, scores)
+    scores = score(arrays)  # don't trust improve
+    if verbose:
+        print(f"improve B1 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="improve B1")
+    #
+    start_timer = timer()
+    if fixed_sums:
+        improve4x4_fixed(arrays, scores)
+    else:
+        improve1p(arrays, scores)
+    scores = score(arrays)  # don't trust improve
+    if verbose:
+        print(f"improve B2 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="improve B2")
+    # step C: parallel tempering (if num_improve>0)
     start_timer = timer()
     scores, inds = torch.sort(scores, descending=True)
     arrays = arrays[inds]
     gens = gens[inds]
-    print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()}")
+    if arrays.shape[0] == 0:
+        return arrays, scores, gens
     B = arrays.shape[0]
-    B0 = 9*B//10
-    while scores[B0] < eps:
-        B0 = 9*B0//10  # don't touch H-matrices
-    B1 = B0//nT*nT
+    print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
+    B1 = (B // nT) * nT  # round down to a multiple of nT
+    if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
+        B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
+        B1 = (B1 // nT) * nT
     parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
-    if debugging:
+    if verbose:
         print(f"pt time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="debug pt")
-    # step B: second pass of local search
+        record_stats(arrays, scores, gens, prefix="improve pt")
+    # step D: second pass of local search (if num_improve>0)
     for _ in range(config.num_improve):
         start_timer = timer()
         if fixed_sums:
@@ -329,9 +191,9 @@ def parallel_improve(arrays, scores, gens):
         else:
             improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improve1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i1")
+        if verbose:
+            print(f"improve D1 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve D1")
         #
         start_timer = timer()
         if fixed_sums:
@@ -339,43 +201,40 @@ def parallel_improve(arrays, scores, gens):
         else:
             improve_greedy(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improve2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i2")
+        if verbose:
+            print(f"improve D2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve D2")
         #
         start_timer = timer()
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
-        if debugging:
-            print(f"improve3 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="debug i3")
+        if verbose:
+            print(f"improve D3 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve D3")
         #
-    # step C: rotate the arrays to a standard form
+    # step E: rotate the arrays to a standard form
     start_timer = timer()
-    arrays = find_aut(arrays)
-    derotate(arrays, scores)
-    if debugging:
+    arrays = canonicalise_heuristic(arrays, symmetry_ctx, fft, scores, score if params.test_score else None, eps)
+    if verbose:
         print(f"derotate time: {timer() - start_timer}")
     return (arrays, scores, gens)
 
 @torch.inference_mode()
 def best_from(arrays, scores, gens):
     # deduplicate
-    arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
-    B = arrays.shape[0]
-    min_gens = torch.empty(B, device=device, dtype=torch.uint8)
-    min_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
+    unique_arrays, inv = torch.unique(arrays, dim=0, return_inverse=True, sorted=False)
+    B = unique_arrays.shape[0]
+    unique_gens = torch.empty(B, device=device, dtype=torch.uint8)
+    unique_gens.scatter_reduce_(0, inv, gens, reduce='amin', include_self=False)
     # normally scores should be equal but who knows
-    min_scores = torch.empty(B, device=device, dtype=real_dtype)
-    min_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
+    unique_scores = torch.empty(B, device=device, dtype=real_dtype)
+    unique_scores.scatter_reduce_(0, inv, scores, reduce='amin', include_self=False)
     # select
     if B <= config.training_size:
-        return arrays, min_scores, min_gens
-    _, idx = torch.topk(min_scores, k=config.training_size, largest=False, sorted=False)
-    arrays = arrays[idx]
-    scores = min_scores[idx]
-    gens = min_gens[idx]
-    return arrays, scores, gens
+        return unique_arrays, unique_scores, unique_gens
+    # _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(unique_scores * (1 + config.gen_decay * (params.gen - unique_gens)), k=config.training_size, largest=False, sorted=False)
+    return unique_arrays[idx], unique_scores[idx], unique_gens[idx]
 
 @torch.inference_mode()
 def batch_improve(arrays0, scores0, gens0):
@@ -388,15 +247,15 @@ def batch_improve(arrays0, scores0, gens0):
         arrays, scores, gens = best_from(arrays, scores, gens)
     else:
         B = arrays0.shape[0]
-        arrays = torch.empty((0, na), dtype=torch.int8, device=device)
-        scores = torch.empty((0,), dtype=real_dtype, device=device)
-        gens = torch.empty((0,), dtype=torch.uint8, device=device)
         for i in range(0, B, config.score_batch_size):
             j = i + config.score_batch_size
             new_arrays, new_scores, new_gens = parallel_improve(arrays0[i:j].to(device=device), scores0[i:j].to(device=device), gens0[i:j].to(device=device))
-            arrays = torch.cat((arrays, new_arrays), dim=0)
-            scores = torch.cat((scores, new_scores), dim=0)
-            gens = torch.cat((gens, new_gens), dim=0)
+            if i == 0:
+                arrays, scores, gens = new_arrays, new_scores, new_gens
+            else:
+                arrays = torch.cat((arrays, new_arrays), dim=0)
+                scores = torch.cat((scores, new_scores), dim=0)
+                gens = torch.cat((gens, new_gens), dim=0)
             arrays, scores, gens = best_from(arrays, scores, gens)
     return arrays.cpu(), scores.cpu(), gens.cpu()
 
@@ -410,11 +269,12 @@ def main():
     transformer.init_model()
 
     # torch functions
-    torch.manual_seed(random_seed)
+    seed = int(config.random_seed)
+    torch.manual_seed(seed)
     if device.startswith('cuda'):
         torch.cuda.set_device(0)  # Use GPU 0
         torch.cuda.empty_cache()  # Free memory before large computation
-        torch.cuda.manual_seed_all(random_seed)
+        torch.cuda.manual_seed_all(seed)
 
     # STEP 0
 
@@ -425,37 +285,32 @@ def main():
         try:
             with open(init_sample, 'r') as f:
                 arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
-            print(f'***Loading initial sample from {init_sample}***')
+            print(f'\n***Loading initial sample from {init_sample}***')
         except FileNotFoundError:
             arrays = torch.empty((0, na), dtype=torch.int8)
     else:
-        arrays = None
+        arrays = generate_random_arrays(config.sample_size)
 
-    arrays, scores = batch_score(arrays)
+    scores = batch_score(arrays)
     gens = torch.full(scores.shape, params.gen, dtype=torch.uint8)
     record_stats(arrays, scores, gens, prefix="sample" if not resume else "")  # who knows where the data come from if resuming
 
-    # MAIN-LOOP #
+    # MAIN-LOOP
 
     while True:
         if params.skip_first_improve:
             params.skip_first_improve = False
         else:
             # improve existing data, write to GEN-(gen)
-            print('\n***Improving***')
+            print_header("Improving")
             start_timer = timer()
             arrays, scores, gens = batch_improve(arrays, scores, gens)
-            if debugging:
+            if verbose:
                 print(f"improving time: {timer() - start_timer}")
-            print('\n***Selecting***')  # technically already done, but left for clarity of output
+            print_header("Selecting")  # technically already done, but left for clarity of output
             record_stats(arrays, scores, gens, "selected")
             write_arrays(params.work_dir + f'GEN-{params.gen:02d}.txt', arrays)
         if params.gen == config.max_iterations:
-            """
-            if debugging:
-                torch.cuda.memory._dump_snapshot("profile.pkl")
-                torch.cuda.memory._record_memory_history(enabled=None)
-            """
             break
         if params.skip_first_training:
             params.skip_first_training = False
@@ -463,25 +318,25 @@ def main():
             if device.startswith('cuda'):
                 torch.cuda.empty_cache()
             # train on GEN-gen
-            print(f"\n***Training on GEN-{params.gen:02d}***")
-            coeff = 1 if params.gen==0 or not resume_training else (1+params.gen)**-1.5
+            print_header(f"Training On GEN-{params.gen:02d}")
+            coeff = 1 if params.gen == 0 or not resume_training else (1+params.gen)**-1.5
             # linear warmup with fixed base learning rate afterwards:
             def get_lr(step, warmup_steps=10000):
                 return coeff * config.learning_rate * (.01+.99*step / warmup_steps if step < warmup_steps else 1)
-            max_steps = config.training_steps if coeff==1 else config.training_steps//10
+            max_steps = config.training_steps if coeff == 1 else config.training_steps//10
             eval_freq = 1000
             start_timer = timer()
             transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
-            if debugging:
+            if verbose:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
         if device.startswith('cuda'):
             torch.cuda.empty_cache()
-        print(f"\n***Sampling from transformer trained on GEN-{params.gen:02d}***")
+        print_header(f"Sampling From Transformer Trained On GEN-{params.gen:02d}")
         params.gen += 1
         start_timer = timer()
         new_arrays = transformer.sample()
-        new_arrays, new_scores = batch_score(new_arrays)
+        new_scores = batch_score(new_arrays)
         new_gens = torch.full(new_scores.shape, params.gen, dtype=torch.uint8)
         record_stats(new_arrays, new_scores, new_gens, prefix="sample")  # do we produce similar scores as training data?
         # combine, but mix
@@ -498,7 +353,7 @@ def main():
         combined_gens[perm[:A]] = gens
         combined_gens[perm[A:]] = new_gens
         arrays, scores, gens = combined_arrays, combined_scores, combined_gens
-        if debugging:
+        if verbose:
             print(f"sampling time: {timer() - start_timer}")
 
 
