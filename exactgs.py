@@ -11,7 +11,6 @@ import torch
 from symmetry import build_context, canonicalise_automorphism_exact
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-score_type = torch.float32
 if len(sys.argv) < 2:
     n = 60   # must be a multiple of 4
 else:
@@ -22,16 +21,15 @@ else:
     segment_sums = tuple(int(x) for x in sys.argv[2].split(","))
 assert(n%4==0)
 nn = n//4
-nn2 = nn//2
+autocorrel_dtype = torch.int8 if nn < 127 else torch.int16
 nm = 4
-na = n
 print(f"{n=}")
 if segment_sums is not None:
     assert len(segment_sums) == nm
     assert sum(s * s for s in segment_sums) == n
     print(f"{segment_sums=}")
 eps = 2e-5
-symmetry_ctx = build_context(nn=nn, nm=1, device=device, real_dtype=score_type)
+symmetry_ctx = build_context(nn=nn, nm=1, device=device, real_dtype=torch.float32)
 sequence_batch_size = 1 << 16
 
 
@@ -109,17 +107,17 @@ def build_block_table(required_sum=None):
     for sequences in iterator:
         spectra = torch.fft.rfft(sequences, dim=1)
         power_spectra = torch.view_as_real(spectra).square().sum(dim=-1)
-        mask = (power_spectra <= n).all(dim=-1)
+        mask = (power_spectra <= n + eps).all(dim=-1)
         power_spectra = power_spectra[mask]
         if power_spectra.numel() == 0:
             continue
-        chunk_classes = torch.fft.irfft(power_spectra, n=nn).round().to(dtype=torch.int16)
+        chunk_classes = torch.fft.irfft(power_spectra, n=nn).round().to(dtype=autocorrel_dtype)
         chunk_classes, chunk_counts = unique_rows_with_counts(chunk_classes)
         autocorrelation_classes, class_multiplicities = merge_tables(
             autocorrelation_classes, class_multiplicities, chunk_classes, chunk_counts
         )
     if autocorrelation_classes is None:
-        autocorrelation_classes = torch.empty((0, nn), dtype=torch.int16, device=device)
+        autocorrelation_classes = torch.empty((0, nn), dtype=autocorrel_dtype, device=device)
         class_multiplicities = torch.empty((0,), dtype=torch.long, device=device)
     return autocorrelation_classes, class_multiplicities
 
@@ -138,8 +136,8 @@ else:
     block_tables = [tables_by_sum[s] for s in segment_sums]
 
 partial_sums, partial_counts = block_tables[0]
-partial_sums = canonicalise_automorphism_exact(partial_sums.clone(), symmetry_ctx)
-partial_sums, partial_counts = unique_rows_with_counts(partial_sums, partial_counts.clone())
+partial_sums = canonicalise_automorphism_exact(partial_sums, symmetry_ctx)
+partial_sums, partial_counts = unique_rows_with_counts(partial_sums, partial_counts)
 print_table_stats("after automorphism canonicalisation", partial_sums, partial_counts)
 
 for i, (block_classes, block_multiplicities) in enumerate(block_tables[1:], start=1):
