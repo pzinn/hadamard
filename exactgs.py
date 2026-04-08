@@ -4,6 +4,8 @@
 # script to compute exactly # GS H-matrices
 
 import sys
+from itertools import combinations
+
 import torch
 
 from symmetry import build_context, canonicalise_automorphism_exact
@@ -30,34 +32,47 @@ if segment_sums is not None:
     print(f"{segment_sums=}")
 eps = 2e-5
 symmetry_ctx = build_context(nn=nn, nm=1, device=device, real_dtype=score_type)
+sequence_batch_size = 1 << 16
 
-def all_pm1_sequences(n: int) -> torch.Tensor:
-    # number of rows = 2^n
+
+def pm1_sequence_batches(n: int, batch_size: int):
     rows = 1 << n
-    # make integers [0,...,2^n-1] directly on device
-    numbers = torch.arange(rows, dtype=torch.int64, device=device).unsqueeze(1)
-    # extract bits by shifting
     shifts = torch.arange(n - 1, -1, -1, device=device)
-    bits = (numbers >> shifts) & 1
-    # map {0,1} -> {-1,+1}
-    return (bits * 2 - 1).to(dtype=torch.int8)
+    for start in range(0, rows, batch_size):
+        stop = min(start + batch_size, rows)
+        numbers = torch.arange(start, stop, dtype=torch.int64, device=device).unsqueeze(1)
+        bits = (numbers >> shifts) & 1
+        yield (bits * 2 - 1).to(dtype=torch.int8)
 
 
-def all_pm1_sequences_with_sum(n: int, total_sum: int) -> torch.Tensor:
+def pm1_sequence_batches_with_sum(n: int, total_sum: int, batch_size: int):
     if (n + total_sum) % 2 != 0:
-        return torch.empty((0, n), dtype=torch.int8, device=device)
+        return
     num_ones = (n + total_sum) // 2
     if num_ones < 0 or num_ones > n:
-        return torch.empty((0, n), dtype=torch.int8, device=device)
+        return
     if num_ones == 0:
-        return -torch.ones((1, n), dtype=torch.int8, device=device)
+        yield -torch.ones((1, n), dtype=torch.int8, device=device)
+        return
     if num_ones == n:
-        return torch.ones((1, n), dtype=torch.int8, device=device)
-    positions = torch.combinations(torch.arange(n, device=device), r=num_ones)
-    sequences = -torch.ones((positions.shape[0], n), dtype=torch.int8, device=device)
-    rows = torch.arange(positions.shape[0], device=device).unsqueeze(1)
-    sequences[rows, positions] = 1
-    return sequences
+        yield torch.ones((1, n), dtype=torch.int8, device=device)
+        return
+    chunk = []
+    for comb in combinations(range(n), num_ones):
+        chunk.append(comb)
+        if len(chunk) == batch_size:
+            positions = torch.tensor(chunk, dtype=torch.long, device=device)
+            sequences = -torch.ones((positions.shape[0], n), dtype=torch.int8, device=device)
+            rows = torch.arange(positions.shape[0], device=device).unsqueeze(1)
+            sequences[rows, positions] = 1
+            yield sequences
+            chunk = []
+    if chunk:
+        positions = torch.tensor(chunk, dtype=torch.long, device=device)
+        sequences = -torch.ones((positions.shape[0], n), dtype=torch.int8, device=device)
+        rows = torch.arange(positions.shape[0], device=device).unsqueeze(1)
+        sequences[rows, positions] = 1
+        yield sequences
 
 def unique_rows_with_counts(rows, counts=None):
     if counts is None:
@@ -75,18 +90,37 @@ def print_table_stats(label, rows, counts):
         f"min={counts.min().item()} mean={counts.to(dtype=torch.float32).mean().item():.3f} max={counts.max().item()}"
     )
 
+
+def merge_tables(rows1, counts1, rows2, counts2):
+    if rows1 is None:
+        return rows2, counts2
+    merged_rows = torch.cat((rows1, rows2), dim=0)
+    merged_counts = torch.cat((counts1, counts2), dim=0)
+    return unique_rows_with_counts(merged_rows, merged_counts)
+
+
 def build_block_table(required_sum=None):
+    autocorrelation_classes = None
+    class_multiplicities = None
     if required_sum is None:
-        sequences = all_pm1_sequences(nn)
+        iterator = pm1_sequence_batches(nn, sequence_batch_size)
     else:
-        sequences = all_pm1_sequences_with_sum(nn, required_sum)
-    spectra = torch.fft.rfft(sequences, dim=1)
-    power_spectra = torch.view_as_real(spectra).square().sum(dim=-1)
-    mask = (power_spectra <= n).all(dim=-1)
-    power_spectra = power_spectra[mask]
-    autocorrelation_classes = torch.fft.irfft(power_spectra, n=nn).round().to(dtype=torch.int16)
-    autocorrelation_classes, class_multiplicities = unique_rows_with_counts(autocorrelation_classes)
-    del sequences, spectra, power_spectra, mask
+        iterator = pm1_sequence_batches_with_sum(nn, required_sum, sequence_batch_size)
+    for sequences in iterator:
+        spectra = torch.fft.rfft(sequences, dim=1)
+        power_spectra = torch.view_as_real(spectra).square().sum(dim=-1)
+        mask = (power_spectra <= n).all(dim=-1)
+        power_spectra = power_spectra[mask]
+        if power_spectra.numel() == 0:
+            continue
+        chunk_classes = torch.fft.irfft(power_spectra, n=nn).round().to(dtype=torch.int16)
+        chunk_classes, chunk_counts = unique_rows_with_counts(chunk_classes)
+        autocorrelation_classes, class_multiplicities = merge_tables(
+            autocorrelation_classes, class_multiplicities, chunk_classes, chunk_counts
+        )
+    if autocorrelation_classes is None:
+        autocorrelation_classes = torch.empty((0, nn), dtype=torch.int16, device=device)
+        class_multiplicities = torch.empty((0,), dtype=torch.long, device=device)
     return autocorrelation_classes, class_multiplicities
 
 
@@ -119,8 +153,8 @@ for i, (block_classes, block_multiplicities) in enumerate(block_tables[1:], star
         large_table = partial_sums
         small_counts = block_multiplicities
         large_counts = partial_counts
-    new_partial_sums = torch.empty((0, large_table.shape[1]), device=device, dtype=partial_sums.dtype)
-    new_partial_counts = torch.empty((0,), device=device, dtype=torch.long)
+    new_partial_sums = None
+    new_partial_counts = None
     print(f"combination step {i}")
     for j in range(small_table.shape[0]):
         summed_autocorrelations = large_table + small_table[j].unsqueeze(0)
@@ -128,11 +162,18 @@ for i, (block_classes, block_multiplicities) in enumerate(block_tables[1:], star
         mask = (spectra <= n+eps).all(dim=-1)
         if mask.any():
             canonical_sums = canonicalise_automorphism_exact(summed_autocorrelations[mask], symmetry_ctx)
-            new_partial_sums = torch.cat((new_partial_sums, canonical_sums), dim=0)
-            new_partial_counts = torch.cat((new_partial_counts, small_counts[j] * large_counts[mask]), dim=0)
-            new_partial_sums, new_partial_counts = unique_rows_with_counts(new_partial_sums, new_partial_counts)
-    partial_sums = new_partial_sums
-    partial_counts = new_partial_counts
+            new_partial_sums, new_partial_counts = merge_tables(
+                new_partial_sums,
+                new_partial_counts,
+                canonical_sums,
+                small_counts[j] * large_counts[mask],
+            )
+    if new_partial_sums is None:
+        partial_sums = torch.empty((0, large_table.shape[1]), device=device, dtype=partial_sums.dtype)
+        partial_counts = torch.empty((0,), device=device, dtype=torch.long)
+    else:
+        partial_sums = new_partial_sums
+        partial_counts = new_partial_counts
     partial_sums = canonicalise_automorphism_exact(partial_sums, symmetry_ctx)
     partial_sums, partial_counts = unique_rows_with_counts(partial_sums, partial_counts)
     print_table_stats(f"after step {i}", partial_sums, partial_counts)
