@@ -137,6 +137,7 @@ def compute_derived():
     nn2 = (nn-1) // 2
     fixed_sums = segment_sums is not None
     if fixed_sums:
+        assert len(segment_sums) == nm
         assert sum(i*i for i in segment_sums) == n
         print(f"{segment_sums=}")
         num_ones = torch.tensor([(segment_sums[j]+nn)//2 for j in range(nm)], dtype=torch.int8, device=device)
