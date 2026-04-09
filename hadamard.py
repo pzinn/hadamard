@@ -289,10 +289,11 @@ def main():
         try:
             with open(init_sample, 'r') as f:
                 arrays = torch.tensor([tuple(1 if c == "+" else -1 for c in line.strip()) for line in f], dtype=torch.int8)
-            print(f'\n***Loading initial sample from {init_sample}***')
+            print_header(f"Loading initial sample from {init_sample}")
         except FileNotFoundError:
             arrays = torch.empty((0, na), dtype=torch.int8)
     else:
+        print_header("Generating random sample")
         arrays = generate_random_arrays(config.sample_size)
 
     scores = batch_score(arrays)
