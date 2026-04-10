@@ -7,7 +7,7 @@ import hashlib
 import sys
 import torch
 from PIL import Image
-from symmetry import build_context, canonicalise_exact
+from symmetry import build_context, canonicalise_exact, stabiliser_orders
 import math
 
 device = "cuda"
@@ -175,17 +175,27 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
             for (segment_sums, score), count in pair_counts.items()
         ]
         distinct_hadamard = 0
+        stabiliser_lines = []
         if canonical_parts:
-            distinct_hadamard = torch.unique(torch.cat(canonical_parts, dim=0), dim=0).shape[0]
-        summary[n] = (lines_out, hadamard_count, distinct_hadamard)
+            distinct_arrays = torch.unique(torch.cat(canonical_parts, dim=0), dim=0)
+            distinct_hadamard = distinct_arrays.shape[0]
+            orders = stabiliser_orders(distinct_arrays.to(device=device, dtype=torch.int8), symmetry_ctx).cpu()
+            unique_orders, order_counts = torch.unique(orders, return_counts=True)
+            stabiliser_lines = [
+                (int(order.item()), int(count.item()))
+                for order, count in zip(unique_orders, order_counts)
+            ]
+        summary[n] = (lines_out, hadamard_count, distinct_hadamard, stabiliser_lines)
     print(f"==> {source_name} <==")
     if summary:
         for n in sorted(summary):
-            lines_out, hadamard_count, distinct_hadamard = summary[n]
+            lines_out, hadamard_count, distinct_hadamard, stabiliser_lines = summary[n]
             for result, count in sorted(lines_out):
                 print(f"{count:7d} n={n} {result}")
             print(f"{hadamard_count:7d} n={n} hadamard")
             print(f"{distinct_hadamard:7d} n={n} distinct_hadamard")
+            for order, count in stabiliser_lines:
+                print(f"{count:7d} n={n} distinct_hadamard stabiliser={order}")
     else:
         print("(no valid input lines)")
     return pictures_remaining
