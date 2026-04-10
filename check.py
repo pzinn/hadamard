@@ -148,9 +148,12 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
         pair_counts = {}
         hadamard_count = 0
         canonical_parts = []
+        stabiliser_parts = []
         symmetry_ctx = build_context(nn=n // 4, nm=4, device=device)
         batch_size = max_batch_size_for_n(n)
         for i in range(0, batch.shape[0], batch_size):
+            if device.startswith('cuda'):
+                torch.cuda.empty_cache()  # Free memory
             chunk = batch[i:i + batch_size]
             segment_sums = chunk.view(chunk.shape[0], 4, -1).sum(dim=2)
             if group_segment_sums:
@@ -169,7 +172,9 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
                     save_pictures(chunk[j], matrices[j])
                 pictures_remaining -= min(pictures_remaining, hadamard_idx.numel())
             if hadamard_idx.numel() > 0:
-                canonical_parts.append(canonicalise_exact(chunk[hadamard_idx], symmetry_ctx).to(torch.int8).cpu())
+                canonical_chunk = canonicalise_exact(chunk[hadamard_idx], symmetry_ctx).to(torch.int8)
+                canonical_parts.append(canonical_chunk.cpu())
+                stabiliser_parts.append(stabiliser_orders(canonical_chunk, symmetry_ctx).cpu())
         lines_out = [
             (f"segment_sums={segment_sums} score={score}", count)
             for (segment_sums, score), count in pair_counts.items()
@@ -177,10 +182,13 @@ def process_lines(lines, source_name, pictures_remaining, group_segment_sums):
         distinct_hadamard = 0
         stabiliser_lines = []
         if canonical_parts:
-            distinct_arrays = torch.unique(torch.cat(canonical_parts, dim=0), dim=0)
+            canonical_all = torch.cat(canonical_parts, dim=0)
+            orders_all = torch.cat(stabiliser_parts, dim=0)
+            distinct_arrays, inverse = torch.unique(canonical_all, dim=0, return_inverse=True)
             distinct_hadamard = distinct_arrays.shape[0]
-            orders = stabiliser_orders(distinct_arrays.to(device=device, dtype=torch.int8), symmetry_ctx).cpu()
-            unique_orders, order_counts = torch.unique(orders, return_counts=True)
+            distinct_orders = torch.empty(distinct_hadamard, dtype=orders_all.dtype)
+            distinct_orders.scatter_reduce_(0, inverse, orders_all, reduce="amin", include_self=False)
+            unique_orders, order_counts = torch.unique(distinct_orders, return_counts=True)
             stabiliser_lines = [
                 (int(order.item()), int(count.item()))
                 for order, count in zip(unique_orders, order_counts)
