@@ -25,7 +25,8 @@ def build_context(nn=None, nm=None, segment_sums=None, device=None, real_dtype=N
     if real_dtype is None:
         real_dtype = params.real_dtype
     fixed_sums = segment_sums is not None
-    aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
+    aut_values = [1] if nn == 1 else [i for i in range(1, nn) if math.gcd(i, nn) == 1]
+    aut = torch.tensor(aut_values, device=device)
     perms = torch.tensor(
         list(
             p for p in permutations(range(nm))
@@ -35,6 +36,8 @@ def build_context(nn=None, nm=None, segment_sums=None, device=None, real_dtype=N
         device=device,
     )
     aut1 = aut[aut <= nn2]
+    if aut1.numel() == 0:
+        aut1 = aut[:1]
     vec = torch.frac(torch.exp(0.1 * torch.arange(1, nn + 1, device=device, dtype=real_dtype)))
     fft_vec = torch.fft.rfft(vec)
     return SimpleNamespace(
@@ -50,6 +53,7 @@ def build_context(nn=None, nm=None, segment_sums=None, device=None, real_dtype=N
         fft_vec=fft_vec,
         fft_conj_vec=torch.conj(fft_vec),
         device=device,
+        real_dtype=real_dtype,
     )
 
 
@@ -134,6 +138,40 @@ def _apply_aut_heuristic(arrays, ctx, fft_fn):
     idx = f[:, ctx.aut1].argmax(dim=1)
     return apply_aut(idx, arrays, ctx)
 
+
+
+
+@torch.inference_mode()
+def count_local_symmetry_matches(target_arrays, source_arrays, ctx):
+    B = target_arrays.shape[0]
+    target = target_arrays.view(B, ctx.nm, ctx.nn).to(dtype=ctx.real_dtype)
+    source = source_arrays.view(B, ctx.nm, ctx.nn).to(dtype=ctx.real_dtype)
+    target_fft = torch.fft.rfft(target, dim=2)
+    source_fft = torch.fft.rfft(source, dim=2)
+    source_rev_fft = torch.fft.rfft(source.flip(-1), dim=2)
+    corr_rot = torch.fft.irfft(target_fft[:, :, None, :].conj() * source_fft[:, None, :, :], n=ctx.nn, dim=3).round().to(torch.int16)
+    corr_rev = torch.fft.irfft(target_fft[:, :, None, :].conj() * source_rev_fft[:, None, :, :], n=ctx.nn, dim=3).round().to(torch.int16)
+    if ctx.fixed_sums:
+        pair_counts = (corr_rot == ctx.nn).sum(dim=3) + (corr_rev == ctx.nn).sum(dim=3)
+    else:
+        pair_counts = (corr_rot.abs() == ctx.nn).sum(dim=3) + (corr_rev.abs() == ctx.nn).sum(dim=3)
+    per_perm = pair_counts[:, None, torch.arange(ctx.nm, device=ctx.device), ctx.perms]
+    return per_perm.prod(dim=3).sum(dim=2).squeeze(1).to(torch.long)
+
+
+@torch.inference_mode()
+def stabiliser_orders(arrays, ctx):
+    arrays = arrays.view(-1, ctx.na)
+    B = arrays.shape[0]
+    orders = torch.zeros(B, dtype=torch.long, device=ctx.device)
+    arrays4 = arrays.view(B, ctx.nm, ctx.nn)
+    for a in ctx.aut1.tolist():
+        transformed = torch.empty_like(arrays)
+        transformed4 = transformed.view(B, ctx.nm, ctx.nn)
+        inds = (a * torch.arange(ctx.nn, device=ctx.device)) % ctx.nn
+        transformed4.scatter_(2, inds.view(1, 1, ctx.nn).expand(B, ctx.nm, ctx.nn), arrays4)
+        orders += count_local_symmetry_matches(arrays, transformed, ctx)
+    return orders
 
 @torch.inference_mode()
 def canonicalise_heuristic(arrays, ctx, fft_fn, scores=None, score_fn=None, eps=None):
