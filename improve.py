@@ -16,7 +16,7 @@ for i in range(nm):
 k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
-def improve1p(arrays, scores):  # optimised k-bit flip
+def old_improve1p(arrays, scores):  # optimised k-bit flip
     print("improve1p", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
@@ -52,6 +52,48 @@ def improve1p(arrays, scores):  # optimised k-bit flip
         if not mask.any():
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+
+@torch.inference_mode()
+def improve1p(arrays, scores):  # optimised k-bit flip
+    print(f"new_improve1p {k=}");
+    B = arrays.shape[0]
+    active_rows = torch.arange(B, device=device, dtype=torch.long)
+    mask = torch.empty((B,), device=device, dtype=torch.bool)
+    scores1 = torch.empty((B, na), device=device, dtype=real_dtype)
+    for _ in range(na//k):
+        M = active_rows.numel()
+        print(f"{M/B}")
+        scores1 += .3*torch.rand_like(scores1)  # what's the right size?
+        f = fft(arrays)  # better than flip updating for accuracy
+        fl = f[active_rows].view(M, nm*(nn2+1))
+        fmod = torch.empty_like(f[active_rows])
+        flmod = fmod.view(M, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(arrays[active_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            scores1[active_rows, j] = score_fft(fmod)
+        # k best flip candidates
+        _, indsk = torch.topk(scores1, k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(arrays, 1, indsk)
+        mask.zero_()
+        fl = f.view(B, nm*(nn2+1))  # this def should be once and for all
+        for j in gray_code:
+            inds = indsk[:, j]  # actual index for each sample
+            fl += cur[:, j].unsqueeze(1) * wrng_all[inds]
+            cur[:, j] *= -1  # need to keep track of these two
+            new_scores = score_fft(f)
+            improved = new_scores < scores
+            if improved.any():
+                improved_rows = torch.nonzero(improved, as_tuple=True)[0]
+                mask[improved_rows] = True  # these will get saved for next round
+                scores[improved_rows] = new_scores[improved_rows]
+                arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved_rows]), cur[improved_rows])
+        """
+        if not mask.any():
+            break
+        """
+        active_rows = torch.nonzero(mask, as_tuple=True)[0]
+
 
 if segment_sums is not None:
     ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)

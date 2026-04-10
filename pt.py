@@ -91,6 +91,8 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used. faster but performs 
 p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
+    if config.num_improve == 0:
+        return
     print("parallel_tempering", flush=True)
     global logT, T
     iterations = na * 50 * config.num_improve

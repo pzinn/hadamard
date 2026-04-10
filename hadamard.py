@@ -199,6 +199,7 @@ def parallel_improve(arrays, scores, gens):
             print(f"improve D1 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="improve D1")
         #
+        """
         start_timer = timer()
         if fixed_sums:
             improve_greedy_fixed(arrays, scores)
@@ -208,6 +209,7 @@ def parallel_improve(arrays, scores, gens):
         if verbose:
             print(f"improve D2 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="improve D2")
+        """
         #
         start_timer = timer()
         improve_phases(arrays, scores)
