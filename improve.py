@@ -246,7 +246,7 @@ def improve_phases(arrays, scores):
             torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
             x.fill_(-1)
             if fixed_sums:
-                x.scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
+                x.scatter_(1, torch.topk(x2 * ((x2 > 0).sum(dim=-1)-nn/2).unsqueeze(1), num_ones[j], dim=1).indices, 1)
             else:
                 x.masked_fill_(x2 > 0, 1)
             torch.fft.rfft(x, dim=1, out=fmod)
