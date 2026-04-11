@@ -17,7 +17,7 @@ gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 
 @torch.inference_mode()
 def improve1p(arrays, scores):  # optimised k-bit flip
-    print(f"new_improve1p {k=}");
+    print(f"improve1p {k=}");
     B = arrays.shape[0]
     active_rows = torch.arange(B, device=device, dtype=torch.long)
     mask = torch.empty((B,), device=device, dtype=torch.bool)
@@ -60,14 +60,15 @@ def penalty(f):  # penalty to stray from correct segment sums
     return torch.abs(torch.real(f[:,:,0])-ss[None,:]).sum(dim=1)
 def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
-zmul = 1.5  # adjustable parameter
 @torch.inference_mode()
 def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
     print("improve1p_fixed", flush=True)
     z = cst  # is that the correct scaling with n?
+    zmul = 1.5  # adjustable parameter
     oldz = 0
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    cnt = config.num_improve
     while True:
         M = active_rows.numel()
         scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
@@ -100,10 +101,16 @@ def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively en
                 # arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
                 arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved]), cur[improved])
         if not mask.any():
-            break
-        active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
-        oldz = z
-        z *= zmul
+            cnt -= 1
+            if cnt <= 0:
+                break
+            active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]
+            oldz = z
+            z = cst
+        else:
+            active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+            oldz = z
+            z *= zmul
 
 @torch.inference_mode()
 def improve_phases(arrays, scores):
