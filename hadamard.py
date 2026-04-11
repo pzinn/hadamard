@@ -151,14 +151,7 @@ def parallel_improve(arrays, scores, gens):
     # step A: fix segment sums if fixed sums
     if fixed_sums:
         fix_num_ones(arrays)
-    # step B: first pass of local search
-    start_timer = timer()
-    improve_phases(arrays, scores)
-    scores = score(arrays)  # don't trust improve
-    if verbose:
-        print(f"improve B1 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve B1")
-    #
+    # step B: first pass of local/nonlocal search
     start_timer = timer()
     if fixed_sums:
         #improve4x4_fixed(arrays, scores)
@@ -167,27 +160,35 @@ def parallel_improve(arrays, scores, gens):
         improve1p(arrays, scores)
     scores = score(arrays)  # don't trust improve
     if verbose:
+        print(f"improve B1 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="improve B1")
+    #
+    start_timer = timer()
+    improve_phases(arrays, scores)
+    scores = score(arrays)  # don't trust improve
+    if verbose:
         print(f"improve B2 time: {timer() - start_timer}")
         record_stats(arrays, scores, gens, prefix="improve B2")
-    # step C: parallel tempering (if num_improve>0)
-    start_timer = timer()
-    scores, inds = torch.sort(scores, descending=True)
-    arrays = arrays[inds]
-    gens = gens[inds]
-    if arrays.shape[0] == 0:
-        return arrays, scores, gens
-    B = arrays.shape[0]
-    print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
-    B1 = (B // nT) * nT  # round down to a multiple of nT
-    if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
-        B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
-        B1 = (B1 // nT) * nT
-    parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
-    if verbose:
-        print(f"pt time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve pt")
-    # step D: second pass of local search (if num_improve>0)
-    for _ in range(config.num_improve):
+    if config.num_improve > 0:
+        # step C: parallel tempering (if num_improve>0)
+        start_timer = timer()
+        scores, inds = torch.sort(scores, descending=True)
+        arrays = arrays[inds]
+        gens = gens[inds]
+        if arrays.shape[0] == 0:
+            return arrays, scores, gens
+        B = arrays.shape[0]
+        if verbose:
+            print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
+        B1 = (B // nT) * nT  # round down to a multiple of nT
+        if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
+            B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
+            B1 = (B1 // nT) * nT
+        parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
+        if verbose:
+            print(f"pt time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve pt")
+        # step D: second pass of local/nonlocal search (if num_improve>0)
         start_timer = timer()
         if fixed_sums:
             #improve4x4_fixed(arrays, scores)
@@ -198,8 +199,8 @@ def parallel_improve(arrays, scores, gens):
         if verbose:
             print(f"improve D1 time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="improve D1")
-        #
         """
+        #
         start_timer = timer()
         if fixed_sums:
             improve_greedy_fixed(arrays, scores)
@@ -215,8 +216,8 @@ def parallel_improve(arrays, scores, gens):
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve D3 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve D3")
+            print(f"improve D2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve D2")
         #
     # step E: rotate the arrays to a standard form
     start_timer = timer()

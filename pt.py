@@ -4,7 +4,7 @@ from timestamped_print import print
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
-r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188
+r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188 -- will be autotuned
 # T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
 logT = r * torch.arange(nT, device=device, dtype=real_dtype)
 T = .1 ** logT
@@ -91,8 +91,6 @@ def attempt_swaps_vectorised(x, scores, gens):  # not used. faster but performs 
 p = .5
 invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
-    if config.num_improve == 0:
-        return
     print("parallel_tempering", flush=True)
     global logT, T
     iterations = na * 50 * config.num_improve
