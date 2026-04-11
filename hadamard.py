@@ -4,8 +4,8 @@
 import torch
 import params
 params.init_from_argv()
-from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
-from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed, improve1p_fixed
+from params import na, nm, nn, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, real_dtype, eps
+from improve import improve1p, improve_phases, improve1p_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
