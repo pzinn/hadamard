@@ -23,7 +23,7 @@ def old_improve1p(arrays, scores):  # optimised k-bit flip
     while True:
         M = active_rows.numel()
         if verbose:
-            print(f'{M/B}')
+            print(f'active ratio {M/B}')
         scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
         f = fft(arrays[active_rows])  # better than flip updating for accuracy
         fl = f.view(M, nm*(nn2+1))
@@ -62,7 +62,8 @@ def improve1p(arrays, scores):  # optimised k-bit flip
     scores1 = torch.empty((B, na), device=device, dtype=real_dtype)
     for _ in range(na//k):
         M = active_rows.numel()
-        print(f"{M/B}")
+        if verbose:
+            print(f'active ratio {M/B}')
         scores1 += .3*torch.rand_like(scores1)  # what's the right size?
         f = fft(arrays)  # better than flip updating for accuracy
         fl = f[active_rows].view(M, nm*(nn2+1))
@@ -116,7 +117,7 @@ def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively en
         pen = penalty(f)
         mask = pen > eps  # always continue with ones violating segment_sums
         if verbose:
-            print(f"{M/B} {mask.sum()/B}")
+            print(f"active ratio {M/B} segment sum violate ratio {mask.sum()/B}")
         scores[active_rows] += (z-oldz) * pen  # adjust scores to new value of z
         fl = f.view(M, nm*(nn2+1))
         fmod = torch.empty_like(f)
@@ -260,7 +261,7 @@ def improve_phases(arrays, scores):
             cnt += improved_inds.shape[0]
             h[:, 1:] *= torch.exp(1j * (torch.rand((M, nn2), device=device)-.5))
         if verbose:
-            print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
+            print(f'segment {j} : {M} candidates ({M/B}), {cnt} improvements ({cnt/B})')
 
 @torch.inference_mode()
 def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
