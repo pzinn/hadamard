@@ -16,8 +16,8 @@ k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 
 @torch.inference_mode()
-def improve1p(arrays, scores):  # optimised k-bit flip
-    print(f"improve1p {k=}");
+def improve_local(arrays, scores):  # optimised k-bit flip
+    print(f"improve_local {k=}");
     B = arrays.shape[0]
     active_rows = torch.arange(B, device=device, dtype=torch.long)
     mask = torch.empty((B,), device=device, dtype=torch.bool)
@@ -61,8 +61,8 @@ def penalty(f):  # penalty to stray from correct segment sums
 def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
 @torch.inference_mode()
-def improve1p_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
-    print("improve1p_fixed", flush=True)
+def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+    print("improve_local_fixed", flush=True)
     z = cst  # is that the correct scaling with n?
     zmul = 1.5  # adjustable parameter
     oldz = 0
@@ -154,8 +154,8 @@ def improve_phases(arrays, scores):
 # some other algorithms, not currently in use
 
 @torch.inference_mode()
-def old_improve1p(arrays, scores):  # optimised k-bit flip
-    print("improve1p", flush=True)
+def old_improve_local(arrays, scores):  # optimised k-bit flip
+    print("improve_local", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     while True:

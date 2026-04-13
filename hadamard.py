@@ -5,7 +5,7 @@ import torch
 import params
 params.init_from_argv()
 from params import na, nm, nn, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, real_dtype, eps
-from improve import improve1p, improve_phases, improve1p_fixed
+from improve import improve_local, improve_phases, improve_local_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -152,9 +152,9 @@ def parallel_improve(arrays, scores, gens):
     start_timer = timer()
     if fixed_sums:
         #improve4x4_fixed(arrays, scores)
-        improve1p_fixed(arrays, scores)
+        improve_local_fixed(arrays, scores)
     else:
-        improve1p(arrays, scores)
+        improve_local(arrays, scores)
     scores = score(arrays)  # don't trust improve
     if verbose:
         print(f"improve A1 time: {timer() - start_timer}")
@@ -189,9 +189,9 @@ def parallel_improve(arrays, scores, gens):
         start_timer = timer()
         if fixed_sums:
             #improve4x4_fixed(arrays, scores)
-            improve1p_fixed(arrays, scores)
+            improve_local_fixed(arrays, scores)
         else:
-            improve1p(arrays, scores)
+            improve_local(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
             print(f"improve C1 time: {timer() - start_timer}")
