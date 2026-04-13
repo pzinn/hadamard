@@ -130,7 +130,7 @@ def batch_score(arrays):  # score but in batches of score_batch_size, and move b
         scores[i:j] = score(arrays[i:j].to(device=device))
     return scores
 
-def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
+def fix_num_ones(arrays):  # fix # 1s. not used.
     a = arrays.view(-1, nm, nn)
     for j in range(nm):
         while True:
@@ -148,10 +148,7 @@ symmetry_ctx = params.symmetry_ctx
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step A: fix segment sums if fixed sums
-    if fixed_sums:
-        fix_num_ones(arrays)
-    # step B: first pass of local/nonlocal search
+    # step A: first pass of local/nonlocal search
     start_timer = timer()
     if fixed_sums:
         #improve4x4_fixed(arrays, scores)
@@ -160,17 +157,17 @@ def parallel_improve(arrays, scores, gens):
         improve1p(arrays, scores)
     scores = score(arrays)  # don't trust improve
     if verbose:
-        print(f"improve B1 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve B1")
+        print(f"improve A1 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="improve A1")
     #
     start_timer = timer()
     improve_phases(arrays, scores)
     scores = score(arrays)  # don't trust improve
     if verbose:
-        print(f"improve B2 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve B2")
+        print(f"improve A2 time: {timer() - start_timer}")
+        record_stats(arrays, scores, gens, prefix="improve A2")
     if config.num_improve > 0:
-        # step C: parallel tempering (if num_improve>0)
+        # step B: parallel tempering (if num_improve>0)
         start_timer = timer()
         scores, inds = torch.sort(scores, descending=True)
         arrays = arrays[inds]
@@ -188,7 +185,7 @@ def parallel_improve(arrays, scores, gens):
         if verbose:
             print(f"pt time: {timer() - start_timer}")
             record_stats(arrays, scores, gens, prefix="improve pt")
-        # step D: second pass of local/nonlocal search (if num_improve>0)
+        # step C: second pass of local/nonlocal search (if num_improve>0)
         start_timer = timer()
         if fixed_sums:
             #improve4x4_fixed(arrays, scores)
@@ -197,8 +194,8 @@ def parallel_improve(arrays, scores, gens):
             improve1p(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve D1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve D1")
+            print(f"improve C1 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve C1")
         """
         #
         start_timer = timer()
@@ -216,10 +213,10 @@ def parallel_improve(arrays, scores, gens):
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve D2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve D2")
+            print(f"improve C2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve C2")
         #
-    # step E: rotate the arrays to a standard form
+    # step D: rotate the arrays to a standard form
     start_timer = timer()
     arrays = canonicalise_heuristic(arrays, symmetry_ctx, fft, scores, score if params.test_score else None, eps)
     if verbose:
