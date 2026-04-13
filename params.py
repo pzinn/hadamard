@@ -6,7 +6,7 @@ if __name__ == "__main__":
 
 # hadamard matrix parameters
 n = 172  # size of matrix
-# segment_sums = (1, 3, 3, 13)  # sum of squares must be n. must be a tuple (not a list!)
+# segment_sums = (1, 1, 7, 11)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
@@ -123,7 +123,7 @@ def compute_derived():
     global nn, nm, na, nn2
     global fixed_sums, num_ones
     global hparams, is_sweep, sweep_config, config
-    global aut, perms, cst
+    global cst
     if not isinstance(n, int) or isinstance(n, bool):
         raise SystemExit("n must be an integer; sweeps over n are not supported")
     if n % 4 != 0:
@@ -159,14 +159,6 @@ def compute_derived():
     else:
         sweep_config = None
     config = ModelConfig(**hparams)
-    # Prepare automorphisms / permutations
-    aut = torch.tensor([i for i in range(1, nn) if math.gcd(i, nn) == 1], device=device)
-    perms = torch.tensor(
-        list(p for p in permutations(range(nm)) if not fixed_sums or tuple(segment_sums[i] for i in p) == segment_sums),
-        dtype=torch.long,
-        device=device,
-    )
-    # scoring normalisation constant
     cst = 1 / math.sqrt(n)
 
 def init_from_argv(argv=None):
@@ -183,11 +175,6 @@ def init_from_argv(argv=None):
     compute_derived()
     from symmetry import build_context
     symmetry_ctx = build_context()
-
-# symmetries
-from itertools import permutations
-
-#print("order of symmetry: ", rndmod.prod().item())
 
 real_dtype = torch.float32
 complex_dtype = torch.complex64
