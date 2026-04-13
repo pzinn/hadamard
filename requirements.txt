@@ -1,0 +1,2 @@
+# Core dependency for training/sampling (`hadamard.py`)
+torch>=2.2

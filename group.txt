@@ -1,6 +1,0 @@
-main:
-n=4 nn
-the group is Q_8 x D_nn viewed as central extension of Z_2 x Z_2 x D_nn
-the letter group still has order 2n (twice too many elements),
-but we view it as acting on Z_2 x Z_2 x Z_nn and
-then pick some arbitrary (cleverly chosen) subset of n elements

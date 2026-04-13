@@ -1,100 +1,44 @@
 import torch
-import math
-from params import na, nm, nn, score, device, fixed_sums, config, eps
+from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtype, verbose
+from timestamped_print import print
 
 # parallel tempering
 nT = 16  # number of temperatures. between say 10 and 20
-r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188
+r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188 -- will be autotuned
 # T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
-logT = r * torch.arange(nT, device=device, dtype=torch.float32)
+logT = r * torch.arange(nT, device=device, dtype=real_dtype)
 T = .1 ** logT
 
 @torch.inference_mode()
 def improve_T(x, scores, k):  # random k-bit flip at finite T.
     BperT = x.shape[1]
-    flip_inds = torch.rand((nT, BperT, na), device=device).topk(k, dim=2).indices
-    # propose flips
-    flip_vals = x.gather(2, flip_inds)
-    x.scatter_(2, flip_inds, -flip_vals)
+    flip_inds = torch.randint(na, (nT, BperT, k), device=device)
+    flip_mask = torch.zeros((nT, BperT, na), device=device, dtype=torch.bool)
+    flip_mask.scatter_(2, flip_inds, True)
+    x[flip_mask] *= -1
     scores_prop = score(x).view(nT, BperT)
-    # Metropolis acceptance
     dE = scores_prop - scores
-    #accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    #accept = (scores > eps) & ((dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None]))  # remove first test?
-    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # slower but simpler
-    # broadcast the mask to k bits and gather flips to revert
-    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
-    # reflip only rejected ones
-    x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, -flip_vals))
+    accept = (scores > eps) & (dE < -torch.log(torch.rand_like(dE)) * T[:, None])
+    reject_mask = flip_mask & (~accept).unsqueeze(2)
+    x[reject_mask] *= -1
     scores[accept] = scores_prop[accept]
 
 @torch.inference_mode()
 def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     BperT = x.shape[1]
     j = torch.randint(nm, (), device=device)
-    flip_inds = j*nn + torch.rand((nT, BperT, nn), device=device).topk(k, dim=2).indices
-    # propose flips
+    base_inds = torch.rand(nn, device=device, dtype=real_dtype).topk(k).indices.view(1, 1, k)
+    shifts = torch.randint(nn, (nT, BperT, 1), device=device)
+    flip_inds = j * nn + (base_inds + shifts) % nn
     flip_vals = x.gather(2, flip_inds)
     flip_vals_rot = torch.roll(flip_vals, shifts=1, dims=2)
     x.scatter_(2, flip_inds, flip_vals_rot)
     scores_prop = score(x).view(nT, BperT)
-    # Metropolis acceptance
     dE = scores_prop - scores
-    # accept = (dE < 0) | (torch.rand_like(dE) < torch.exp(-dE * invT[:, None]))
-    accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:,None])  # remove first test?
-    # broadcast the mask to k bits and gather flips to revert
-    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)           # (nT,B,k)
-    # reflip only rejected ones
+    accept = (dE < 0) | (dE < -torch.log(torch.rand_like(dE)) * T[:, None])
+    reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, flip_vals_rot))
     scores[accept] = scores_prop[accept]
-
-"""
-@torch.no_grad()
-def attempt_swaps_vectorised(x, scores, gens):  # not used
-    accepted = 0.
-    total = 0
-    for offset in (1, 0):
-        # 1. Prepare E and T for adjacent pairs
-        # E1, E2 are the scores for T_i and T_{i+1} across all (nT-1) pairs
-        x1 = x[offset:-1:2]
-        x2 = x[offset+1::2]
-        s1 = scores[offset:-1:2]
-        s2 = scores[offset+1::2]
-        g1 = gens[offset:-1:2]
-        g2 = gens[offset+1::2]
-        # invT1, invT2 are the inverse temperatures for the same pairs
-        T1 = T[offset:-1:2].unsqueeze(1)  # (nT-1, 1)
-        T2 = T[offset+1::2].unsqueeze(1)   # (nT-1, 1)
-        # 2. Calculate Acceptance Probability (Metropolis Criterion)
-        # The term is: dE = (E2 - E1) * (1/T1 - 1/T2)
-        # invT are column vectors, E are matrices, ensuring correct broadcasting
-        prob =   # (nT-1, BperT)
-        # 3. Acceptance Mask
-        swap_mask = torch.rand_like(prob) < torch.exp(-(s2 - s1) * (invT1 - invT2))  # (nT-1, BperT)
-        # 4. Calculate Acceptance Rate
-        accepted += swap_mask.sum().float()
-        total += swap_mask.numel()
-        # 5. Perform Swaps (In-place on x, scores, gens)
-        # Expand mask for the swap operation across n and BperT
-        swap_mask_x = swap_mask.unsqueeze(-1)  # (nT-1, BperT, 1)
-        # Get the segments to be updated: x[i] and x[i+1] (the first and second halves)
-        # Swap x
-        x1_swapped = torch.where(swap_mask_x, x2, x1)  # New states for T_i
-        x2_swapped = torch.where(swap_mask_x, x1, x2)  # New states for T_{i+1}
-        x1.copy_(x1_swapped)
-        x2.copy_(x2_swapped)
-        # Swap scores
-        s1_swapped = torch.where(swap_mask, s2, s1)
-        s2_swapped = torch.where(swap_mask, s1, s2)
-        s1.copy_(s1_swapped)
-        s2.copy_(s2_swapped)
-        # Swap gens
-        g1_swapped = torch.where(swap_mask, g2, g1)
-        g2_swapped = torch.where(swap_mask, g1, g2)
-        g1.copy_(g1_swapped)
-        g2.copy_(g2_swapped)
-    return accepted / total
-"""
 
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
@@ -106,19 +50,6 @@ def attempt_swaps(x, scores, gens):
         E1, E2 = scores[i], scores[i+1]              # (BperT,)
         accept = (E1 - E2) * (T1 - T2) < -torch.log(torch.rand_like(E1)) * T1 * T2
         accepted[i] += accept.sum(dim=0)
-        # swap where accepted
-        """
-        swap_mask = accept[:, None]            # (BperT,1)
-        x1, x2 = x[i].clone(), x[i+1].clone()
-        s1, s2 = E1.clone(), E2.clone()
-        g1, g2 = gens[i].clone(), gens[i+1].clone()
-        x[i] = torch.where(swap_mask, x2, x1)
-        x[i+1] = torch.where(swap_mask, x1, x2)
-        scores[i] = torch.where(accept, s2, s1)
-        scores[i+1] = torch.where(accept, s1, s2)
-        gens[i] = torch.where(accept, g2, g1)
-        gens[i+1] = torch.where(accept, g1, g2)
-        """
         xc = x[i, accept].clone()
         x[i, accept] = x[i+1, accept]
         x[i+1, accept] = xc
@@ -130,14 +61,45 @@ def attempt_swaps(x, scores, gens):
         gens[i+1, accept] = gensc
     return accepted
 
-swap_interval = 50
-iterations = na * swap_interval * config.num_improve
-p = .25
-invlogp = 1 / math.log(p)
+@torch.no_grad()
+def attempt_swaps_vectorised(x, scores, gens):  # not used. faster but performs slightly worse
+    #  x: (nT, BperT, n)
+    #  scores, gens: (nT, BperT)
+    accepted = torch.zeros((nT-1,), device=device, dtype=torch.long)
+    for parity in range(2):  # even-odd decomposition: independent pairs can swap in parallel
+        idx = torch.arange(parity, nT-1, 2, device=device)
+        if idx.numel() == 0:
+            continue
+        T1 = T[idx]                                     # (P,)
+        T2 = T[idx + 1]                                 # (P,)
+        E1 = scores[idx]                                # (P, BperT)
+        E2 = scores[idx + 1]                            # (P, BperT)
+        accept = (E1 - E2) * (T1 - T2).unsqueeze(1) < -torch.log(torch.rand_like(E1)) * (T1 * T2).unsqueeze(1)
+        accepted[idx] = accept.sum(dim=1)
+        accept_3d = accept.unsqueeze(2)                 # (P, BperT, 1) for broadcasting over na
+        x_lo, x_hi = x[idx].clone(), x[idx + 1].clone()
+        x[idx]     = torch.where(accept_3d, x_hi, x_lo)
+        x[idx + 1] = torch.where(accept_3d, x_lo, x_hi)
+        s_lo, s_hi = scores[idx].clone(), scores[idx + 1].clone()
+        scores[idx]     = torch.where(accept, s_hi, s_lo)
+        scores[idx + 1] = torch.where(accept, s_lo, s_hi)
+        g_lo, g_hi = gens[idx].clone(), gens[idx + 1].clone()
+        gens[idx]     = torch.where(accept, g_hi, g_lo)
+        gens[idx + 1] = torch.where(accept, g_lo, g_hi)
+    return accepted
+
+p = .5
+invlogp = 1 / torch.log(torch.tensor(p, device=device, dtype=real_dtype)).item()
 def parallel_tempering(x, scores, gens):
+    print("parallel_tempering", flush=True)
     global logT, T
+    iterations = na * 50 * config.num_improve
+    avg_k = (3-p)/(1-p) if fixed_sums else 1/(1-p)
+    swap_interval = max(na//avg_k, 10)
+    warmup_swaps = 5 * swap_interval
     B = x.shape[0]
-    BperT = B // nT  # should divide please
+    assert B % nT == 0, f"parallel_tempering requires batch size divisible by {nT}, got {B}"
+    BperT = B // nT
     if BperT == 0:
         return
     x = x.view(nT, BperT, na)
@@ -146,19 +108,17 @@ def parallel_tempering(x, scores, gens):
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
-            k = 3 + 2 * torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is (3-p)/(1-p)
+            k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(3, nn//2))
             improve_T_fixed_sums(x, scores, k=k)
         else:
-            k = 1 + torch.floor(torch.log(torch.rand(()))*invlogp)  # average k is 1/(1-p)
+            k = 1 + torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(1, na//2))
             improve_T(x, scores, k=k)
         # --- replica swaps ---
         if t % swap_interval == 0:
             acc = attempt_swaps(x, scores, gens) / BperT
-            #print(f"{t:5d}: swap_acc={acc:.3f} mean score={scores.mean():.3f} | "+' '.join(f'{v:.3f}' for v in scores.mean(1)))
-            # acc_avg = acc if t == 0 else 0.9 * acc_avg + 0.1 * acc
-            if t > swap_interval * 10:
+            if t > warmup_swaps:
                 # autotune Ts
                 for i in range(nT-1):
                     if acc[i] < .2:
@@ -166,6 +126,5 @@ def parallel_tempering(x, scores, gens):
                     elif acc[i] > .3:
                         logT[i+1:] += .05 * (logT[i+1] - logT[i])
                 T = .1 ** logT
-            print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
-    # acc_avg = acc_avg.mean().item()
-    # print(f"{acc_avg=}")
+            if verbose:
+                print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
