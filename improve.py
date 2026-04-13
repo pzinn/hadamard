@@ -16,8 +16,8 @@ for i in range(nm):
 k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
-def improve1p(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
-    print("improve1p", flush=True)
+def improve_local(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+    print("improve_local", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     scores1 = torch.empty((B, na), device=device, dtype=real_dtype)
