@@ -82,39 +82,30 @@ class Transformer(torch.nn.Module):
         return self.block_size
 
     def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+        b = batch0.shape[0]
         if self.uses_score:
             if score_batch is None:
                 raise RuntimeError("score_batch is required when transformer_uses_score=True")
             score_batch = score_batch.to(dtype=self.transformer.wse.weight.dtype)
-            b = batch0.shape[0]
             m = batch0.shape[1]
-            batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
+            batch = batch0[:, :, :-1] if self.training else batch0
             t = batch.shape[2] + 1
-            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(m, t, config.n_embd)
-            tok_emb = self.transformer.wte(batch)
+            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(1, m, t, config.n_embd)
             x = pos_emb.repeat(b, 1, 1, 1)
             x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
-            x[:, :, 1:, :] += tok_emb
-            xx = x.view(b * m, t, config.n_embd)
-            for block in self.transformer.h:
-                xx = block(xx)
-            xx = self.transformer.ln_f(xx)
-            logits = self.lm_head(xx)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
-            return logits, loss
-        b = batch0.shape[0]
-        # During training, predict the next token for each position.
-        batch = batch0[:, :self.block_size-1]
-        t = batch.shape[1] + 1
-        pos_emb = self.transformer.wpe.weight[:t]
-        tok_emb = self.transformer.wte(batch)
-        x = pos_emb.repeat(b, 1, 1)
-        x[:, 1:, :] += tok_emb
+            x = x.view(b * m, t, config.n_embd)
+            batch = batch.view(b * m, batch.shape[2])
+        else:
+            batch = batch0[:, :-1] if self.training else batch0
+            t = batch.shape[1] + 1
+            pos_emb = self.transformer.wpe.weight[:t].view(1, t, config.n_embd)
+            x = pos_emb.repeat(b, 1, 1)
+        if batch.numel() > 0:
+            x[:, 1:, :] += self.transformer.wte(batch)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        # Optionally compute training loss.
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
 
