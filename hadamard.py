@@ -4,12 +4,12 @@
 import torch
 import params
 params.init_from_argv()
-from params import na, nm, nn, nn2, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, aut, perms, real_dtype, eps
-from improve import improve1p, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
+from params import na, nm, nn, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, real_dtype, eps
+from improve import improve_local, improve_greedy, improve_phases, improve_greedy_fixed, improve4x4_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
-from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
+from symmetry import canonicalise_exact, canonicalise_heuristic
 from timestamped_print import print, print_header
 import sys
 from timeit import default_timer as timer  # to measure exec time
@@ -140,7 +140,7 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
             a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-symmetry_ctx = build_context()
+symmetry_ctx = params.symmetry_ctx
 
 @torch.inference_mode()
 def parallel_improve(arrays, scores, gens):
@@ -161,7 +161,7 @@ def parallel_improve(arrays, scores, gens):
     if fixed_sums:
         improve4x4_fixed(arrays, scores)
     else:
-        improve1p(arrays, scores)
+        improve_local(arrays, scores)
     scores = score(arrays)  # don't trust improve
     if verbose:
         print(f"improve B2 time: {timer() - start_timer}")
@@ -189,7 +189,7 @@ def parallel_improve(arrays, scores, gens):
         if fixed_sums:
             improve4x4_fixed(arrays, scores)
         else:
-            improve1p(arrays, scores)
+            improve_local(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
             print(f"improve D1 time: {timer() - start_timer}")
@@ -327,7 +327,7 @@ def main():
             max_steps = config.training_steps if coeff == 1 else config.training_steps//10
             eval_freq = 1000
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
+            transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if verbose:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
