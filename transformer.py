@@ -149,8 +149,6 @@ def save_model():
 def decode_segment_tokens(X, dtype=torch.int8):
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)
-    if config.left_pad_stacks:
-        return signs[:, nn_pad - nn:].to(dtype=dtype)
     return signs[:, :nn].to(dtype=dtype)
 
 
@@ -196,10 +194,7 @@ def string_to_array(X):
 def array_to_string(signs):
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
-    if config.left_pad_stacks:
-        signs1[:, :, nn_pad - nn:] = signs.view(B, nm, nn)
-    else:
-        signs1[:, :, :nn] = signs.view(B, nm, nn)
+    signs1[:, :, :nn] = signs.view(B, nm, nn)
     # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
