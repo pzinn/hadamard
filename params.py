@@ -27,7 +27,7 @@ n_embd = 128
 n_head = 4
 stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
 left_pad_stacks = False
-transformer_uses_score = False
+transformer_uses_score = True  # TEMP only True works on this branch
 temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 temperature_delta = .02
 

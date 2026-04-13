@@ -47,16 +47,19 @@ class Block(torch.nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln_2 = torch.nn.LayerNorm(config.n_embd)
         self.mlp = torch.nn.ModuleDict(dict(
-            c_fc    = torch.nn.Linear(config.n_embd, config.n_embd2),
+            c_fc    = torch.nn.Linear(config.n_embd + nn2+1, config.n_embd2),  # TODO should depend on model.uses_score
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
             act     = myActiv(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))
 
-    def forward(self, x):
+    def forward(self, x, s):
         x = x + self.attn(self.ln_1(x))
-        x = x + self.mlpf(self.ln_2(x))
+        x = self.ln_2(x)
+        s_expanded = s.unsqueeze(1).expand(-1,x.shape[1],-1)
+        xx = torch.cat([x, s_expanded], dim=-1)
+        x = x + self.mlpf(xx)
         return x
 
 class Transformer(torch.nn.Module):
@@ -70,8 +73,6 @@ class Transformer(torch.nn.Module):
             ln_f = torch.nn.LayerNorm(config.n_embd),
         )
         self.uses_score = config.transformer_uses_score
-        if self.uses_score:
-            modules["wse"] = torch.nn.Embedding(nn2 + 1, config.n_embd)
         self.transformer = torch.nn.ModuleDict(modules)
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Report total parameter count.
@@ -81,11 +82,10 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):  #TODO git diff 79f8e6a5230387d5da6090045b8a699f5d20dc5e  b0f345b9fb99a74f898cead33a98cbcef6d84e4d
         if self.uses_score:
             if score_batch is None:
                 raise RuntimeError("score_batch is required when transformer_uses_score=True")
-            score_batch = score_batch.to(dtype=self.transformer.wse.weight.dtype)
             b = batch0.shape[0]
             m = batch0.shape[1]
             batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
@@ -93,11 +93,11 @@ class Transformer(torch.nn.Module):
             pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(m, t, config.n_embd)
             tok_emb = self.transformer.wte(batch)
             x = pos_emb.repeat(b, 1, 1, 1)
-            x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
             x[:, :, 1:, :] += tok_emb
             xx = x.view(b * m, t, config.n_embd)
+            s = score_batch.view(b * m, nn2+1)
             for block in self.transformer.h:
-                xx = block(xx)
+                xx = block(xx, s)
             xx = self.transformer.ln_f(xx)
             logits = self.lm_head(xx)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
@@ -171,7 +171,7 @@ def generate(batch, arrays):
     temperature = config.temperature + params.gen * config.temperature_delta
     if model.uses_score:
         B = batch.shape[0]
-        ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wse.weight.dtype)
+        ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
         for j in range(nm):
             offset = j * segment_string_length
             for i in range(segment_string_length):
@@ -180,7 +180,7 @@ def generate(batch, arrays):
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
-            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=model.transformer.wse.weight.dtype)
+            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=torch.float32)
             arrays[:, j*nn:(j+1)*nn] = signs.to(dtype=torch.int8)
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
@@ -220,7 +220,7 @@ def array_to_string(signs):
 def prepare_training_inputs(batch):
     string_batch = array_to_string(batch)
     if model.uses_score:
-        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
+        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=torch.float32)
         ff = torch.flip(torch.cumsum(torch.flip(ff, dims=(1,)), dim=1), dims=(1,))
         return string_batch, {"score_batch": ff, "compute_loss": True}
     return string_batch, {"compute_loss": True}
