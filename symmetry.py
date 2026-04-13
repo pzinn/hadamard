@@ -57,6 +57,28 @@ def build_context(nn=None, nm=None, segment_sums=None, device=None, real_dtype=N
     )
 
 
+
+
+@torch.inference_mode()
+def randomise_symmetry(array0, ctx):
+    B = array0.shape[0]
+    array0 = array0.to(device=ctx.device).view(B, ctx.nm, ctx.nn)
+    perm_idx = torch.randint(len(ctx.perms), (B,), device=ctx.device)
+    a_idx = torch.randint(len(ctx.aut), (B,), device=ctx.device)
+    flips = torch.randint(2, (B, ctx.nm), device=ctx.device) * 2 - 1
+    shifts = torch.randint(ctx.nn, (B, ctx.nm), device=ctx.device)
+    a = ctx.aut[a_idx].unsqueeze(1)
+    coeff = a * flips
+    shift_idx = (coeff.unsqueeze(-1) * ctx.base + shifts.unsqueeze(-1)) % ctx.nn
+    array = torch.gather(array0, 2, shift_idx)
+    perm = ctx.perms[perm_idx]
+    perm_expanded = perm.unsqueeze(-1).expand(B, ctx.nm, ctx.nn)
+    array = torch.gather(array, 1, perm_expanded)
+    if not ctx.fixed_sums:
+        signs = torch.randint(2, (B, ctx.nm), device=ctx.device, dtype=torch.int8) * 2 - 1
+        array *= signs.unsqueeze(-1)
+    return array.view(B, ctx.na)
+
 @torch.inference_mode()
 def canonicalise_local_symmetry(arrays, ctx, scores=None, score_fn=None, eps=None):
     # Canonicalise the non-automorphism symmetries: blockwise dihedral actions,

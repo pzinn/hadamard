@@ -9,7 +9,7 @@ from improve import improve1p, improve_phases, improve1p_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
-from symmetry import build_context, canonicalise_exact, canonicalise_heuristic
+from symmetry import canonicalise_exact, canonicalise_heuristic
 from timestamped_print import print, print_header
 import sys
 from timeit import default_timer as timer  # to measure exec time
@@ -142,7 +142,7 @@ def fix_num_ones(arrays):  # fix # 1s. shouldn't happen too often
             a[mask1, j, torch.randint(nn, (), device=device)] = 1  # lazy
             a[mask2, j, torch.randint(nn, (), device=device)] = -1
 
-symmetry_ctx = build_context()
+symmetry_ctx = params.symmetry_ctx
 
 @torch.inference_mode()
 def parallel_improve(arrays, scores, gens):

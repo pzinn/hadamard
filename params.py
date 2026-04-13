@@ -170,7 +170,7 @@ def compute_derived():
     cst = 1 / math.sqrt(n)
 
 def init_from_argv(argv=None):
-    global verbose, training_size
+    global verbose, training_size, symmetry_ctx
     args = parser.parse_args(argv)
     verbose = args.verbose
     for param in hparams_list:
@@ -181,37 +181,13 @@ def init_from_argv(argv=None):
     if getattr(args, "sample_size") and not getattr(args, "training_size"):
         training_size = sample_size//20
     compute_derived()
+    from symmetry import build_context
+    symmetry_ctx = build_context()
 
 # symmetries
 from itertools import permutations
 
 #print("order of symmetry: ", rndmod.prod().item())
-
-def randomise_symmetry(array0):
-    B = array0.shape[0]
-    array0 = array0.to(device=device).view(B, nm, nn)
-    # --- random parameters per batch ---
-    perm_idx = torch.randint(len(perms), (B,), device=device)
-    a_idx    = torch.randint(len(aut), (B,), device=device)      # automorphism
-    flips    = torch.randint(2, (B, nm), device=device) * 2 - 1  # ±1
-    shifts   = torch.randint(nn, (B, nm), device=device)         # translation
-    # --- combined affine action on Z/nnZ ---
-    base = torch.arange(nn, device=device)                       # 0..nn-1
-    a = aut[a_idx].unsqueeze(1)                                  # (1,1)
-    coeff = a * flips                                            # ±a  (B,nm)
-    shift_idx = (coeff.unsqueeze(-1) * base + shifts.unsqueeze(-1)) % nn  # (B,nm,nn)
-    # Apply combined index transformation
-    array = torch.gather(array0, 2, shift_idx)
-    # --- block permutation per batch ---
-    perm = perms[perm_idx]
-    # array = array[torch.arange(B)[:, None], perm]
-    perm_expanded = perm.unsqueeze(-1).expand(B, nm, nn)
-    array = torch.gather(array, 1, perm_expanded)
-    if not fixed_sums:
-        signs = torch.randint(2, (B, nm), device=device, dtype=torch.int8) * 2 - 1  # ±1
-        # --- independent overall signs ---
-        array *= signs.unsqueeze(-1)
-    return array
 
 real_dtype = torch.float32
 complex_dtype = torch.complex64
