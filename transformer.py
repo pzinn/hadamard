@@ -9,7 +9,7 @@ import torch
 import torch.nn
 from torch.nn import functional as F
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, fft, cst
+from params import na, nn, nm, device, config, resume_training
 import logger
 from symmetry import randomise_symmetry
 from timestamped_print import print
@@ -63,16 +63,12 @@ class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.block_size = config.block_size
-        modules = dict(
+        self.transformer = torch.nn.ModuleDict(dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
             h = torch.nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = torch.nn.LayerNorm(config.n_embd),
-        )
-        self.uses_score = config.transformer_uses_score
-        if self.uses_score:
-            modules["wse"] = torch.nn.Embedding(nn2 + 1, config.n_embd)
-        self.transformer = torch.nn.ModuleDict(modules)
+        ))
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
@@ -81,26 +77,13 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+    def forward(self, batch0, compute_loss=False):
         b = batch0.shape[0]
-        if self.uses_score:
-            if score_batch is None:
-                raise RuntimeError("score_batch is required when transformer_uses_score=True")
-            score_batch = score_batch.to(dtype=self.transformer.wse.weight.dtype)
-            m = batch0.shape[1]
-            batch = batch0[:, :, :-1] if self.training else batch0
-            t = batch.shape[2] + 1
-            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(1, m, t, config.n_embd)
-            x = pos_emb.repeat(b, 1, 1, 1)
-            x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
-            x = x.view(b * m, t, config.n_embd)
-            batch = batch.view(b * m, batch.shape[2])
-        else:
-            batch = batch0[:, :-1] if self.training else batch0
-            t = batch.shape[1] + 1
-            pos_emb = self.transformer.wpe.weight[:t].view(1, t, config.n_embd)
-            x = pos_emb.repeat(b, 1, 1)
-        if batch.numel() > 0:
+        batch = batch0[:, :-1] if self.training else batch0
+        t = batch.shape[1] + 1
+        pos_emb = self.transformer.wpe.weight[:t].view(1, t, config.n_embd)
+        x = pos_emb.repeat(b, 1, 1)
+        if batch.shape[1] > 0:
             x[:, 1:, :] += self.transformer.wte(batch)
         for block in self.transformer.h:
             x = block(x)
@@ -158,22 +141,6 @@ def generate(batch, arrays):
     Fill token positions autoregressively in-place for a batch of sequences.
     """
     temperature = config.temperature + params.gen * config.temperature_delta
-    if model.uses_score:
-        B = batch.shape[0]
-        ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wse.weight.dtype)
-        for j in range(nm):
-            offset = j * segment_string_length
-            for i in range(segment_string_length):
-                batch_cond = batch[:, offset:offset+i].view(B, 1, i)
-                logits, _ = model(batch_cond, score_batch=ff, offset=offset)
-                logits = logits[:, -1, :] / temperature
-                probs = F.softmax(logits, dim=-1)
-                batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
-            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=model.transformer.wse.weight.dtype)
-            arrays[:, j*nn:(j+1)*nn] = signs.to(dtype=torch.int8)
-            f = cst * torch.fft.rfft(signs, dim=1)
-            ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
-        return
     block_size = model.get_block_size()
     for i in range(block_size):
         batch_cond = batch[:, :i]
@@ -198,18 +165,7 @@ def array_to_string(signs):
     # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
-    if config.transformer_uses_score:
-        return (signs1.view(B, nm, segment_string_length, config.stacking) << bit_positions).sum(dim=3)
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
-
-@torch.no_grad()
-def prepare_training_inputs(batch):
-    string_batch = array_to_string(batch)
-    if model.uses_score:
-        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wse.weight.dtype)
-        ff = torch.flip(torch.cumsum(torch.flip(ff, dims=(1,)), dim=1), dims=(1,))
-        return string_batch, {"score_batch": ff, "compute_loss": True}
-    return string_batch, {"compute_loss": True}
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -253,9 +209,9 @@ def train(data, **kwargs):
     total_loss = 0
     while True:
         # Sample a batch, apply random symmetry, and train.
-        batch = randomise_symmetry(data[torch.randint(data_len, (batch_size,))].to(device, non_blocking=True), params.symmetry_ctx)
-        model_input, model_kwargs = prepare_training_inputs(batch)
-        logits, loss = model(model_input, **model_kwargs)
+        batch = torch.randint(data_len, (batch_size,))
+        string_batch = array_to_string(randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx))
+        logits, loss = model(string_batch, compute_loss=True)
         total_loss += loss.item()
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
