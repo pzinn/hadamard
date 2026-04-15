@@ -229,10 +229,6 @@ def train(data, **kwargs):
     # Learning rate schedule.
     lr_sched = kwargs.get("lr_sched", lambda step: 5e-4)
 
-    # Optional scoring hook used in testing.
-    global score
-    score = kwargs.get("score", None)
-
     if resume_training:
         try:
             load_model()
