@@ -9,7 +9,7 @@ import torch
 import torch.nn
 from torch.nn import functional as F
 import params  # for work_dir
-from params import na, nn, nm, device, config, resume_training
+from params import na, nn, nm, device, config, resume_training, score
 import logger
 from symmetry import randomise_symmetry
 from timestamped_print import print
@@ -146,7 +146,14 @@ def generate(batch, arrays):
         batch_cond = batch[:, :i]
         logits, _ = model(batch_cond)
         logits = logits[:, -1, :] / temperature
-        probs = F.softmax(logits, dim=-1)
+        if i > 0:
+            # added: partial scores
+            for j in range(config.vocab_size):
+                batch[:, i] = j
+                logits[:, j] -= i/block_size * torch.nan_to_num(score(string_to_array_partial(batch,i+1)),nan=1e3)  # TODO coeff
+            #
+        probs = F.softmax(logits, dim=-1)  # probs ~ exp(logits)
+        print(logits.mean(),probs.mean())
         batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
     arrays.copy_(string_to_array(batch))
 
@@ -156,6 +163,15 @@ def string_to_array(X):
     B = X.shape[0]
     signs = decode_segment_tokens(X.view(B * nm, segment_string_length), dtype=torch.int8)
     return signs.view(B, na)
+
+@torch.no_grad()
+def string_to_array_partial(X, k):
+    B = X.shape[0]
+    signs = decode_segment_tokens(X.view(B * nm, segment_string_length), dtype=torch.int8)
+    i = nn * (k // segment_string_length) + (k % segment_string_length) * config.stacking
+    signs[:, i:] = 0
+    return signs.view(B, na)
+
 
 @torch.no_grad()
 def array_to_string(signs):
