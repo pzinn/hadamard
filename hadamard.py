@@ -169,18 +169,13 @@ def parallel_improve(arrays, scores, gens):
     if config.num_improve > 0:
         # step B: parallel tempering (if num_improve>0)
         start_timer = timer()
-        scores, inds = torch.sort(scores, descending=True)
+        mask = scores > eps  # non Hadamard matrices
+        _, inds = torch.sort(scores + mask * config.gen_decay * (params.gen - gens), descending=True)
         arrays = arrays[inds]
+        scores = scores[inds]
         gens = gens[inds]
-        if arrays.shape[0] == 0:
-            return arrays, scores, gens
-        B = arrays.shape[0]
-        if verbose:
-            print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
+        B = mask.sum()
         B1 = (B // nT) * nT  # round down to a multiple of nT
-        if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
-            B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
-            B1 = (B1 // nT) * nT
         parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
         if verbose:
             print(f"pt time: {timer() - start_timer}")
@@ -237,7 +232,7 @@ def best_from(arrays, scores, gens):
     if B <= config.training_size:
         return unique_arrays, unique_scores, unique_gens
     # _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
-    _, idx = torch.topk(unique_scores * (1 + config.gen_decay * (params.gen - unique_gens)), k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
     return unique_arrays[idx], unique_scores[idx], unique_gens[idx]
 
 @torch.inference_mode()

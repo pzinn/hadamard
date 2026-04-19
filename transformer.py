@@ -241,11 +241,14 @@ def train(data, **kwargs):
         step += 1
         if step % eval_freq == 0:
             print(f"{step=}", end='\t')
-            logger.record_loss(total_loss/eval_freq, step, "train")
+            last_loss = total_loss/eval_freq
+            logger.record_loss(last_loss, step, "train")
             total_loss = 0
             save_model()
         if step == max_steps:
             save_model()
+            with open(logger.stats_file, 'a') as file:
+                file.write(f'training: final loss={last_loss}\n')
             break
         #
     print('')
