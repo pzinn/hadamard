@@ -62,7 +62,6 @@ class Block(torch.nn.Module):
 class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.block_size = config.block_size
         modules = dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
@@ -77,9 +76,6 @@ class Transformer(torch.nn.Module):
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
-
-    def get_block_size(self):
-        return self.block_size
 
     def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
         b = batch0.shape[0]
@@ -174,8 +170,7 @@ def generate(batch, arrays):
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
         return
-    block_size = model.get_block_size()
-    for i in range(block_size):
+    for i in range(config.block_size):
         batch_cond = batch[:, :i]
         logits, _ = model(batch_cond)
         logits = logits[:, -1, :] / temperature
@@ -216,11 +211,9 @@ def train(data, **kwargs):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     data_len = len(data)
-    vocab_size = config.vocab_size  # should one check that this is correct?
-    string_length = config.block_size
-    print(f"number of examples in the dataset: {data_len}")
-    print(f"max word length: {string_length}")
-    print(f"number of unique characters in the vocabulary: {vocab_size}")
+    print(f"size of the dataset: {data_len}")
+    print(f"string length: {config.block_size}")
+    print(f"number of unique tokens in the vocabulary: {config.vocab_size}")
 
     # Runtime-adjusted training parameters.
     max_steps = kwargs.get("max_steps", -1)
