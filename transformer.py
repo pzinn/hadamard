@@ -88,7 +88,7 @@ class Transformer(torch.nn.Module):
             t = batch.shape[2] + 1
             pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(1, m, t, config.n_embd)
             x = pos_emb.repeat(b, 1, 1, 1)
-            x[:, :, 0, :] += score_batch @ self.transformer.wse.weight
+            x += (score_batch @ self.transformer.wse.weight).unsqueeze(2)
             x = x.view(b * m, t, config.n_embd)
             batch = batch.view(b * m, batch.shape[2])
         else:
