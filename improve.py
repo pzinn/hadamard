@@ -54,6 +54,47 @@ def improve_local(arrays, scores):  # optimised k-bit flip
         active_rows = torch.nonzero(mask, as_tuple=True)[0]
 
 
+@torch.inference_mode()
+def improve_tabu(arrays, scores, steps=None):
+    """Tabu walk using the best currently allowed one-bit flip.
+    The walk accepts the least bad non-tabu one-bit flip at each step, even if it
+    worsens the score.  The input arrays/scores are only updated when the walk
+    finds a new best state for that row.
+    """
+    if fixed_sums:
+        raise RuntimeError("improve_tabu is only implemented without fixed segment sums")
+    print("improve_tabu", flush=True)
+    B = arrays.shape[0]
+    steps = na // 2 if steps is None else steps
+    rows = torch.arange(B, device=device)
+    work_arrays = arrays.clone()
+    tabu = torch.zeros((B, na), device=device, dtype=torch.bool)
+    candidate_scores = torch.empty((B, na), device=device, dtype=real_dtype)
+    f = fft(work_arrays)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(steps):
+        for j in range(na):
+            torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            candidate_scores[:, j] = score_fft(fmod)
+        candidate_scores.masked_fill_(tabu, float('inf'))
+        new_scores, inds = candidate_scores.min(dim=1)
+        old_bits = work_arrays[rows, inds]
+        fl += old_bits.to(complex_dtype).unsqueeze(1) * wrng_all[inds]
+        work_arrays[rows, inds] *= -1
+        tabu[rows, inds] = True
+        improved = new_scores < scores
+        if improved.any():
+            arrays[improved] = work_arrays[improved]
+            scores[improved] = new_scores[improved]
+            cnt += improved.sum()
+    if verbose:
+        print(f'improvements {cnt} ({cnt/B})')
+
+
 if segment_sums is not None:
     ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
 def penalty(f):  # penalty to stray from correct segment sums
