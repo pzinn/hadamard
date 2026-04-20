@@ -54,6 +54,7 @@ def improve_local(arrays, scores):  # optimised k-bit flip
         active_rows = torch.nonzero(mask, as_tuple=True)[0]
 
 
+tabu_rnd = .3  # yet another adjustable parameter
 @torch.inference_mode()
 def improve_tabu(arrays, scores):
     """Tabu walk using the best currently allowed one-bit flip.
@@ -81,7 +82,7 @@ def improve_tabu(arrays, scores):
             torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
             flmod.add_(fl)
             candidate_scores[:, j] = score_fft(fmod)
-        _, inds = (candidate_scores * (1 + tabu)).min(dim=1)
+        _, inds = (candidate_scores * (1 + tabu + tabu_rnd * torch.rand(na, device=device, dtype=real_dtype))).min(dim=1)
         new_scores = candidate_scores[rows, inds]
         old_bits = work_arrays[rows, inds]
         fl += old_bits.to(complex_dtype).unsqueeze(1) * wrng_all[inds]
