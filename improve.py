@@ -55,7 +55,7 @@ def improve_local(arrays, scores):  # optimised k-bit flip
 
 
 @torch.inference_mode()
-def improve_tabu(arrays, scores, steps=None):
+def improve_tabu(arrays, scores):
     """Tabu walk using the best currently allowed one-bit flip.
     The walk accepts the least bad non-tabu one-bit flip at each step, even if it
     worsens the score.  The input arrays/scores are only updated when the walk
@@ -65,10 +65,11 @@ def improve_tabu(arrays, scores, steps=None):
         raise RuntimeError("improve_tabu is only implemented without fixed segment sums")
     print("improve_tabu", flush=True)
     B = arrays.shape[0]
-    steps = na // 2 if steps is None else steps
+    steps = na // 2 * max(1,config.num_improve)
     rows = torch.arange(B, device=device)
     work_arrays = arrays.clone()
-    tabu = torch.zeros((B, na), device=device, dtype=torch.bool)
+    tabu = torch.zeros((B, na), device=device, dtype=real_dtype)
+    tabu_decay = max(1-10/na, 0.5)
     candidate_scores = torch.empty((B, na), device=device, dtype=real_dtype)
     f = fft(work_arrays)
     fl = f.view(B, nm*(nn2+1))
@@ -80,12 +81,13 @@ def improve_tabu(arrays, scores, steps=None):
             torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
             flmod.add_(fl)
             candidate_scores[:, j] = score_fft(fmod)
-        candidate_scores.masked_fill_(tabu, float('inf'))
-        new_scores, inds = candidate_scores.min(dim=1)
+        _, inds = (candidate_scores * (1 + tabu)).min(dim=1)
+        new_scores = candidate_scores[rows, inds]
         old_bits = work_arrays[rows, inds]
         fl += old_bits.to(complex_dtype).unsqueeze(1) * wrng_all[inds]
         work_arrays[rows, inds] *= -1
-        tabu[rows, inds] = True
+        tabu.mul_(tabu_decay)
+        tabu[rows, inds] = 10
         improved = new_scores < scores
         if improved.any():
             arrays[improved] = work_arrays[improved]
