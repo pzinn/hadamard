@@ -17,6 +17,8 @@ gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 
 @torch.inference_mode()
 def improve_local(arrays, scores):  # optimised k-bit flip
+    if fixed_sums:
+        raise RuntimeError("improve_local is only implemented without fixed segment sums")
     print(f"improve_local {k=}");
     B = arrays.shape[0]
     active_rows = torch.arange(B, device=device, dtype=torch.long)
@@ -106,6 +108,8 @@ def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
 @torch.inference_mode()
 def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+    if not fixed_sums:
+        raise RuntimeError("improve_local_fixed is only implemented with fixed segment sums")
     print("improve_local_fixed", flush=True)
     z = cst  # is that the correct scaling with n?
     zmul = 1.5  # adjustable parameter
