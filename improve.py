@@ -1,6 +1,5 @@
 import torch
-import params
-from params import na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, gen_decay, cst, verbose
+from params import na, nm, nn, nn2, device, score, score_fft, score_fft_int, fft, fixed_sums, num_ones, real_dtype, complex_dtype, eps, cst, segment_sums, verbose, config
 from timestamped_print import print
 
 # precompute roots of unity for fft delta
@@ -16,7 +15,9 @@ for i in range(nm):
 k = min(11, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 @torch.inference_mode()
-def improve_local(arrays, scores):  # combined optimised 1-bit flip / opportunistic k-bit flip
+def improve_local(arrays, scores):  # optimised k-bit flip
+    if fixed_sums:
+        raise RuntimeError("improve_local is only implemented without fixed segment sums")
     print("improve_local", flush=True)
     B = arrays.shape[0]
     active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
@@ -51,6 +52,150 @@ def improve_local(arrays, scores):  # combined optimised 1-bit flip / opportunis
         if not mask.any():
             break
         active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+
+tabu_rnd = .3  # yet another adjustable parameter
+@torch.inference_mode()
+def improve_tabu(arrays, scores):
+    """Tabu walk using the best currently allowed one-bit flip.
+    The walk accepts the least bad non-tabu one-bit flip at each step, even if it
+    worsens the score.  The input arrays/scores are only updated when the walk
+    finds a new best state for that row.
+    """
+    if fixed_sums:
+        raise RuntimeError("improve_tabu is only implemented without fixed segment sums")
+    print("improve_tabu", flush=True)
+    B = arrays.shape[0]
+    steps = na // 2 * max(1,config.num_improve)
+    rows = torch.arange(B, device=device)
+    work_arrays = arrays.clone()
+    tabu = torch.zeros((B, na), device=device, dtype=real_dtype)
+    tabu_decay = max(1-10/na, 0.5)
+    candidate_scores = torch.empty((B, na), device=device, dtype=real_dtype)
+    f = fft(work_arrays)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(steps):
+        for j in range(na):
+            torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            candidate_scores[:, j] = score_fft(fmod)
+        _, inds = (candidate_scores * (1 + tabu + tabu_rnd * torch.rand(na, device=device, dtype=real_dtype))).min(dim=1)
+        new_scores = candidate_scores[rows, inds]
+        old_bits = work_arrays[rows, inds]
+        fl += old_bits.to(complex_dtype).unsqueeze(1) * wrng_all[inds]
+        work_arrays[rows, inds] *= -1
+        tabu.mul_(tabu_decay)
+        tabu[rows, inds] = 10
+        improved = new_scores < scores
+        if improved.any():
+            arrays[improved] = work_arrays[improved]
+            scores[improved] = new_scores[improved]
+            cnt += improved.sum()
+    if verbose:
+        print(f'improvements {cnt} ({cnt/B})')
+
+if segment_sums is not None:
+    ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
+def penalty(f):  # penalty to stray from correct segment sums
+    return torch.abs(torch.real(f[:,:,0])-ss[None,:]).sum(dim=1)
+def mod_score_fft(f, z):
+    return score_fft(f) + z * penalty(f)
+@torch.inference_mode()
+def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+    if not fixed_sums:
+        raise RuntimeError("improve_local_fixed is only implemented with fixed segment sums")
+    print("improve_local_fixed", flush=True)
+    z = cst  # is that the correct scaling with n?
+    zmul = 1.5  # adjustable parameter
+    oldz = 0
+    B = arrays.shape[0]
+    active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    cnt = config.num_improve
+    while True:
+        M = active_rows.numel()
+        scores1 = torch.empty((M, na), device=device, dtype=real_dtype)
+        f = fft(arrays[active_rows])  # better than flip updating for accuracy
+        pen = penalty(f)
+        mask = pen > eps  # always continue with ones violating segment_sums
+        if verbose:
+            print(f"active ratio {M/B} segment sum violate ratio {mask.sum()/B}")
+        scores[active_rows] += (z-oldz) * pen  # adjust scores to new value of z
+        fl = f.view(M, nm*(nn2+1))
+        fmod = torch.empty_like(f)
+        flmod = fmod.view(-1, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(arrays[active_rows, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            scores1[:, j] = mod_score_fft(fmod, z)
+        # k best flip candidates
+        _, indsk = torch.topk(scores1, k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(arrays[active_rows], 1, indsk)
+        for j in gray_code:
+            inds = indsk[:, j]  # actual index for each sample
+            fl += cur[:, j].unsqueeze(1) * wrng_all[inds]
+            cur[:, j] *= -1  # need to keep track of these two
+            new_scores = mod_score_fft(f, z)
+            improved = new_scores < scores[active_rows]
+            if improved.any():
+                mask[improved] = True  # these will get saved for next round
+                improved_rows = active_rows[improved]
+                scores[improved_rows] = new_scores[improved]
+                # arrays[improved_rows.unsqueeze(1).expand(-1,k),indsk[improved]] = cur[improved]  # ugly and slow
+                arrays.index_put_((improved_rows.unsqueeze(1).expand(-1, k), indsk[improved]), cur[improved])
+        if not mask.any():
+            cnt -= 1
+            if cnt <= 0:
+                break
+            active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]
+            oldz = z
+            z = cst
+        else:
+            active_rows = active_rows[mask]  # eliminate those that haven't been improved at all
+            oldz = z
+            z *= zmul
+
+@torch.inference_mode()
+def improve_phases(arrays, scores):
+    print("improve_phases", flush=True)
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    B = arrays.shape[0]
+    f = fft(arrays)
+    a = arrays.view(B, nm, nn)
+    for j in range(nm):
+        cnt.zero_()
+        ff = torch.view_as_real(f).square().sum(dim=-1)
+        ffs1 = ff.sum(dim=1) - ff[:, j]
+        inds = torch.nonzero(((ffs1 <= 1) & (ff[:, j] > 0)).all(dim=1), as_tuple=True)[0]
+        M = inds.shape[0]
+        if M == 0:
+            continue
+        h = f[inds, j] * torch.sqrt((1-ffs1[inds])/ff[inds, j])
+        fmod = torch.empty((M, nn2+1), device=device, dtype=complex_dtype)
+        x = torch.empty((M, nn), device=device, dtype=torch.int8)
+        x2 = torch.empty((M, nn), device=device, dtype=real_dtype)
+        for t in range(100*na*max(1,config.num_improve)):  #?
+            torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
+            x.fill_(-1)
+            if fixed_sums:
+                x.scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
+            else:
+                x.masked_fill_(x2 > 0, 1)
+            torch.fft.rfft(x, dim=1, out=fmod)
+            fmod *= cst
+            new_scores = score_fft_int(ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1))
+            improved = new_scores < scores[inds]
+            improved_inds = inds[improved]
+            a[improved_inds, j] = x[improved]
+            scores[improved_inds] = new_scores[improved]
+            f[improved_inds, j] = fmod[improved]
+            cnt += improved_inds.shape[0]
+            h[:, 1:] *= torch.exp(1j * (torch.rand((M, nn2), device=device)-.5))
+        if verbose:
+            print(f'segment {j} : {M} candidates ({M/B}), {cnt} improvements ({cnt/B})')
+
+# some other algorithms, not currently in use
 
 # greedy random k-bit flip
 p = .5
@@ -130,45 +275,6 @@ sw_idx = torch.stack(sw_grids, dim=-1).reshape(-1, nm)    # (p^nm, k)
 sw = sw0[sw_idx].reshape(-1, nm * ksw)
 
 @torch.inference_mode()
-def improve_phases(arrays, scores):
-    print("improve_phases", flush=True)
-    cnt = torch.tensor(0, device=device, dtype=torch.int64)
-    B = arrays.shape[0]
-    f = fft(arrays)
-    a = arrays.view(B, nm, nn)
-    for j in range(nm):
-        cnt.zero_()
-        ff = torch.view_as_real(f).square().sum(dim=-1)
-        ffs1 = ff.sum(dim=1) - ff[:, j]
-        inds = torch.nonzero(((ffs1 <= 1) & (ff[:, j] > 0)).all(dim=1), as_tuple=True)[0]
-        M = inds.shape[0]
-        if M == 0:
-            continue
-        h = f[inds, j] * torch.sqrt((1-ffs1[inds])/ff[inds, j])
-        fmod = torch.empty((M, nn2+1), device=device, dtype=complex_dtype)
-        x = torch.empty((M, nn), device=device, dtype=torch.int8)
-        x2 = torch.empty((M, nn), device=device, dtype=real_dtype)
-        for t in range(100*na):  #?
-            torch.fft.irfft(h, n=nn, dim=1, out=x2)  # should be a 1/cst but doesn't matter
-            x.fill_(-1)
-            if fixed_sums:
-                x.scatter_(1, torch.topk(x2, num_ones[j], dim=1).indices, 1)
-            else:
-                x.masked_fill_(x2 > 0, 1)
-            torch.fft.rfft(x, dim=1, out=fmod)
-            fmod *= cst
-            new_scores = score_fft_int(ffs1[inds] + torch.view_as_real(fmod).square().sum(dim=-1))
-            improved = new_scores < scores[inds]
-            improved_inds = inds[improved]
-            a[improved_inds, j] = x[improved]
-            scores[improved_inds] = new_scores[improved]
-            f[improved_inds, j] = fmod[improved]
-            cnt += improved_inds.shape[0]
-            h[:, 1:] *= torch.exp(1j * (torch.rand((M, nn2), device=device)-.5))
-        if verbose:
-            print(f'({j}) {M} ({M/B}) {cnt} ({cnt/B})')
-
-@torch.inference_mode()
 def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
     print("improve4x4_fixed", flush=True)
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
@@ -227,3 +333,4 @@ def improve4x4_fixed(x, scores):  # optimal 4x4 bit switch
     x.scatter_(1, inds, cur)
     if verbose:
         print(f'{cnt/B}')
+
