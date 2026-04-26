@@ -19,7 +19,7 @@ gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 def improve_local(arrays, scores):  # optimised k-bit flip
     if fixed_sums:
         raise RuntimeError("improve_local is only implemented without fixed segment sums")
-    print(f"improve_local {k=}");
+    print("improve_local", flush=True);
     B = arrays.shape[0]
     active_rows = torch.arange(B, device=device, dtype=torch.long)
     mask = torch.empty((B,), device=device, dtype=torch.bool)
