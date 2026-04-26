@@ -3,10 +3,10 @@ from params import na, nm, nn, score, device, fixed_sums, config, eps, real_dtyp
 from timestamped_print import print
 
 # parallel tempering
-nT = 16  # number of temperatures. between say 10 and 20
-r = .25  # log10 of ratio of successive temperatures. empirical formula at n=188 -- will be autotuned
-# T = torch.logspace(0, -r * (nT-1), nT, device=device, dtype=torch.float32)
-logT = r * torch.arange(nT, device=device, dtype=real_dtype)
+nT = 10  # number of temperatures. between say 10 and 20
+T_min = 1e-3
+logT_min = -torch.log10(torch.tensor(T_min, device=device, dtype=real_dtype))
+logT = torch.linspace(0, logT_min, nT, device=device, dtype=real_dtype)
 T = .1 ** logT
 
 @torch.inference_mode()
@@ -22,6 +22,7 @@ def improve_T(x, scores, k):  # random k-bit flip at finite T.
     reject_mask = flip_mask & (~accept).unsqueeze(2)
     x[reject_mask] *= -1
     scores[accept] = scores_prop[accept]
+    return accept
 
 @torch.inference_mode()
 def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
@@ -39,6 +40,7 @@ def improve_T_fixed_sums(x, scores, k):  # random k-bit rotate at finite T.
     reject_mask_exp = (~accept).unsqueeze(2).expand(-1, -1, k)
     x.scatter_(2, flip_inds, torch.where(reject_mask_exp, flip_vals, flip_vals_rot))
     scores[accept] = scores_prop[accept]
+    return accept
 
 @torch.no_grad()
 def attempt_swaps(x, scores, gens):
@@ -105,26 +107,35 @@ def parallel_tempering(x, scores, gens):
     x = x.view(nT, BperT, na)
     scores = scores.view(nT, BperT)
     gens = gens.view(nT, BperT)
+    local_accepts = torch.zeros(nT, device=device, dtype=torch.long)
+    local_attempts = torch.zeros(nT, device=device, dtype=torch.long)
     for t in range(iterations):
         # --- local search per temperature ---
         if fixed_sums:
             k = 3 + 2 * torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(3, nn//2))
-            improve_T_fixed_sums(x, scores, k=k)
+            accept = improve_T_fixed_sums(x, scores, k=k)
         else:
             k = 1 + torch.floor(torch.log(torch.rand((), device=device, dtype=real_dtype))*invlogp)
             k = int(k.clamp(1, na//2))
-            improve_T(x, scores, k=k)
+            accept = improve_T(x, scores, k=k)
+        local_accepts += accept.sum(dim=1)
+        local_attempts += accept.shape[1]
         # --- replica swaps ---
         if t % swap_interval == 0:
-            acc = attempt_swaps(x, scores, gens) / BperT
+            swap_acc = attempt_swaps(x, scores, gens) / BperT
             if t > warmup_swaps:
                 # autotune Ts
-                for i in range(nT-1):
-                    if acc[i] < .2:
-                        logT[i+1:] -= .05 * (logT[i+1] - logT[i])
-                    elif acc[i] > .3:
-                        logT[i+1:] += .05 * (logT[i+1] - logT[i])
+                target_acc = .25
+                tune_rate = .05
+                gaps = logT[1:] - logT[:-1]
+                gaps *= torch.exp(tune_rate * (swap_acc - target_acc))
+                gaps *= logT_min / gaps.sum()
+                logT[1:] = torch.cumsum(gaps, dim=0)
                 T = .1 ** logT
             if verbose:
-                print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {acc.mean():6.3f}  T={T[0]:6.3f} : {scores[0].mean():6.3f}  T={T[nT-1]:6.3e} : {scores[nT-1].mean():6.3f}")
+                local_acc = local_accepts / local_attempts.clamp_min(1)
+                scores_by_T = scores.mean(dim=-1)
+                print(f"{t:5d}:  mean score = {scores.mean():6.3f}  swap acc = {swap_acc.mean():6.3f} ({swap_acc[0]:.3f}:{swap_acc[-1]:.3f})  local acc = {local_acc.mean():6.3f} ({local_acc[0]:.3f}:{local_acc[-1]:.3f})  T={T[0]:6.3f}:{T[-1]:6.3e}  scores={scores_by_T[0]:6.3f}:{scores_by_T[-1]:6.3f}")
+                local_accepts.zero_()
+                local_attempts.zero_()

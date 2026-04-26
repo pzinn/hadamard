@@ -46,26 +46,29 @@ class Block(torch.nn.Module):
         self.ln_1 = torch.nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
         self.ln_2 = torch.nn.LayerNorm(config.n_embd)
+        n_embd_ext = config.n_embd + nn2+1 if config.transformer_uses_score else config.n_embd
         self.mlp = torch.nn.ModuleDict(dict(
-            c_fc    = torch.nn.Linear(config.n_embd + nn2+1, config.n_embd2),  # TODO should depend on model.uses_score
+            c_fc    = torch.nn.Linear(n_embd_ext, config.n_embd2),
             c_proj  = torch.nn.Linear(config.n_embd2, config.n_embd),
             act     = myActiv(),
         ))
         m = self.mlp
         self.mlpf = lambda x: m.c_proj(m.act(m.c_fc(x)))
 
-    def forward(self, x, s):
+    def forward(self, x, s=None):
         x = x + self.attn(self.ln_1(x))
         x = self.ln_2(x)
-        s_expanded = s.unsqueeze(1).expand(-1,x.shape[1],-1)
-        xx = torch.cat([x, s_expanded], dim=-1)
-        x = x + self.mlpf(xx)
+        if s is not None:
+            s_expanded = s.unsqueeze(1).expand(-1,x.shape[1],-1)
+            xx = torch.cat([x, s_expanded], dim=-1)
+            x = x + self.mlpf(xx)
+        else:
+            x = x + self.mlpf(x)
         return x
 
 class Transformer(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.block_size = config.block_size
         modules = dict(
             wte = torch.nn.Embedding(config.vocab_size, config.n_embd),
             wpe = torch.nn.Embedding(config.block_size, config.n_embd),
@@ -79,42 +82,39 @@ class Transformer(torch.nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
 
-    def get_block_size(self):
-        return self.block_size
-
-    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):  #TODO git diff 79f8e6a5230387d5da6090045b8a699f5d20dc5e  b0f345b9fb99a74f898cead33a98cbcef6d84e4d
+    def forward(self, batch0, score_batch=None, offset=0, compute_loss=False):
+        b = batch0.shape[0]
         if self.uses_score:
             if score_batch is None:
                 raise RuntimeError("score_batch is required when transformer_uses_score=True")
-            b = batch0.shape[0]
+            score_batch = score_batch.to(dtype=self.transformer.wpe.weight.dtype)
             m = batch0.shape[1]
-            batch = batch0[:, :, :segment_string_length-1] if self.training else batch0
+            batch = batch0[:, :, :-1] if self.training else batch0
             t = batch.shape[2] + 1
-            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(m, t, config.n_embd)
-            tok_emb = self.transformer.wte(batch)
+            pos_emb = self.transformer.wpe.weight[offset:offset + t * m].view(1, m, t, config.n_embd)
             x = pos_emb.repeat(b, 1, 1, 1)
-            x[:, :, 1:, :] += tok_emb
-            xx = x.view(b * m, t, config.n_embd)
+            if batch.numel() > 0:
+                x[:, :, 1:, :] += self.transformer.wte(batch)
+            x = x.view(b * m, t, config.n_embd)
             s = score_batch.view(b * m, nn2+1)
             for block in self.transformer.h:
-                xx = block(xx, s)
-            xx = self.transformer.ln_f(xx)
-            logits = self.lm_head(xx)
+                x = block(x, s)
+            x = self.transformer.ln_f(x)
+            logits = self.lm_head(x)
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
             return logits, loss
         b = batch0.shape[0]
         # During training, predict the next token for each position.
-        batch = batch0[:, :self.block_size-1]
+        batch = batch0[:, :-1] if self.training else batch0
         t = batch.shape[1] + 1
         pos_emb = self.transformer.wpe.weight[:t]
-        tok_emb = self.transformer.wte(batch)
         x = pos_emb.repeat(b, 1, 1)
-        x[:, 1:, :] += tok_emb
+        if batch.numel() > 0:
+            x[:, 1:, :] += self.transformer.wte(batch)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
-        # Optionally compute training loss.
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
         return logits, loss
 
@@ -158,8 +158,6 @@ def save_model():
 def decode_segment_tokens(X, dtype=torch.int8):
     B = X.shape[0]
     signs = ((((X.unsqueeze(-1) >> bit_positions) & 1) << 1) - 1).view(B, nn_pad)
-    if config.left_pad_stacks:
-        return signs[:, nn_pad - nn:].to(dtype=dtype)
     return signs[:, :nn].to(dtype=dtype)
 
 
@@ -171,7 +169,7 @@ def generate(batch, arrays):
     temperature = config.temperature + params.gen * config.temperature_delta
     if model.uses_score:
         B = batch.shape[0]
-        ff = torch.ones(B, 1, nn2+1, device=device, dtype=torch.float32)
+        ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wpe.weight.dtype)
         for j in range(nm):
             offset = j * segment_string_length
             for i in range(segment_string_length):
@@ -180,13 +178,12 @@ def generate(batch, arrays):
                 logits = logits[:, -1, :] / temperature
                 probs = F.softmax(logits, dim=-1)
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
-            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=torch.float32)
+            signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=model.transformer.wpe.weight.dtype)
             arrays[:, j*nn:(j+1)*nn] = signs.to(dtype=torch.int8)
             f = cst * torch.fft.rfft(signs, dim=1)
             ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
         return
-    block_size = model.get_block_size()
-    for i in range(block_size):
+    for i in range(config.block_size):
         batch_cond = batch[:, :i]
         logits, _ = model(batch_cond)
         logits = logits[:, -1, :] / temperature
@@ -205,10 +202,7 @@ def string_to_array(X):
 def array_to_string(signs):
     B = signs.shape[0]
     signs1 = torch.zeros((B, nm, nn_pad), device=device, dtype=torch.int)
-    if config.left_pad_stacks:
-        signs1[:, :, nn_pad - nn:] = signs.view(B, nm, nn)
-    else:
-        signs1[:, :, :nn] = signs.view(B, nm, nn)
+    signs1[:, :, :nn] = signs.view(B, nm, nn)
     # Map -1 -> 0 and +1 -> 1.
     signs1 += 1
     signs1 >>= 1
@@ -220,7 +214,7 @@ def array_to_string(signs):
 def prepare_training_inputs(batch):
     string_batch = array_to_string(batch)
     if model.uses_score:
-        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=torch.float32)
+        ff = torch.view_as_real(fft(batch)).square().sum(dim=-1).to(dtype=model.transformer.wpe.weight.dtype)
         ff = torch.flip(torch.cumsum(torch.flip(ff, dims=(1,)), dim=1), dims=(1,))
         return string_batch, {"score_batch": ff, "compute_loss": True}
     return string_batch, {"compute_loss": True}
@@ -230,11 +224,9 @@ def train(data, **kwargs):
         torch.cuda.empty_cache()  # Free memory
     torch.set_float32_matmul_precision('high')  # dangerous, can cause NaN
     data_len = len(data)
-    vocab_size = config.vocab_size  # should one check that this is correct?
-    string_length = config.block_size
-    print(f"number of examples in the dataset: {data_len}")
-    print(f"max word length: {string_length}")
-    print(f"number of unique characters in the vocabulary: {vocab_size}")
+    print(f"size of the dataset: {data_len}")
+    print(f"string length: {config.block_size}")
+    print(f"number of unique tokens in the vocabulary: {config.vocab_size}")
 
     # Runtime-adjusted training parameters.
     max_steps = kwargs.get("max_steps", -1)
@@ -242,10 +234,6 @@ def train(data, **kwargs):
 
     # Learning rate schedule.
     lr_sched = kwargs.get("lr_sched", lambda step: 5e-4)
-
-    # Optional scoring hook used in testing.
-    global score
-    score = kwargs.get("score", None)
 
     if resume_training:
         try:
@@ -287,11 +275,14 @@ def train(data, **kwargs):
         step += 1
         if step % eval_freq == 0:
             print(f"{step=}", end='\t')
-            logger.record_loss(total_loss/eval_freq, step, "train")
+            last_loss = total_loss/eval_freq
+            logger.record_loss(last_loss, step, "train")
             total_loss = 0
             save_model()
         if step == max_steps:
             save_model()
+            with open(logger.stats_file, 'a') as file:
+                file.write(f'training: final loss={last_loss}\n')
             break
         #
     print('')

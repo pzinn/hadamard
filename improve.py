@@ -17,6 +17,8 @@ gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 
 @torch.inference_mode()
 def improve_local(arrays, scores):  # optimised k-bit flip
+    if fixed_sums:
+        raise RuntimeError("improve_local is only implemented without fixed segment sums")
     print(f"improve_local {k=}");
     B = arrays.shape[0]
     active_rows = torch.arange(B, device=device, dtype=torch.long)
@@ -54,6 +56,49 @@ def improve_local(arrays, scores):  # optimised k-bit flip
         active_rows = torch.nonzero(mask, as_tuple=True)[0]
 
 
+@torch.inference_mode()
+def improve_tabu(arrays, scores):
+    """Tabu walk using the best currently allowed one-bit flip.
+    The walk accepts the least bad non-tabu one-bit flip at each step, even if it
+    worsens the score.  The input arrays/scores are only updated when the walk
+    finds a new best state for that row.
+    """
+    if fixed_sums:
+        raise RuntimeError("improve_tabu is only implemented without fixed segment sums")
+    print("improve_tabu", flush=True)
+    B = arrays.shape[0]
+    steps = na // 2 * max(1,config.num_improve)
+    rows = torch.arange(B, device=device)
+    work_arrays = arrays.clone()
+    tabu = torch.zeros((B, na), device=device, dtype=real_dtype)
+    tabu_decay = max(1-10/na, 0.5)
+    candidate_scores = torch.empty((B, na), device=device, dtype=real_dtype)
+    f = fft(work_arrays)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty_like(f)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(steps):
+        for j in range(na):
+            torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            candidate_scores[:, j] = score_fft(fmod)
+        _, inds = (candidate_scores * (1 + tabu)).min(dim=1)
+        new_scores = candidate_scores[rows, inds]
+        old_bits = work_arrays[rows, inds]
+        fl += old_bits.to(complex_dtype).unsqueeze(1) * wrng_all[inds]
+        work_arrays[rows, inds] *= -1
+        tabu.mul_(tabu_decay)
+        tabu[rows, inds] = 10
+        improved = new_scores < scores
+        if improved.any():
+            arrays[improved] = work_arrays[improved]
+            scores[improved] = new_scores[improved]
+            cnt += improved.sum()
+    if verbose:
+        print(f'improvements {cnt} ({cnt/B})')
+
+
 if segment_sums is not None:
     ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
 def penalty(f):  # penalty to stray from correct segment sums
@@ -62,6 +107,8 @@ def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
 @torch.inference_mode()
 def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+    if not fixed_sums:
+        raise RuntimeError("improve_local_fixed is only implemented with fixed segment sums")
     print("improve_local_fixed", flush=True)
     z = cst  # is that the correct scaling with n?
     zmul = 1.5  # adjustable parameter

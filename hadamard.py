@@ -5,7 +5,7 @@ import torch
 import params
 params.init_from_argv()
 from params import na, nm, nn, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, real_dtype, eps
-from improve import improve_local, improve_phases, improve_local_fixed
+from improve import improve_local, improve_phases, improve_local_fixed, improve_tabu
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -148,44 +148,9 @@ symmetry_ctx = params.symmetry_ctx
 def parallel_improve(arrays, scores, gens):
     if device.startswith('cuda'):
         torch.cuda.empty_cache()  # Free memory
-    # step A: first pass of local/nonlocal search
-    start_timer = timer()
-    if fixed_sums:
-        #improve4x4_fixed(arrays, scores)
-        improve_local_fixed(arrays, scores)
-    else:
-        improve_local(arrays, scores)
-    scores = score(arrays)  # don't trust improve
-    if verbose:
-        print(f"improve A1 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve A1")
-    #
-    start_timer = timer()
-    improve_phases(arrays, scores)
-    scores = score(arrays)  # don't trust improve
-    if verbose:
-        print(f"improve A2 time: {timer() - start_timer}")
-        record_stats(arrays, scores, gens, prefix="improve A2")
-    if config.num_improve > 0:
-        # step B: parallel tempering (if num_improve>0)
-        start_timer = timer()
-        scores, inds = torch.sort(scores, descending=True)
-        arrays = arrays[inds]
-        gens = gens[inds]
-        if arrays.shape[0] == 0:
-            return arrays, scores, gens
-        B = arrays.shape[0]
-        if verbose:
-            print(f"identical ratio = {(arrays[1:] == arrays[:-1]).all(dim=1).sum()/B}")
-        B1 = (B // nT) * nT  # round down to a multiple of nT
-        if B1 > 0 and scores[B1-1] < eps:  # don't touch H-matrices
-            B1 = int(torch.nonzero(scores < eps, as_tuple=True)[0][0])
-            B1 = (B1 // nT) * nT
-        parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
-        if verbose:
-            print(f"pt time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve pt")
-        # step C: second pass of local/nonlocal search (if num_improve>0)
+    break_flag = config.num_improve == 0
+    while True:
+        # step A: first pass of local/nonlocal search
         start_timer = timer()
         if fixed_sums:
             #improve4x4_fixed(arrays, scores)
@@ -194,29 +159,42 @@ def parallel_improve(arrays, scores, gens):
             improve_local(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve C1 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve C1")
-        """
+            print(f"improve A1 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve A1")
         #
         start_timer = timer()
         if fixed_sums:
-            improve_greedy_fixed(arrays, scores)
+            pass
         else:
-            improve_greedy(arrays, scores)
+            improve_tabu(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve D2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve D2")
-        """
+            print(f"improve A2 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve A2")
         #
         start_timer = timer()
         improve_phases(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
-            print(f"improve C2 time: {timer() - start_timer}")
-            record_stats(arrays, scores, gens, prefix="improve C2")
-        #
-    # step D: rotate the arrays to a standard form
+            print(f"improve A3 time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve A3")
+        if break_flag:
+            break
+        break_flag = True
+        # step B: parallel tempering (if num_improve>0)
+        start_timer = timer()
+        mask = scores > eps  # non Hadamard matrices
+        _, inds = torch.sort(scores + mask * config.gen_decay * (params.gen - gens), descending=True)
+        arrays = arrays[inds]
+        scores = scores[inds]
+        gens = gens[inds]
+        B = mask.sum()
+        B1 = (B // nT) * nT  # round down to a multiple of nT
+        parallel_tempering(arrays[:B1], scores[:B1], gens[:B1])
+        if verbose:
+            print(f"pt time: {timer() - start_timer}")
+            record_stats(arrays, scores, gens, prefix="improve pt")
+    # step C: rotate the arrays to a standard form
     start_timer = timer()
     arrays = canonicalise_heuristic(arrays, symmetry_ctx, fft, scores, score if params.test_score else None, eps)
     if verbose:
@@ -237,7 +215,7 @@ def best_from(arrays, scores, gens):
     if B <= config.training_size:
         return unique_arrays, unique_scores, unique_gens
     # _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
-    _, idx = torch.topk(unique_scores * (1 + config.gen_decay * (params.gen - unique_gens)), k=config.training_size, largest=False, sorted=False)
+    _, idx = torch.topk(unique_scores, k=config.training_size, largest=False, sorted=False)
     return unique_arrays[idx], unique_scores[idx], unique_gens[idx]
 
 @torch.inference_mode()
@@ -331,7 +309,7 @@ def main():
             max_steps = config.training_steps if coeff == 1 else config.training_steps//10
             eval_freq = 1000
             start_timer = timer()
-            transformer.train(arrays, score=score if params.test_score else None, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
+            transformer.train(arrays, max_steps=max_steps, eval_freq=eval_freq, lr_sched=get_lr)
             if verbose:
                 print(f"training time: {timer() - start_timer}")
         # sample from model to get new data
