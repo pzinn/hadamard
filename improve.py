@@ -63,8 +63,6 @@ def improve_tabu(arrays, scores):
     worsens the score.  The input arrays/scores are only updated when the walk
     finds a new best state for that row.
     """
-    if fixed_sums:
-        raise RuntimeError("improve_tabu is only implemented without fixed segment sums")
     print("improve_tabu", flush=True)
     B = arrays.shape[0]
     steps = na // 2 * max(1,config.num_improve)
@@ -78,6 +76,7 @@ def improve_tabu(arrays, scores):
     fmod = torch.empty_like(f)
     flmod = fmod.view(B, nm*(nn2+1))
     cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    flag = torch.zeros((B,), device=device, dtype=torch.bool)
     for _ in range(steps):
         for j in range(na):
             torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
@@ -94,10 +93,13 @@ def improve_tabu(arrays, scores):
         if improved.any():
             arrays[improved] = work_arrays[improved]
             scores[improved] = new_scores[improved]
+            flag[improved] = 1
             cnt += improved.sum()
     if verbose:
-        print(f'improvements {cnt} ({cnt/B})')
-
+        total_improved = flag.sum()
+        print(f'improvements {cnt} ({cnt/B}) improved {total_improved} ({total_improved/B})')
+    if fixed_sums:
+        improve_local_fixed(arrays, scores, torch.nonzero(flag & (scores >= eps), as_tuple=True)[0])
 
 if segment_sums is not None:
     ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
@@ -106,7 +108,7 @@ def penalty(f):  # penalty to stray from correct segment sums
 def mod_score_fft(f, z):
     return score_fft(f) + z * penalty(f)
 @torch.inference_mode()
-def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressively enforcing segment_sums
+def improve_local_fixed(arrays, scores, active_rows=None):  # optimised k-bit flip -- progressively enforcing segment_sums
     if not fixed_sums:
         raise RuntimeError("improve_local_fixed is only implemented with fixed segment sums")
     print("improve_local_fixed", flush=True)
@@ -114,7 +116,8 @@ def improve_local_fixed(arrays, scores):  # optimised k-bit flip -- progressivel
     zmul = 1.5  # adjustable parameter
     oldz = 0
     B = arrays.shape[0]
-    active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    if active_rows is None:
+        active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
     cnt = config.num_improve
     while True:
         M = active_rows.numel()
