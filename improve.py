@@ -204,10 +204,13 @@ def improve_phases(arrays, scores):
 # some other algorithms, not currently in use
 
 @torch.inference_mode()
-def old_improve_local(arrays, scores):  # optimised k-bit flip
+def old_improve_local(arrays, scores, active_rows=None, na=na):  # optimised k-bit flip
     print("improve_local", flush=True)
     B = arrays.shape[0]
-    active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    if active_rows is None:
+        active_rows = torch.nonzero(scores >= eps, as_tuple=True)[0]  # don't bother with H-matrices
+    if scores is None:
+        scores = score(arrays)
     while True:
         M = active_rows.numel()
         if verbose:

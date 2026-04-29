@@ -9,10 +9,11 @@ import torch
 import torch.nn
 from torch.nn import functional as F
 import params  # for work_dir
-from params import na, nn, nn2, nm, device, config, resume_training, fft, cst
+from params import na, nn, nn2, nm, device, config, resume_training, fft, cst, verbose
 import logger
 from symmetry import randomise_symmetry
 from timestamped_print import print
+from improve import old_improve_local
 
 # Transformer language model.
 
@@ -115,7 +116,7 @@ def init_model():
     model.need_reload = True
     if device.startswith('cuda'):
         torch._dynamo.config.suppress_errors = True
-        model = torch.compile(model)
+        #model = torch.compile(model)
     model_path = os.path.join(params.work_dir, "model.pt")
     # Bit-packing helpers for array<->token conversion.
     bit_positions = torch.arange(config.stacking, device=device, dtype=torch.int)
@@ -156,6 +157,7 @@ def generate(batch, arrays):
     temperature = config.temperature + params.gen * config.temperature_delta
     if model.uses_score:
         B = batch.shape[0]
+        arrays.zero_()
         ff = torch.ones(B, 1, nn2+1, device=device, dtype=model.transformer.wse.weight.dtype)
         for j in range(nm):
             offset = j * segment_string_length
@@ -167,8 +169,18 @@ def generate(batch, arrays):
                 batch[:, offset+i] = torch.multinomial(probs, num_samples=1).view(-1)
             signs = decode_segment_tokens(batch[:, offset:offset+segment_string_length], dtype=model.transformer.wse.weight.dtype)
             arrays[:, j*nn:(j+1)*nn] = signs.to(dtype=torch.int8)
-            f = cst * torch.fft.rfft(signs, dim=1)
-            ff = torch.clamp(ff - torch.view_as_real(f).square().sum(dim=-1).unsqueeze(1), min=0)
+            if j < nm-1:
+                f = cst * torch.fft.rfft(signs, dim=1)
+                ff1 = torch.view_as_real(f).square().sum(dim=-1)
+                ff -= ff1.unsqueeze(1)
+                mask = (ff[:, 0, :] < 0).any(dim=-1)
+                if verbose:
+                    print(f"segment {j} : pre  fail ratio {mask.sum()/B}")
+                old_improve_local(arrays, None, torch.nonzero(mask, as_tuple=True)[0], (j+1)*nn)
+                ff[mask, 0] = 1 - torch.view_as_real(fft(arrays[mask])).square().sum(dim=(1, 3))
+                mask = (ff[:, 0, :] < 0).any(dim=-1)
+                if verbose:
+                    print(f"segment {j} : post fail ratio {mask.sum()/B}")
         return
     for i in range(config.block_size):
         batch_cond = batch[:, :i]
