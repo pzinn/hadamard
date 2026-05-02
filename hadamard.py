@@ -163,7 +163,10 @@ def parallel_improve(arrays, scores, gens):
             record_stats(arrays, scores, gens, prefix="improve A1")
         #
         start_timer = timer()
-        improve_tabu(arrays, scores)
+        if fixed_sums:
+            pass
+        else:
+            improve_tabu(arrays, scores)
         scores = score(arrays)  # don't trust improve
         if verbose:
             print(f"improve A2 time: {timer() - start_timer}")
