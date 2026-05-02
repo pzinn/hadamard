@@ -18,6 +18,18 @@ if params.logging == 'wandb':
 
 
 # helper function
+def with_trailing_slash(path):
+    return path if path.endswith('/') else path + '/'
+
+
+def resolve_latest_work_dir():
+    target = os.readlink("latest")
+    target_path = target if os.path.isabs(target) else os.path.join(os.path.dirname("latest"), target)
+    if os.path.abspath(target_path) == os.path.abspath("latest"):
+        raise SystemExit("latest points to itself; remove it or set params.work_dir explicitly")
+    return os.path.realpath("latest")
+
+
 def find_latest_gen():
     # Get all filenames matching the pattern
     files = glob.glob(params.work_dir+"GEN-*.txt")
@@ -34,9 +46,12 @@ def init_logging():
     if params.resume:
         # existing directory, default is latest
         if not hasattr(params, "work_dir"):
-            params.work_dir = os.readlink("latest")
-        if not params.work_dir.endswith('/'):
-            params.work_dir += '/'  # add trailing /
+            params.work_dir = resolve_latest_work_dir()
+        elif os.path.normpath(params.work_dir) == "latest":
+            params.work_dir = resolve_latest_work_dir()
+        else:
+            params.work_dir = os.path.realpath(params.work_dir)
+        params.work_dir = with_trailing_slash(params.work_dir)
         # initialise gen if necessary
         if not hasattr(params, "gen"):
             params.gen = find_latest_gen()
@@ -59,7 +74,7 @@ def init_logging():
         pass
     except IsADirectoryError:
         os.rmdir("latest")
-    os.symlink(params.work_dir, "latest")
+    os.symlink(os.path.realpath(params.work_dir), "latest")
 
     if params.logging == 'wandb':
         if params.logging_mode == 'offline':
