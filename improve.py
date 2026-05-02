@@ -99,6 +99,80 @@ def improve_tabu(arrays, scores):
         print(f'improvements {cnt} ({cnt/B})')
 
 
+@torch.inference_mode()
+def improve_tabu_fixed(arrays, scores):
+    """Soft-tabu walk using the best fixed-sum two-bit swap."""
+    if not fixed_sums:
+        raise RuntimeError("improve_tabu_fixed is only implemented with fixed segment sums")
+    print("improve_tabu_fixed", flush=True)
+    B = arrays.shape[0]
+    steps = na // 4 * max(1, config.num_improve)
+    rows = torch.arange(B, device=device)
+    work_arrays = arrays.clone()
+    tabu = torch.zeros((B, na), device=device, dtype=real_dtype)
+    tabu_decay = max(1 - 10 / na, 0.5)
+    f = fft(work_arrays)
+    fl = f.view(B, nm*(nn2+1))
+    fmod = torch.empty((B, nn2+1), device=device, dtype=complex_dtype)
+    best_scores = torch.empty(B, device=device, dtype=real_dtype)
+    best_selection_scores = torch.empty(B, device=device, dtype=real_dtype)
+    best_plus = torch.empty(B, device=device, dtype=torch.long)
+    best_minus = torch.empty(B, device=device, dtype=torch.long)
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(steps):
+        power = torch.view_as_real(f).square().sum(dim=-1)
+        total_power = power.sum(dim=1)
+        best_selection_scores.fill_(float('inf'))
+        best_plus.fill_(-1)
+        best_minus.fill_(-1)
+        for segment in range(nm):
+            offset = segment * nn
+            base_power = total_power - power[:, segment]
+            fsegment = f[:, segment]
+            for plus_local in range(nn):
+                plus = offset + plus_local
+                plus_mask = work_arrays[:, plus] > 0
+                plus_delta = work_arrays[:, plus].to(complex_dtype).unsqueeze(1) * wrng1[plus_local]
+                for minus_local in range(nn):
+                    minus = offset + minus_local
+                    valid = plus_mask & (work_arrays[:, minus] < 0)
+                    minus_delta = work_arrays[:, minus].to(complex_dtype).unsqueeze(1) * wrng1[minus_local]
+                    torch.add(fsegment, plus_delta, out=fmod)
+                    fmod.add_(minus_delta)
+                    candidate_scores = score_fft_int(base_power + torch.view_as_real(fmod).square().sum(dim=-1))
+                    selection_scores = candidate_scores * (1 + tabu[:, plus] + tabu[:, minus])
+                    selection_scores.masked_fill_(~valid, float('inf'))
+                    improved = selection_scores < best_selection_scores
+                    torch.where(improved, selection_scores, best_selection_scores, out=best_selection_scores)
+                    torch.where(improved, candidate_scores, best_scores, out=best_scores)
+                    best_plus.masked_fill_(improved, plus)
+                    best_minus.masked_fill_(improved, minus)
+        valid_rows = best_plus >= 0
+        if not valid_rows.any():
+            break
+        active_rows = rows[valid_rows]
+        plus = best_plus[valid_rows]
+        minus = best_minus[valid_rows]
+        old_plus = work_arrays[active_rows, plus]
+        old_minus = work_arrays[active_rows, minus]
+        fl[valid_rows] += old_plus.to(complex_dtype).unsqueeze(1) * wrng_all[plus]
+        fl[valid_rows] += old_minus.to(complex_dtype).unsqueeze(1) * wrng_all[minus]
+        work_arrays[active_rows, plus] *= -1
+        work_arrays[active_rows, minus] *= -1
+        tabu.mul_(tabu_decay)
+        tabu[active_rows, plus] = 10
+        tabu[active_rows, minus] = 10
+        new_scores = best_scores[valid_rows]
+        improved = new_scores < scores[valid_rows]
+        if improved.any():
+            improved_rows = active_rows[improved]
+            arrays[improved_rows] = work_arrays[improved_rows]
+            scores[improved_rows] = new_scores[improved]
+            cnt += improved.sum()
+    if verbose:
+        print(f'improvements {cnt} ({cnt/B})')
+
+
 if segment_sums is not None:
     ss = torch.tensor([cst*segment_sums[j] for j in range(nm)], dtype=real_dtype, device=device)
 def penalty(f):  # penalty to stray from correct segment sums

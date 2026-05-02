@@ -5,7 +5,7 @@ import torch
 import params
 params.init_from_argv()
 from params import na, nm, nn, device, resume, resume_training, is_sweep, verbose, config, score, fft, fixed_sums, num_ones, real_dtype, eps
-from improve import improve_local, improve_phases, improve_local_fixed, improve_tabu
+from improve import improve_local, improve_phases, improve_local_fixed, improve_tabu, improve_tabu_fixed
 from pt import parallel_tempering, nT
 import logger
 import transformer
@@ -164,7 +164,7 @@ def parallel_improve(arrays, scores, gens):
         #
         start_timer = timer()
         if fixed_sums:
-            pass
+            improve_tabu_fixed(arrays, scores)
         else:
             improve_tabu(arrays, scores)
         scores = score(arrays)  # don't trust improve
