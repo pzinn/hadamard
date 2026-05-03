@@ -12,7 +12,7 @@ wrng_all = torch.zeros((na, nm*(nn2+1)), device=device, dtype=complex_dtype)
 for i in range(nm):
     wrng_all[i*nn:(i+1)*nn, i*(nn2+1):(i+1)*(nn2+1)] = wrng1
 
-k = min(11, na)
+k = min(6, na)
 gray_code = [(i & -i).bit_length() - 1 for i in range(1, 1 << k)]
 
 @torch.inference_mode()
@@ -92,6 +92,61 @@ def improve_tabu(arrays, scores):
             arrays[improved] = work_arrays[improved]
             scores[improved] = new_scores[improved]
             cnt += improved.sum()
+    if verbose:
+        print(f'improvements {cnt} ({cnt/B})')
+
+
+@torch.inference_mode()
+def improve_local_tabu(arrays, scores):
+    """Tabu version of the k-best Gray-code local search."""
+    if fixed_sums:
+        raise RuntimeError("improve_local_tabu is only implemented without fixed segment sums")
+    print("improve_local_tabu", flush=True)
+    B = arrays.shape[0]
+    steps = (6 * na * max(1, config.num_improve)) // k
+    rows = torch.arange(B, device=device)
+    work_arrays = arrays.clone()
+    tabu = torch.zeros((B, na), device=device, dtype=real_dtype)
+    tabu_decay = max(1 - 25 / na, 0.5)
+    candidate_scores = torch.empty((B, na), device=device, dtype=real_dtype)
+    best_gray_scores = torch.empty(B, device=device, dtype=real_dtype)
+    best_gray_bits = torch.empty((B, k), device=device, dtype=torch.int8)
+    best_flip_mask = torch.empty((B, k), device=device, dtype=torch.bool)
+    flip_mask = torch.zeros((B, k), device=device, dtype=torch.bool)
+    fmod = torch.empty((B, nm, nn2+1), device=device, dtype=complex_dtype)
+    flmod = fmod.view(B, nm*(nn2+1))
+    cnt = torch.tensor(0, device=device, dtype=torch.int64)
+    for _ in range(steps):
+        f = fft(work_arrays)
+        fl = f.view(B, nm*(nn2+1))
+        for j in range(na):
+            torch.mul(work_arrays[:, j].to(complex_dtype).unsqueeze(1), wrng_all[j], out=flmod)
+            flmod.add_(fl)
+            candidate_scores[:, j] = score_fft(fmod)
+        _, indsk = torch.topk(candidate_scores * (1 + tabu), k, dim=1, sorted=False, largest=False)
+        cur = torch.gather(work_arrays, 1, indsk)
+        best_gray_bits.copy_(cur)
+        best_flip_mask.zero_()
+        flip_mask.zero_()
+        best_gray_scores.fill_(float('inf'))
+        for j in gray_code:
+            inds = indsk[:, j]
+            fl += cur[:, j].unsqueeze(1) * wrng_all[inds]
+            cur[:, j] *= -1
+            flip_mask[:, j].logical_not_()
+            new_scores = score_fft(f)
+            improved_gray = new_scores < best_gray_scores
+            torch.where(improved_gray, new_scores, best_gray_scores, out=best_gray_scores)
+            best_gray_bits[improved_gray] = cur[improved_gray]
+            best_flip_mask[improved_gray] = flip_mask[improved_gray]
+        work_arrays.index_put_((rows.unsqueeze(1).expand(-1, k), indsk), best_gray_bits)
+        improved = best_gray_scores < scores
+        if improved.any():
+            arrays[improved] = work_arrays[improved]
+            scores[improved] = best_gray_scores[improved]
+            cnt += improved.sum()
+        tabu.mul_(tabu_decay)
+        tabu.scatter_(1, indsk, torch.where(best_flip_mask, 8, torch.gather(tabu, 1, indsk)))
     if verbose:
         print(f'improvements {cnt} ({cnt/B})')
 
