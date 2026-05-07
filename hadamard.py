@@ -87,7 +87,7 @@ def record_stats(arrays, scores, gens, prefix=""):
     nh = len(hada_inds) / len(arrays)
     print(f"Hadamard ratio: {nh}")
 
-    segment_sums = arrays.view(B, nm, nn).sum(dim=2)
+    segment_sums = unfold(arrays).view(B, nm, nn).sum(dim=2)
     segment_sums = torch.sort(segment_sums.abs(), dim=1).values
     ss_tally = tally_str(segment_sums)
     print(f"Segment sums tally: {ss_tally}")
