@@ -12,12 +12,12 @@ n = 140  # size of matrix
 
 # training parameters
 sample_size = 100_000
-training_size = sample_size//10
+training_size = sample_size//2
 learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 50_000  # for gen 0. automatically decreases with gen
+training_steps = 25_000  # for gen 0. automatically decreases with gen
 num_improve = 0  # number of times data get improved per generation beyond a quick local search pass
 
 # transformer parameters
@@ -30,17 +30,20 @@ temperature = 1  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
 temperature_delta = 0
 
 # GFlowNet training parameters. If gflow is False the vanilla MLE loss is used.
-gflow = True              # enable GFlowNet trajectory-balance loss
-gflow_tau = 2.0            # reward temperature R(x) = exp(-score(x)/tau)
-gflow_tau_delta = 0.9      # tau *= tau_delta each generation (annealing)
-gflow_tau_min = 0.2        # floor on tau
-gflow_clip_logR = -50.0    # clamp log R from below (numerical safety)
+gflow = True               # enable GFlowNet trajectory-balance loss
+gflow_tau = 0.5            # reward temperature R(x) = exp(-score(x)/tau)
+gflow_tau_delta = 0.85      # tau *= tau_delta each generation (annealing)
+gflow_tau_min = 0.1        # floor on tau
+gflow_clip_logR = -25.0    # clamp log R from below (numerical safety)
 gflow_logZ_lr = 1e-2       # own learning rate for the scalar log_Z
+gflow_onpolicy_frac = 0.7  # fraction of each batch drawn on-policy (0 disables on-policy)
+gflow_onpolicy_refresh = 10  # regenerate the on-policy pool every N training steps
+gflow_train_temperature = 1.0  # temperature used when sampling on-policy during training
 
 
 # less important parameters
 gen_decay = 0.0
-sample_batch_size = 100_000  # for sampling; on some older GPUs this may need to stay below 65536
+sample_batch_size = 50_000  # for sampling; on some older GPUs this may need to stay below 65536
 score_batch_size = None  # for scoring/improving. None means no batching
 
 resume = False  # True | False, whether to resume a previous run
@@ -99,7 +102,7 @@ except FileNotFoundError:
 if 'segment_sums' not in globals():
     segment_sums = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta', 'gflow', 'gflow_tau', 'gflow_tau_delta', 'gflow_tau_min', 'gflow_clip_logR', 'gflow_logZ_lr']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta', 'gflow', 'gflow_tau', 'gflow_tau_delta', 'gflow_tau_min', 'gflow_clip_logR', 'gflow_logZ_lr', 'gflow_onpolicy_frac', 'gflow_onpolicy_refresh', 'gflow_train_temperature']
 
 import ast
 # hparams can be updated in command line

@@ -143,11 +143,13 @@ def decode_segment_tokens(X, dtype=torch.int8):
 
 
 @torch.inference_mode()
-def generate(batch, arrays):
+def generate(batch, arrays, temperature=None):
     """
     Fill token positions autoregressively in-place for a batch of sequences.
+    If temperature is None, falls back to the inference-time schedule.
     """
-    temperature = config.temperature + params.gen * config.temperature_delta
+    if temperature is None:
+        temperature = config.temperature + params.gen * config.temperature_delta
     block_size = model.get_block_size()
     for i in range(block_size):
         batch_cond = batch[:, :i]
@@ -237,21 +239,43 @@ def train(data, **kwargs):
 
     if params.gflow:
         tau = max(config.gflow_tau * (config.gflow_tau_delta ** params.gen), config.gflow_tau_min)
-        print(f"GFlowNet training: tau={tau:.4f}, initial log_Z={model.log_Z.item():.3f}")
+        k_on = int(round(batch_size * config.gflow_onpolicy_frac))
+        k_off = batch_size - k_on
+        pool_size = max(k_on * config.gflow_onpolicy_refresh, 1)
+        if k_on > 0:
+            onpolicy_strings = torch.empty(pool_size, config.block_size, dtype=torch.int, device=device)
+            onpolicy_arrays = torch.empty(pool_size, na, dtype=torch.int8, device=device)
+        print(f"GFlowNet training: tau={tau:.4f}, k_on={k_on}, k_off={k_off}, "
+              f"pool_size={pool_size}, refresh_every={config.gflow_onpolicy_refresh}, "
+              f"initial log_Z={model.log_Z.item():.3f}")
 
     # Training loop.
     step = 0
     total_loss = 0
     while True:
-        # Sample a batch, apply random symmetry, and train.
-        batch = torch.randint(data_len, (batch_size,))
-        arrays = randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx)
-        string_batch = array_to_string(arrays)
         if params.gflow:
+            if k_on > 0 and step % config.gflow_onpolicy_refresh == 0:
+                model.eval()
+                generate(onpolicy_strings, onpolicy_arrays, temperature=config.gflow_train_temperature)
+                model.train()
+            # Off-policy replay batch, with symmetry augmentation.
+            off_idx = torch.randint(data_len, (k_off,))
+            off_arrays = randomise_symmetry(data[off_idx].to(device, non_blocking=True), params.symmetry_ctx)
+            off_strings = array_to_string(off_arrays)
+            if k_on > 0:
+                on_idx = torch.randint(pool_size, (k_on,), device=device)
+                string_batch = torch.cat([off_strings, onpolicy_strings[on_idx]], dim=0)
+                arrays = torch.cat([off_arrays, onpolicy_arrays[on_idx]], dim=0)
+            else:
+                string_batch = off_strings
+                arrays = off_arrays
             _, _, log_pf = model(string_batch, compute_logpf=True)
             log_R = log_reward(arrays, tau)
             loss = ((model.log_Z + log_pf - log_R) ** 2).mean()
         else:
+            batch = torch.randint(data_len, (batch_size,))
+            arrays = randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx)
+            string_batch = array_to_string(arrays)
             _, loss, _ = model(string_batch, compute_loss=True)
         total_loss += loss.item()
         if not torch.isfinite(loss):
