@@ -3,7 +3,6 @@ if __name__ == "__main__":
 
 # Transformer model and training utilities.
 import os
-import sys
 
 import torch
 import torch.nn
@@ -70,7 +69,7 @@ class Transformer(torch.nn.Module):
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # GFlowNet partition-function estimate (learned scalar; unused when params.gflow is False).
+        # GFlowNet partition-function estimate (unused when config.gflow is false).
         self.log_Z = torch.nn.Parameter(torch.zeros(()))
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
@@ -146,10 +145,13 @@ def decode_segment_tokens(X, dtype=torch.int8):
 def generate(batch, arrays, temperature=None):
     """
     Fill token positions autoregressively in-place for a batch of sequences.
-    If temperature is None, falls back to the inference-time schedule.
+    If temperature is None, sample from the GFlowNet target policy or use the
+    vanilla transformer's inference-time temperature schedule.
     """
     if temperature is None:
-        temperature = config.temperature + params.gen * config.temperature_delta
+        temperature = 1.0 if config.gflow else config.temperature + params.gen * config.temperature_delta
+    if temperature <= 0:
+        raise ValueError(f"sampling temperature must be positive, got {temperature}")
     block_size = model.get_block_size()
     for i in range(block_size):
         batch_cond = batch[:, :i]
@@ -176,19 +178,14 @@ def array_to_string(signs):
     signs1 >>= 1
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
 
+@torch.no_grad()
 def log_reward(arrays, tau):
-    """Compute log R(x) = -score(x)/tau for a batch of ±1 arrays, clamped from below.
-
-    Runs inside torch.no_grad() so the returned tensor is a plain tensor with no
-    grad requirement — safe to use as a target in the trajectory-balance loss.
-    """
-    with torch.no_grad():
-        m = arrays.view(-1, nm, nn).to(dtype=params.real_dtype)
-        f = params.cst * torch.fft.rfft(m, dim=2)
-        ff = torch.view_as_real(f).square().sum(dim=(1, 3))
-        s = 2 * (ff - 1 - torch.log(ff))
-        scores = 2 * s.sum(dim=1) - s[:, 0]
-        return (-scores / tau).clamp(min=config.gflow_clip_logR)
+    """Return log R(x) and its underlying score without changing the reward."""
+    scores = params.score(arrays)
+    if not torch.isfinite(scores).all():
+        count = (~torch.isfinite(scores)).sum().item()
+        raise RuntimeError(f"GFlowNet reward received {count} non-finite scores")
+    return -scores / tau, scores
 
 
 def train(data, **kwargs):
@@ -218,8 +215,8 @@ def train(data, **kwargs):
 
     batch_size = config.training_batch_size
 
-    # Initialize optimizer.  In GFlowNet mode log_Z gets its own faster LR.
-    if params.gflow:
+    # Initialize optimizer. In GFlowNet mode log_Z gets its own faster LR.
+    if config.gflow:
         main_params = [p for n, p in model.named_parameters() if not n.endswith("log_Z")]
         logZ_params = [p for n, p in model.named_parameters() if n.endswith("log_Z")]
         optim_groups = [
@@ -237,7 +234,14 @@ def train(data, **kwargs):
         optimiser_kwargs.pop("fused", None)
         optimiser = torch.optim.AdamW(optim_groups, **optimiser_kwargs)
 
-    if params.gflow:
+    if config.gflow:
+        if not 0 <= config.gflow_onpolicy_frac <= 1:
+            raise ValueError("gflow_onpolicy_frac must be between 0 and 1")
+        if config.gflow_onpolicy_refresh < 1:
+            raise ValueError("gflow_onpolicy_refresh must be at least 1")
+        if min(config.gflow_tau, config.gflow_tau_delta, config.gflow_tau_min,
+               config.gflow_train_temperature) <= 0:
+            raise ValueError("GFlowNet temperatures and tau decay must be positive")
         tau = max(config.gflow_tau * (config.gflow_tau_delta ** params.gen), config.gflow_tau_min)
         k_on = int(round(batch_size * config.gflow_onpolicy_frac))
         k_off = batch_size - k_on
@@ -248,12 +252,19 @@ def train(data, **kwargs):
         print(f"GFlowNet training: tau={tau:.4f}, k_on={k_on}, k_off={k_off}, "
               f"pool_size={pool_size}, refresh_every={config.gflow_onpolicy_refresh}, "
               f"initial log_Z={model.log_Z.item():.3f}")
+        metric_names = ["log_pf_mean", "log_pf_std", "log_R_mean", "log_R_std",
+                        "residual_mean", "residual_std", "score_mean"]
+        if k_off:
+            metric_names.append("offpolicy_tb_loss")
+        if k_on:
+            metric_names.append("onpolicy_tb_loss")
+        metric_totals = {name: torch.zeros((), device=device) for name in metric_names}
 
     # Training loop.
     step = 0
     total_loss = 0
     while True:
-        if params.gflow:
+        if config.gflow:
             if k_on > 0 and step % config.gflow_onpolicy_refresh == 0:
                 model.eval()
                 generate(onpolicy_strings, onpolicy_arrays, temperature=config.gflow_train_temperature)
@@ -270,8 +281,26 @@ def train(data, **kwargs):
                 string_batch = off_strings
                 arrays = off_arrays
             _, _, log_pf = model(string_batch, compute_logpf=True)
-            log_R = log_reward(arrays, tau)
-            loss = ((model.log_Z + log_pf - log_R) ** 2).mean()
+            log_R, scores = log_reward(arrays, tau)
+            residual = model.log_Z + log_pf - log_R
+            squared_residual = residual.square()
+            loss = squared_residual.mean()
+            with torch.no_grad():
+                metrics = {
+                    "log_pf_mean": log_pf.mean(),
+                    "log_pf_std": log_pf.std(unbiased=False),
+                    "log_R_mean": log_R.mean(),
+                    "log_R_std": log_R.std(unbiased=False),
+                    "residual_mean": residual.mean(),
+                    "residual_std": residual.std(unbiased=False),
+                    "score_mean": scores.mean(),
+                }
+                if k_off:
+                    metrics["offpolicy_tb_loss"] = squared_residual[:k_off].mean()
+                if k_on:
+                    metrics["onpolicy_tb_loss"] = squared_residual[k_off:].mean()
+                for name, value in metrics.items():
+                    metric_totals[name] += value
         else:
             batch = torch.randint(data_len, (batch_size,))
             arrays = randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx)
@@ -279,7 +308,7 @@ def train(data, **kwargs):
             _, loss, _ = model(string_batch, compute_loss=True)
         total_loss += loss.item()
         if not torch.isfinite(loss):
-            raise RuntimeError(f"{step=}: loss is NaN")
+            raise RuntimeError(f"{step=}: loss is not finite")
         # Update main-param LR (log_Z keeps its own LR).
         optimiser.param_groups[0]['lr'] = lr_sched(step)
         # Backpropagation step.
@@ -290,9 +319,15 @@ def train(data, **kwargs):
         step += 1
         if step % eval_freq == 0:
             print(f"{step=}", end='\t')
-            logger.record_loss(total_loss/eval_freq, step, "train")
-            if params.gflow:
-                logger.record_loss(model.log_Z.item(), step, "log_Z")
+            if config.gflow:
+                values = {name: (value / eval_freq).item()
+                          for name, value in metric_totals.items()}
+                values.update(tb_loss=total_loss/eval_freq, log_Z=model.log_Z.item(), tau=tau)
+                logger.record_scalars(values, step, "gflow")
+                for value in metric_totals.values():
+                    value.zero_()
+            else:
+                logger.record_loss(total_loss/eval_freq, step, "train")
             total_loss = 0
             save_model()
         if step == max_steps:
@@ -316,7 +351,7 @@ def sample():
         j = min(i + config.sample_batch_size, config.sample_size)
         cur_batch = X[:j-i]
         cur_arrays = arrays[:j-i]
-        print('*', end=''); sys.stdout.flush()
+        print('*', end='', flush=True)
         generate(cur_batch, cur_arrays)
         arrays_cpu[i:j] = cur_arrays
     print('')

@@ -26,8 +26,12 @@ def find_latest_gen():
     return max(indices) if indices else 0  # Return max index, or 0 if no files found
 
 
+def _print_scalars(values):
+    print(' '.join(f"{name}={value:.4g}" for name, value in values.items()), end='\t')
+
+
 def init_logging():
-    global record_loss, record_scores
+    global record_loss, record_scalars, record_scores
     global stats_file, hada_file
 
     # directory, gen
@@ -84,6 +88,11 @@ def init_logging():
         def record_loss(loss, step, name):
             wandb.log({"step": step, "loss/"+name+"/"+str(params.gen): norm*loss})
             print(f"{name} {loss=:.6f}", end='\t')
+        def record_scalars(values, step, prefix):
+            wandb.log({"step": step, **{
+                f"{prefix}/{name}/{params.gen}": value for name, value in values.items()
+            }})
+            _print_scalars(values)
         def record_scores(prefix, scores, mean_score, nh):
             log_data = {"gen": params.gen, "score/"+prefix: mean_score, "zero score/"+prefix: nh,
                         "histogram/scores/"+prefix: wandb.Histogram(scores)}
@@ -108,6 +117,11 @@ def init_logging():
             writer.add_scalar("Loss/"+name, norm*loss, step)
             writer.flush()
             print(f"{name} {loss=:.6f}", end='\t')
+        def record_scalars(values, step, prefix):
+            for name, value in values.items():
+                writer.add_scalar(f"{prefix}/{name}", value, step)
+            writer.flush()
+            _print_scalars(values)
         norm = 1/(LOG_2*config.stacking)  # renormalise loss so it starts at 1
         def record_scores(prefix, scores, mean_score, nh):
             writer.add_scalar("Score/"+prefix, mean_score, params.gen)
@@ -117,6 +131,8 @@ def init_logging():
     if params.logging == '':  # useful for testing/debugging
         def record_loss(loss, step, name):
             print(f"{name} {loss=:.6f}", end='\t')
+        def record_scalars(values, step, prefix):
+            _print_scalars(values)
         def record_scores(prefix, scores, mean_score, nh):
             pass
 
