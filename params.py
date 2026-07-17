@@ -5,29 +5,37 @@ if __name__ == "__main__":
     raise SystemExit("please run hadamard.py")
 
 # hadamard matrix parameters
-n = 172  # size of matrix
+n = 140  # size of matrix
 # segment_sums = (1, 1, 7, 11)  # sum of squares must be n. must be a tuple (not a list!)
 
 # the parameters below are sweepable: use values, or lists for a sweep
 
 # training parameters
-sample_size = 1_000_000
-training_size = sample_size//20
+sample_size = 100_000
+training_size = sample_size//10
 learning_rate = 1e-3
 training_batch_size = 1024  # for training. much smaller, obviously
 weight_decay = 0.01
 max_iterations = 30
-training_steps = 150_000  # for gen 0. automatically decreases with gen
-num_improve = 1  # number of times data get improved per generation beyond a quick local search pass
+training_steps = 50_000  # for gen 0. automatically decreases with gen
+num_improve = 0  # number of times data get improved per generation beyond a quick local search pass
 
 # transformer parameters
 n_layer = 4
 n_embd = 128
 # n_embd2 = 4*n_embd  # default choice; only include if *not* default choice (can't be in hparams_list because of potential sweep issue)
 n_head = 4
-stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn
-temperature = .6  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
-temperature_delta = .02
+stacking = 7  # [5,6,7,8,9,10]  # preferably a divisor of nn=n/4
+temperature = 1  # [.5, .75, 1, 1.25, 1.5, 1.75, 2]
+temperature_delta = 0
+
+# GFlowNet training parameters. If gflow is False the vanilla MLE loss is used.
+gflow = True              # enable GFlowNet trajectory-balance loss
+gflow_tau = 2.0            # reward temperature R(x) = exp(-score(x)/tau)
+gflow_tau_delta = 0.9      # tau *= tau_delta each generation (annealing)
+gflow_tau_min = 0.2        # floor on tau
+gflow_clip_logR = -50.0    # clamp log R from below (numerical safety)
+gflow_logZ_lr = 1e-2       # own learning rate for the scalar log_Z
 
 
 # less important parameters
@@ -55,7 +63,7 @@ test_score = False  # for debugging purposes, test whether randomisation of arra
 import time
 random_seed = int(time.time())
 
-logging = 'wandb'  # '' | 'tensorboard' | 'wandb'
+logging = ''  # '' | 'tensorboard' | 'wandb'
 logging_mode = 'online'  # 'online' | 'offline' -- for wandb
 
 eps = 2e-5  # score accuracy. scores are heavily discretised so can be made fairly large
@@ -91,7 +99,7 @@ except FileNotFoundError:
 if 'segment_sums' not in globals():
     segment_sums = None
 
-hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta']
+hparams_list = ['n', 'segment_sums', 'n_layer', 'n_embd', 'n_head', 'stacking', 'sample_size', 'training_size', 'learning_rate', 'max_iterations', 'training_steps', 'training_batch_size', 'num_improve', 'weight_decay', 'version', 'random_seed', 'sample_batch_size', 'score_batch_size', 'gen_decay', 'temperature', 'temperature_delta', 'gflow', 'gflow_tau', 'gflow_tau_delta', 'gflow_tau_min', 'gflow_clip_logR', 'gflow_logZ_lr']
 
 import ast
 # hparams can be updated in command line

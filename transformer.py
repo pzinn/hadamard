@@ -70,6 +70,8 @@ class Transformer(torch.nn.Module):
             ln_f = torch.nn.LayerNorm(config.n_embd),
         ))
         self.lm_head = torch.nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        # GFlowNet partition-function estimate (learned scalar; unused when params.gflow is False).
+        self.log_Z = torch.nn.Parameter(torch.zeros(()))
         # Report total parameter count.
         n_params = sum(p.numel() for p in self.parameters())
         print("number of transformer parameters: %.2fM" % (n_params/1e6,))
@@ -77,7 +79,7 @@ class Transformer(torch.nn.Module):
     def get_block_size(self):
         return self.block_size
 
-    def forward(self, batch0, compute_loss=False):
+    def forward(self, batch0, compute_loss=False, compute_logpf=False):
         b = batch0.shape[0]
         batch = batch0[:, :-1] if self.training else batch0
         t = batch.shape[1] + 1
@@ -90,7 +92,12 @@ class Transformer(torch.nn.Module):
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
         loss = F.cross_entropy(logits.view(-1, logits.size(-1)), batch0.view(-1)) if compute_loss else None
-        return logits, loss
+        log_pf = None
+        if compute_logpf:
+            # logits[:, t, :] predicts batch0[:, t]; sum log-prob of the actual tokens.
+            log_probs = F.log_softmax(logits, dim=-1)
+            log_pf = log_probs.gather(-1, batch0.unsqueeze(-1)).squeeze(-1).sum(dim=-1)
+        return logits, loss, log_pf
 
 def init_model():
     global model
@@ -144,7 +151,7 @@ def generate(batch, arrays):
     block_size = model.get_block_size()
     for i in range(block_size):
         batch_cond = batch[:, :i]
-        logits, _ = model(batch_cond)
+        logits, _, _ = model(batch_cond)
         logits = logits[:, -1, :] / temperature
         probs = F.softmax(logits, dim=-1)
         batch[:, i] = torch.multinomial(probs, num_samples=1).view(-1)
@@ -166,6 +173,21 @@ def array_to_string(signs):
     signs1 += 1
     signs1 >>= 1
     return (signs1.view(B, config.block_size, config.stacking) << bit_positions).sum(dim=2)
+
+def log_reward(arrays, tau):
+    """Compute log R(x) = -score(x)/tau for a batch of ±1 arrays, clamped from below.
+
+    Runs inside torch.no_grad() so the returned tensor is a plain tensor with no
+    grad requirement — safe to use as a target in the trajectory-balance loss.
+    """
+    with torch.no_grad():
+        m = arrays.view(-1, nm, nn).to(dtype=params.real_dtype)
+        f = params.cst * torch.fft.rfft(m, dim=2)
+        ff = torch.view_as_real(f).square().sum(dim=(1, 3))
+        s = 2 * (ff - 1 - torch.log(ff))
+        scores = 2 * s.sum(dim=1) - s[:, 0]
+        return (-scores / tau).clamp(min=config.gflow_clip_logR)
+
 
 def train(data, **kwargs):
     if device.startswith('cuda'):
@@ -194,15 +216,28 @@ def train(data, **kwargs):
 
     batch_size = config.training_batch_size
 
-    # Initialize optimizer.
-    optimiser_kwargs = dict(lr=lr_sched(0), weight_decay=config.weight_decay, betas=(0.9, 0.99))
+    # Initialize optimizer.  In GFlowNet mode log_Z gets its own faster LR.
+    if params.gflow:
+        main_params = [p for n, p in model.named_parameters() if not n.endswith("log_Z")]
+        logZ_params = [p for n, p in model.named_parameters() if n.endswith("log_Z")]
+        optim_groups = [
+            {"params": main_params, "lr": lr_sched(0), "weight_decay": config.weight_decay},
+            {"params": logZ_params, "lr": config.gflow_logZ_lr, "weight_decay": 0.0},
+        ]
+    else:
+        optim_groups = [{"params": model.parameters(), "lr": lr_sched(0), "weight_decay": config.weight_decay}]
+    optimiser_kwargs = dict(betas=(0.9, 0.99))
     if device.startswith('cuda'):
         optimiser_kwargs["fused"] = True
     try:
-        optimiser = torch.optim.AdamW(model.parameters(), **optimiser_kwargs)
+        optimiser = torch.optim.AdamW(optim_groups, **optimiser_kwargs)
     except (TypeError, RuntimeError):
         optimiser_kwargs.pop("fused", None)
-        optimiser = torch.optim.AdamW(model.parameters(), **optimiser_kwargs)
+        optimiser = torch.optim.AdamW(optim_groups, **optimiser_kwargs)
+
+    if params.gflow:
+        tau = max(config.gflow_tau * (config.gflow_tau_delta ** params.gen), config.gflow_tau_min)
+        print(f"GFlowNet training: tau={tau:.4f}, initial log_Z={model.log_Z.item():.3f}")
 
     # Training loop.
     step = 0
@@ -210,13 +245,19 @@ def train(data, **kwargs):
     while True:
         # Sample a batch, apply random symmetry, and train.
         batch = torch.randint(data_len, (batch_size,))
-        string_batch = array_to_string(randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx))
-        logits, loss = model(string_batch, compute_loss=True)
+        arrays = randomise_symmetry(data[batch].to(device, non_blocking=True), params.symmetry_ctx)
+        string_batch = array_to_string(arrays)
+        if params.gflow:
+            _, _, log_pf = model(string_batch, compute_logpf=True)
+            log_R = log_reward(arrays, tau)
+            loss = ((model.log_Z + log_pf - log_R) ** 2).mean()
+        else:
+            _, loss, _ = model(string_batch, compute_loss=True)
         total_loss += loss.item()
         if not torch.isfinite(loss):
             raise RuntimeError(f"{step=}: loss is NaN")
-        for param_group in optimiser.param_groups:
-            param_group['lr'] = lr_sched(step)
+        # Update main-param LR (log_Z keeps its own LR).
+        optimiser.param_groups[0]['lr'] = lr_sched(step)
         # Backpropagation step.
         model.zero_grad(set_to_none=True)
         loss.backward()
@@ -226,6 +267,8 @@ def train(data, **kwargs):
         if step % eval_freq == 0:
             print(f"{step=}", end='\t')
             logger.record_loss(total_loss/eval_freq, step, "train")
+            if params.gflow:
+                logger.record_loss(model.log_Z.item(), step, "log_Z")
             total_loss = 0
             save_model()
         if step == max_steps:
